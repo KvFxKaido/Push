@@ -907,31 +907,29 @@ describe('handleGitHubWebhook — comment trigger', () => {
     );
   });
 
-  it('retries a token-mint failure by re-minting when the App is configured', async () => {
-    const mint = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce('tok-2');
-    const deps = makeDeps({ mintInstallationToken: mint });
+  it('keeps a token-mint failure terminal even when the App is configured', async () => {
+    // mintInstallationToken collapses deterministic failures (unusable key,
+    // rejected exchange) and transient ones into the same null, and a retry
+    // without a token could never surface its outcome on the PR — so no
+    // retry_scheduled 202, just the honest 502.
+    const deps = makeDeps({ mintInstallationToken: vi.fn(async () => null) });
     const body = JSON.stringify(issueCommentPayload());
     const res = await handleGitHubWebhook(
       makeRequest(body, {
         'X-GitHub-Event': 'issue_comment',
-        'X-GitHub-Delivery': 'c-remint',
+        'X-GitHub-Delivery': 'c-mint-terminal',
         'X-Hub-Signature-256': await sign(body, SECRET),
       }),
-      // App creds present → the null mint reads as a transient exchange failure.
       commentEnv({ GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: 'key' }),
       undefined,
       deps as unknown as GitHubWebhookDeps,
     );
-    expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({
-      status: 'retry_scheduled',
-      code: 'TOKEN_MINT_FAILED',
-    });
-    // First attempt short-circuits before the enqueue; the retry re-mints.
-    expect(deps.enqueueReviewForExistingPr).toHaveBeenCalledTimes(1);
-    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
-      token: 'tok-2',
-    });
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: 'TOKEN_MINT_FAILED' });
+    expect(deps.delay).not.toHaveBeenCalled();
+    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
+    expect(deps.addCommentReaction).not.toHaveBeenCalled();
+    expect(deps.postPullRequestComment).not.toHaveBeenCalled();
   });
 
   it('falls back to the first attempt token when the retry cannot re-mint', async () => {
@@ -970,48 +968,49 @@ describe('handleGitHubWebhook — comment trigger', () => {
     );
   });
 
-  it('stays log-only when the retry cannot mint a token either', async () => {
-    const deps = makeDeps({ mintInstallationToken: vi.fn(async () => null) });
+  it('observes a late attempt success after timeout and posts the correcting 👀', async () => {
+    let releaseEnqueue!: () => void;
+    const hung = new Promise<{ ok: true; status: string; headSha: string }>((resolve) => {
+      releaseEnqueue = () => resolve({ ok: true as const, status: 'queued', headSha: 'sha-late' });
+    });
+    const enqueue = vi
+      .fn()
+      .mockResolvedValueOnce(enqueueFailure('PR_LOOKUP_FAILED'))
+      .mockImplementationOnce(() => hung);
+    const deps = makeDeps({
+      enqueueReviewForExistingPr: enqueue,
+      // Both timers instant: the hung attempt loses the race deterministically.
+      delay: vi.fn(async () => {}),
+    });
+    const deferred: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => {
+        deferred.push(p);
+      },
+    };
     const body = JSON.stringify(issueCommentPayload());
     const res = await handleGitHubWebhook(
       makeRequest(body, {
         'X-GitHub-Event': 'issue_comment',
-        'X-GitHub-Delivery': 'c-no-token',
-        'X-Hub-Signature-256': await sign(body, SECRET),
-      }),
-      commentEnv({ GITHUB_APP_ID: '1', GITHUB_APP_PRIVATE_KEY: 'key' }),
-      undefined,
-      deps as unknown as GitHubWebhookDeps,
-    );
-    // Without credentials nothing can reach GitHub — no reaction, no notice.
-    expect(res.status).toBe(202);
-    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
-    expect(deps.addCommentReaction).not.toHaveBeenCalled();
-    expect(deps.postPullRequestComment).not.toHaveBeenCalled();
-  });
-
-  it('treats a token-mint failure as terminal 502 when the App is unconfigured', async () => {
-    // Without GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY the null mint is
-    // deterministic — a retry replays the same null with no token for
-    // feedback. This is the pre-retry behavior, preserved.
-    const deps = makeDeps({ mintInstallationToken: vi.fn(async () => null) });
-    const body = JSON.stringify(issueCommentPayload());
-    const res = await handleGitHubWebhook(
-      makeRequest(body, {
-        'X-GitHub-Event': 'issue_comment',
-        'X-GitHub-Delivery': 'c-unconfigured',
+        'X-GitHub-Delivery': 'c-late-success',
         'X-Hub-Signature-256': await sign(body, SECRET),
       }),
       commentEnv(),
-      undefined,
+      ctx,
       deps as unknown as GitHubWebhookDeps,
     );
-    expect(res.status).toBe(502);
-    expect(await res.json()).toMatchObject({ error: 'TOKEN_MINT_FAILED' });
-    expect(deps.delay).not.toHaveBeenCalled();
-    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
-    expect(deps.addCommentReaction).not.toHaveBeenCalled();
-    expect(deps.postPullRequestComment).not.toHaveBeenCalled();
+    expect(res.status).toBe(202);
+    // Timeout feedback first…
+    await Promise.all([...deferred]);
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'confused', {
+      token: 'install-tok',
+    });
+    // …then the attempt lands late and the observer corrects the record.
+    releaseEnqueue();
+    await Promise.all([...deferred]);
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
+      token: 'install-tok',
+    });
   });
 
   it('bounds the retry attempt and still posts feedback on timeout', async () => {

@@ -633,12 +633,19 @@ async function handlePullRequestReviewRoutine(c: WebhookRoutineContext): Promise
 /**
  * Delay before the single transient-failure retry. `waitUntil` gives the whole
  * request 30 seconds after the response, shared across every deferred task, so
- * the arithmetic must close: 10s delay + a 12s-bounded attempt + feedback
- * posting lands well inside the budget. GitHub's secondary-limit guidance
- * prefers a 60s wait, which doesn't fit the runtime at all; one delayed
- * attempt plus a visible failure notice is the tradeoff (#1584).
+ * the arithmetic must close: 8s delay + a 10s-bounded attempt leaves ~12s for
+ * the feedback POSTs, which register as parallel sibling `waitUntil` tasks
+ * (the reaction/notice helpers return at registration when a ctx exists) and
+ * are 15s-capped, non-retrying (`retry: false`), typically sub-second calls.
+ * The margin is engineering headroom, not proof — a GitHub degradation slow
+ * enough to eat it loses the feedback at the budget edge, with the runtime's
+ * own "waitUntil() tasks did not complete" warning as the ops signal; the
+ * fully-enforced alternative is durable scheduling in the DO, deliberately out
+ * of scope here. GitHub's secondary-limit guidance prefers a 60s wait, which
+ * doesn't fit the runtime at all; one delayed attempt plus a visible failure
+ * notice is the tradeoff (#1584).
  */
-export const COMMENT_RETRY_DELAY_MS = 10_000;
+export const COMMENT_RETRY_DELAY_MS = 8_000;
 
 /**
  * Hard bound on the retry attempt itself. An unbounded attempt can outspend
@@ -647,34 +654,22 @@ export const COMMENT_RETRY_DELAY_MS = 10_000;
  * task *before the feedback posts*, recreating the silent failure this path
  * exists to eliminate. Feedback wins over completion.
  */
-export const COMMENT_RETRY_ATTEMPT_BUDGET_MS = 12_000;
+export const COMMENT_RETRY_ATTEMPT_BUDGET_MS = 10_000;
 
 /**
- * Failure codes worth one retry: the GitHub-API-transient shapes (a 403/5xx on
- * the token mint or refs lookup — the #1584 incident was a secondary rate
- * limit) plus a rejected DO transport. `ENQUEUE_FAILED` (the DO *answered* with
- * a rejection) and `NOT_CONFIGURED` are deterministic — a retry replays the
- * same answer.
+ * Failure codes worth one retry: a failed refs lookup (the #1584 incident was
+ * a secondary-rate-limit 403 there) and a rejected DO transport — both
+ * GitHub/infra-transient shapes reached *with a minted token in hand*, so the
+ * retry can always post feedback about its own outcome. `TOKEN_MINT_FAILED`
+ * is deliberately terminal: `mintInstallationToken` collapses deterministic
+ * failures (missing or unusable credentials, a rejected exchange) and
+ * transient ones into the same `null`, and with no token the retry could
+ * never surface its result on the PR — a doomed retry's 202 would just be a
+ * slower, more misleading version of the honest 502 (Codex P2 ×2 on #1585).
+ * `ENQUEUE_FAILED` (the DO *answered* with a rejection) and `NOT_CONFIGURED`
+ * are deterministic — a retry replays the same answer.
  */
-const RETRYABLE_COMMENT_FAILURE_CODES = new Set([
-  'TOKEN_MINT_FAILED',
-  'PR_LOOKUP_FAILED',
-  'ENQUEUE_UNREACHABLE',
-]);
-
-/**
- * Missing App credentials make `mintInstallationToken` return `null` exactly
- * like a transient exchange failure, but deterministically: the retry replays
- * the same `null` and has no token to post feedback with. Keep the pre-retry
- * terminal 502 for that misconfiguration (Codex P2 on #1585).
- */
-function isRetryableCommentFailure(code: string, env: Env): boolean {
-  if (!RETRYABLE_COMMENT_FAILURE_CODES.has(code)) return false;
-  if (code === 'TOKEN_MINT_FAILED' && (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY)) {
-    return false;
-  }
-  return true;
-}
+const RETRYABLE_COMMENT_FAILURE_CODES = new Set(['PR_LOOKUP_FAILED', 'ENQUEUE_UNREACHABLE']);
 
 /**
  * Comment-trigger path: a collaborator @-mentioned the bot with `review`. Gates
@@ -883,7 +878,7 @@ async function handleCommentReviewTrigger(
     return new Response(null, { status: 204 });
   }
 
-  if (isRetryableCommentFailure(first.result.code, env)) {
+  if (RETRYABLE_COMMENT_FAILURE_CODES.has(first.result.code)) {
     log('info', 'webhook_comment_retry_scheduled', {
       deliveryId,
       repo: req.repoFullName,
@@ -893,13 +888,15 @@ async function handleCommentReviewTrigger(
     });
     const retryTask = (async () => {
       await deps.delay(COMMENT_RETRY_DELAY_MS);
-      // Bounded attempt: on timeout the underlying work keeps running
-      // unobserved (waitUntil cancels it at the budget edge) while the
-      // feedback posts now. If the attempt then lands anyway, the arriving
-      // review supersedes the notice — rare and self-correcting, unlike the
-      // silent cancellation this bound prevents.
+      // Bounded attempt: on timeout the feedback posts now instead of dying in
+      // a waitUntil cancellation at the budget edge. The losing attempt is not
+      // cancelled (no abort seam through the enqueue helper) but it stays
+      // OBSERVED: a late success logs and posts the 👀 so the state
+      // self-corrects rather than leaving contradictory 😕-plus-review
+      // feedback (fugu WARNING on #1585).
+      const attemptPromise = attempt();
       const second = await Promise.race([
-        attempt(),
+        attemptPromise,
         deps.delay(COMMENT_RETRY_ATTEMPT_BUDGET_MS).then(() => 'timeout' as const),
       ]);
       if (second === 'timeout') {
@@ -909,7 +906,33 @@ async function handleCommentReviewTrigger(
           pr: req.prNumber,
           code: 'RETRY_TIMED_OUT',
         });
-        if (!first.token) return; // no credentials — nothing can reach GitHub
+        const lateObserver = attemptPromise
+          .then(async (late) => {
+            if (!late.result.ok) return;
+            log('info', 'webhook_comment_late_success', {
+              deliveryId,
+              repo: req.repoFullName,
+              pr: req.prNumber,
+              headSha: late.result.headSha,
+              status: late.result.status,
+            });
+            await ackReaction('eyes', late.token as string);
+          })
+          .catch((err) => {
+            log('warn', 'webhook_comment_late_observer_failed', {
+              deliveryId,
+              repo: req.repoFullName,
+              pr: req.prNumber,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        // Registered separately so the retry task itself can finish now; with
+        // no ctx (unit tests / defensive) the observer floats, contained by
+        // the catch above — awaiting it would hang on a truly stuck attempt.
+        if (ctx) ctx.waitUntil(lateObserver);
+        // Retryable codes imply the first mint succeeded, so a token exists;
+        // the null check is type narrowing, not a reachable branch.
+        if (!first.token) return;
         await ackReaction('confused', first.token);
         await postFailureNotice('RETRY_TIMED_OUT', true, first.token);
         return;
@@ -944,10 +967,11 @@ async function handleCommentReviewTrigger(
         code: second.result.code,
       });
       // The retry's mint failing doesn't invalidate a first-attempt token —
-      // installation tokens live an hour, this one is ~20s old. Feedback goes
-      // log-only only when neither attempt could mint.
+      // installation tokens live an hour, this one is seconds old. Retryable
+      // codes imply the first mint succeeded, so the null check is type
+      // narrowing, not a reachable branch.
       const feedbackToken = second.token ?? first.token;
-      if (!feedbackToken) return; // no credentials — nothing can reach GitHub
+      if (!feedbackToken) return;
       await ackReaction('confused', feedbackToken);
       await postFailureNotice(second.result.code, true, feedbackToken);
     })().catch((err) => {
