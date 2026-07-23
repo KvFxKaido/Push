@@ -128,7 +128,7 @@ const RE = {
 const STREAMING_RE = {
   code: /`([^`\n]+)$/y,
   link: /\[([^\]\n]+)\]\([^)\n]*$/y,
-  strike: /~~([^\s~\n][^~\n]*?)~?$/y,
+  strike: /~~([^\s~\n][^~\n]*?)?~?$/y,
   boldItalic: /\*\*\*([^\s*\n][^*\n]*?)(?:\*{1,2})?$/y,
   bold: /\*\*([^\s*\n][^*\n]*?)\*?$/y,
   italic: /\*([^\s*\n][^*\n]*)$/y,
@@ -276,7 +276,7 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
       const partialStrike = STREAMING_RE.strike.exec(line);
       if (partialStrike && partialStrike.index === i) {
         flush();
-        spans.push({ text: stripDecorativeEmoji(partialStrike[1]), strike: true });
+        spans.push({ text: stripDecorativeEmoji(partialStrike[1] ?? ''), strike: true });
         i = STREAMING_RE.strike.lastIndex;
         continue;
       }
@@ -399,6 +399,8 @@ const HEADING = /^(#{1,6})\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
+const TASK = /^\[([ xX])\]\s+(.*)$/;
+const STREAMING_TASK = /^\[([ xX])\]?$/;
 const TABLE_DELIMITER = /^:?-{3,}:?$/;
 
 function isEscaped(text: string, index: number): boolean {
@@ -680,13 +682,20 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     }
     const bullet = BULLET.exec(raw);
     if (bullet) {
-      const task = /^\[([ xX])\]\s+(.*)$/.exec(bullet[2]);
+      const streamingTail = index === streamingTailIndex;
+      const task = TASK.exec(bullet[2]);
+      const partialTask = streamingTail ? STREAMING_TASK.exec(bullet[2]) : null;
+      const partialTaskStart = streamingTail && bullet[2] === '[';
+      const taskState = task?.[1] ?? partialTask?.[1];
       out.push({
         kind: 'bullet',
         marker: bullet[1],
-        ...(task ? { task: true, checked: task[1].toLowerCase() === 'x' } : {}),
-        spans: parseInline(task?.[2] ?? bullet[2], {
-          streamingTail: index === streamingTailIndex,
+        ...(taskState ? { task: true, checked: taskState.toLowerCase() === 'x' } : {}),
+        // Once `[` can only be growing into a task marker, keep its literal
+        // cells out of the active tail. The state glyph appears as soon as the
+        // state cell arrives; settled malformed bullets remain untouched.
+        spans: parseInline(task?.[2] ?? (partialTask || partialTaskStart ? '' : bullet[2]), {
+          streamingTail,
         }),
       });
       continue;

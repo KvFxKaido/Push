@@ -16,9 +16,15 @@ import {
 } from '../silvery/markdown.tsx';
 import { PushThemeProvider } from '../silvery/theme.tsx';
 
-async function renderMarkdownBodyRaw(text, availableWidth, streaming = false) {
+async function renderMarkdownBodyRaw(text, availableWidth, streaming = false, unicode = true) {
   const previousLang = process.env.LANG;
-  process.env.LANG = 'C.UTF-8';
+  const previousTermProgram = process.env.TERM_PROGRAM;
+  const previousWtSession = process.env.WT_SESSION;
+  process.env.LANG = unicode ? 'C.UTF-8' : 'C';
+  if (!unicode) {
+    delete process.env.TERM_PROGRAM;
+    delete process.env.WT_SESSION;
+  }
   try {
     return await renderStatic(
       React.createElement(
@@ -31,6 +37,10 @@ async function renderMarkdownBodyRaw(text, availableWidth, streaming = false) {
   } finally {
     if (previousLang === undefined) delete process.env.LANG;
     else process.env.LANG = previousLang;
+    if (previousTermProgram === undefined) delete process.env.TERM_PROGRAM;
+    else process.env.TERM_PROGRAM = previousTermProgram;
+    if (previousWtSession === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previousWtSession;
   }
 }
 
@@ -44,6 +54,10 @@ function renderedText(raw) {
 
 async function renderMarkdownBody(text, availableWidth, streaming = false) {
   return renderedText(await renderMarkdownBodyRaw(text, availableWidth, streaming));
+}
+
+async function renderMarkdownBodyAscii(text, availableWidth, streaming = false) {
+  return renderedText(await renderMarkdownBodyRaw(text, availableWidth, streaming, false));
 }
 
 describe('stripDecorativeEmoji (#1433 / law 2)', () => {
@@ -312,7 +326,7 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
   });
 
   it('classifies GFM task-list state separately from ordinary bullet text', () => {
-    const lines = parseMarkdown('- [ ] open\n- [x] done\n- ordinary');
+    const lines = parseMarkdown('- [ ] open\n- [x] done\n- [X] DONE\n- ordinary');
     assert.deepEqual(lines[0], {
       kind: 'bullet',
       marker: '',
@@ -327,7 +341,9 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
       checked: true,
       spans: [{ text: 'done' }],
     });
-    assert.equal(lines[2].task, undefined);
+    assert.equal(lines[2].task, true);
+    assert.equal(lines[2].checked, true);
+    assert.equal(lines[3].task, undefined);
   });
 
   it('renders fenced blocks verbatim with themed fences', () => {
@@ -385,6 +401,19 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.deepEqual(parseMarkdown('live **tail')[0].spans, [{ text: 'live **tail' }]);
   });
 
+  it('repairs incomplete task markers only on the active final line', () => {
+    const lines = parseMarkdown('- [\n- [X', { streaming: true });
+    assert.equal(lines[0].task, undefined);
+    assert.deepEqual(lines[0].spans, [{ text: '[' }]);
+    assert.equal(lines[1].task, true);
+    assert.equal(lines[1].checked, true);
+    assert.deepEqual(lines[1].spans, [{ text: '' }]);
+
+    const [settled] = parseMarkdown('- [X');
+    assert.equal(settled.task, undefined);
+    assert.deepEqual(settled.spans, [{ text: '[X' }]);
+  });
+
   it('never repairs inside an unterminated fenced code block', () => {
     const lines = parseMarkdown('```ts\nconst label = "**open"', { streaming: true });
     assert.equal(lines[1].kind, 'code');
@@ -424,14 +453,24 @@ describe('MarkdownBody — semantic hierarchy', () => {
   });
 
   it('renders task state with a glyph and strikes completed text', async () => {
-    const raw = await renderMarkdownBodyRaw('- [ ] open\n- [x] done\n~~superseded~~', 80);
-    assert.equal(renderedText(raw), '☐\uFE0E open\n☑\uFE0E done\nsuperseded');
+    const raw = await renderMarkdownBodyRaw(
+      '- [ ] open\n- [x] done\n- [X] DONE\n~~superseded~~',
+      80,
+    );
+    assert.equal(renderedText(raw), '☐\uFE0E open\n☑\uFE0E done\n☑\uFE0E DONE\nsuperseded');
     const spans = parseAnsiText(raw);
     assert.equal(spans.find((span) => span.text.includes('done'))?.strikethrough, true);
     assert.equal(spans.find((span) => span.text.includes('superseded'))?.strikethrough, true);
     assert.notEqual(
       spans.find((span) => span.text.includes('☐'))?.fg,
       spans.find((span) => span.text.includes('☑'))?.fg,
+    );
+  });
+
+  it('falls back to ASCII task markers through the terminal unicode gate', async () => {
+    assert.equal(
+      await renderMarkdownBodyAscii('- [ ] open\n- [x] done\n- [X] DONE', 80),
+      '[ ] open\n[x] done\n[x] DONE',
     );
   });
 
@@ -478,6 +517,47 @@ describe('MarkdownBody — streaming prefix contract', () => {
     assert.equal(await renderMarkdownBody('***both**', 80, true), 'both');
     assert.equal(await renderMarkdownBody('*hello ', 80, true), 'hello');
     assert.equal(await renderMarkdownBody('~~later~', 80, true), 'later');
+  });
+
+  it('keeps every task-list and strikethrough prefix sane without marker churn', async () => {
+    for (const final of ['- [ ] task', '- [x] task', '- [X] task']) {
+      for (let end = 1; end <= final.length; end += 1) {
+        const prefix = final.slice(0, end);
+        assert.equal(parseMarkdown(prefix, { streaming: true }).length, 1);
+        for (const unicode of [true, false]) {
+          const raw = await renderMarkdownBodyRaw(prefix, 80, true, unicode);
+          const rendered = renderedText(raw);
+          assert.ok(
+            displayWidth(rendered) <= displayWidth(prefix),
+            `${JSON.stringify(prefix)} expanded to ${JSON.stringify(rendered)}`,
+          );
+          if (unicode && end >= 3) {
+            assert.doesNotMatch(rendered, /[\[\]]/, `literal task marker at prefix ${end}`);
+          } else if (!unicode && end === 3) {
+            assert.doesNotMatch(rendered, /[\[\]]/, 'partial ASCII task marker leaked');
+          } else if (!unicode && end >= 4) {
+            const marker = final[3].toLowerCase() === 'x' ? '[x]' : '[ ]';
+            assert.ok(rendered.startsWith(marker), `unstable ASCII task marker at prefix ${end}`);
+          }
+        }
+      }
+      assert.equal(await renderMarkdownBody(final, 80, true), await renderMarkdownBody(final, 80));
+      assert.equal(
+        await renderMarkdownBodyAscii(final, 80, true),
+        await renderMarkdownBodyAscii(final, 80),
+      );
+    }
+
+    const strike = '~~deleted~~';
+    for (let end = 1; end <= strike.length; end += 1) {
+      const prefix = strike.slice(0, end);
+      assert.equal(parseMarkdown(prefix, { streaming: true }).length, 1);
+      const raw = await renderMarkdownBodyRaw(prefix, 80, true);
+      const rendered = renderedText(raw);
+      assert.ok(displayWidth(rendered) <= displayWidth(prefix), `strike prefix ${end} expanded`);
+      if (end >= 2) assert.doesNotMatch(rendered, /~/, `literal strike marker at prefix ${end}`);
+    }
+    assert.equal(await renderMarkdownBody(strike, 80, true), await renderMarkdownBody(strike, 80));
   });
 
   it('preserves streaming repair when a table falls back to raw rows', async () => {
