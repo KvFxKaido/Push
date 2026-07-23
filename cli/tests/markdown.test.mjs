@@ -336,11 +336,13 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
   });
 
   it('classifies headings, lists, quotes, and rules', () => {
-    assert.deepEqual(parseMarkdown('## Heading')[0], {
-      kind: 'heading',
-      depth: 2,
-      spans: [{ text: 'Heading' }],
-    });
+    for (let depth = 1; depth <= 6; depth += 1) {
+      assert.deepEqual(parseMarkdown(`${'#'.repeat(depth)} Heading`)[0], {
+        kind: 'heading',
+        depth,
+        spans: [{ text: 'Heading' }],
+      });
+    }
     assert.equal(parseMarkdown('- a')[0].kind, 'bullet');
     assert.equal(parseMarkdown('3) third')[0].kind, 'ordered');
     assert.equal(parseMarkdown('> quoted')[0].kind, 'quote');
@@ -437,6 +439,31 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.deepEqual(settled.spans, [{ text: '[X]' }]);
   });
 
+  it('waits for heading whitespace on the active final line', () => {
+    assert.deepEqual(parseMarkdown('#', { streaming: true })[0], {
+      kind: 'text',
+      spans: [{ text: '#' }],
+    });
+    assert.deepEqual(parseMarkdown('##', { streaming: true })[0], {
+      kind: 'text',
+      spans: [{ text: '##' }],
+    });
+    assert.deepEqual(parseMarkdown('## ', { streaming: true })[0], {
+      kind: 'heading',
+      depth: 2,
+      spans: [{ text: '' }],
+    });
+    assert.deepEqual(parseMarkdown('## T', { streaming: true })[0], {
+      kind: 'heading',
+      depth: 2,
+      spans: [{ text: 'T' }],
+    });
+    assert.deepEqual(parseMarkdown('#notag', { streaming: true })[0], {
+      kind: 'text',
+      spans: [{ text: '#notag' }],
+    });
+  });
+
   it('never repairs inside an unterminated fenced code block', () => {
     const lines = parseMarkdown('```ts\nconst label = "**open"', { streaming: true });
     assert.equal(lines[1].kind, 'code');
@@ -458,21 +485,42 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
 });
 
 describe('MarkdownBody — semantic hierarchy', () => {
-  it('keeps heading levels distinct in grayscale while color reinforces them', async () => {
-    const raw = await renderMarkdownBodyRaw('# Primary\n## Secondary\n### Tertiary', 80);
-    assert.equal(renderedText(raw), '▌ Primary\n▪\uFE0E Secondary\n· Tertiary');
+  it('renders all six heading levels distinctly in Unicode and ASCII', async () => {
+    const source = Array.from({ length: 6 }, (_, index) => {
+      const depth = index + 1;
+      return `${'#'.repeat(depth)} H${depth}`;
+    }).join('\n');
+    const raw = await renderMarkdownBodyRaw(source, 80);
+    assert.equal(
+      renderedText(raw),
+      '▌ H1\n ▌ H2\n  ▪\uFE0E H3\n   ▪\uFE0E H4\n    · H5\n     · H6',
+    );
+    assert.equal(await renderMarkdownBodyAscii(source, 80), source);
 
     const spans = parseAnsiText(raw);
-    const primary = spans.find((span) => span.text.includes('Primary'));
-    const secondary = spans.find((span) => span.text.includes('Secondary'));
-    const tertiary = spans.find((span) => span.text.includes('Tertiary'));
-    assert.equal(primary?.bold, true);
-    assert.equal(primary?.underline, true);
-    assert.equal(secondary?.bold, true);
-    assert.notEqual(secondary?.underline, true);
-    assert.equal(tertiary?.italic, true);
-    assert.notEqual(primary?.fg, secondary?.fg);
-    assert.notEqual(secondary?.fg, tertiary?.fg);
+    const headings = Array.from({ length: 6 }, (_, index) =>
+      spans.find((span) => span.text.includes(`H${index + 1}`)),
+    );
+    for (const heading of headings.slice(0, 2)) {
+      assert.equal(heading?.bold, true);
+      assert.equal(heading?.underline, true);
+      assert.notEqual(heading?.italic, true);
+    }
+    for (const heading of headings.slice(2, 4)) {
+      assert.equal(heading?.bold, true);
+      assert.notEqual(heading?.underline, true);
+      assert.notEqual(heading?.italic, true);
+    }
+    for (const heading of headings.slice(4)) {
+      assert.equal(heading?.italic, true);
+      assert.notEqual(heading?.bold, true);
+      assert.notEqual(heading?.underline, true);
+    }
+    assert.equal(headings[0]?.fg, headings[1]?.fg);
+    assert.notEqual(headings[1]?.fg, headings[2]?.fg);
+    assert.equal(headings[2]?.fg, headings[3]?.fg);
+    assert.notEqual(headings[3]?.fg, headings[4]?.fg);
+    assert.equal(headings[4]?.fg, headings[5]?.fg);
   });
 
   it('renders task state with a glyph and strikes completed text', async () => {
@@ -514,14 +562,14 @@ describe('MarkdownBody — semantic hierarchy', () => {
 
   it('never expands heading or task-list width beyond its Markdown source', async () => {
     for (const source of [
-      '# Heading',
-      '## Heading',
-      '###### Heading',
+      ...Array.from({ length: 6 }, (_, index) => `${'#'.repeat(index + 1)} Heading`),
       '- [ ] open',
       '- [x] done',
     ]) {
-      const rendered = await renderMarkdownBody(source, 80);
-      assert.ok(displayWidth(rendered) <= displayWidth(source), source);
+      for (const unicode of [true, false]) {
+        const rendered = renderedText(await renderMarkdownBodyRaw(source, 80, false, unicode));
+        assert.ok(displayWidth(rendered) <= displayWidth(source), source);
+      }
     }
   });
 });
@@ -623,6 +671,43 @@ describe('MarkdownBody — streaming prefix contract', () => {
       '[x] done',
     ]);
     assertNoMarkerUnhide(taskSource, taskAscii, /[\[\]]/);
+  });
+
+  it('keeps ambiguous heading prefixes literal until whitespace confirms the block', async () => {
+    const headingSource = '## T';
+    const heading = await renderPrefixes(headingSource);
+    assert.deepEqual(heading, ['#', '##', ' ▌', ' ▌ T']);
+    assertNoMarkerUnhide(headingSource, heading, /#/);
+
+    const headingAscii = await renderPrefixes(headingSource, false);
+    assert.deepEqual(headingAscii, ['#', '##', '##', '## T']);
+    assertNoMarkerUnhide(headingSource, headingAscii, /#/);
+
+    const notHeadingSource = '#notag';
+    const notHeading = await renderPrefixes(notHeadingSource);
+    assert.deepEqual(notHeading, ['#', '#n', '#no', '#not', '#nota', '#notag']);
+    assertNoMarkerUnhide(notHeadingSource, notHeading, /#/);
+    for (let end = 1; end <= notHeadingSource.length; end += 1) {
+      assert.equal(
+        parseMarkdown(notHeadingSource.slice(0, end), { streaming: true })[0].kind,
+        'text',
+      );
+    }
+  });
+
+  it('keeps every streamed heading prefix to one non-expanding row', async () => {
+    const final = '###### Heading';
+    for (let end = 1; end <= final.length; end += 1) {
+      const prefix = final.slice(0, end);
+      assert.equal(parseMarkdown(prefix, { streaming: true }).length, 1);
+      for (const unicode of [true, false]) {
+        const rendered = renderedText(await renderMarkdownBodyRaw(prefix, 80, true, unicode));
+        assert.ok(
+          displayWidth(rendered) <= displayWidth(prefix),
+          `${JSON.stringify(prefix)} expanded to ${JSON.stringify(rendered)}`,
+        );
+      }
+    }
   });
 
   it('keeps every task-list and strikethrough prefix sane without marker churn', async () => {

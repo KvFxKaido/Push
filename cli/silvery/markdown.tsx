@@ -729,9 +729,8 @@ interface Marks {
   bullet: string;
   taskOpen: string;
   taskDone: string;
-  headingStrong: string;
-  headingMedium: string;
-  headingSubtle: string;
+  /** One marker per preserved ATX depth (h1–h6). */
+  headings: readonly string[];
   quoteRail: string;
   /** Single rule cell, repeated to the source rule's visible length. */
   hrCell: string;
@@ -748,9 +747,9 @@ function marksFor(unicode: boolean): Marks {
         // chrome glyphs to two-cell, full-color emoji.
         taskOpen: '☐\uFE0E ',
         taskDone: '☑\uFE0E ',
-        headingStrong: '▌ ',
-        headingMedium: '▪\uFE0E ',
-        headingSubtle: '· ',
+        // Each deeper level spends one more removed hash cell on indentation,
+        // keeping all six levels distinct without exceeding the source prefix.
+        headings: ['▌ ', ' ▌ ', '  ▪\uFE0E ', '   ▪\uFE0E ', '    · ', '     · '],
         quoteRail: '│ ',
         hrCell: '─',
         tableRail: '│',
@@ -761,9 +760,9 @@ function marksFor(unicode: boolean): Marks {
         bullet: '- ',
         taskOpen: '[ ] ',
         taskDone: '[x] ',
-        headingStrong: '# ',
-        headingMedium: '## ',
-        headingSubtle: '### ',
+        // The capability fallback is the clearest possible depth signal: the
+        // exact ATX prefix, styled through the same semantic tier as Unicode.
+        headings: ['# ', '## ', '### ', '#### ', '##### ', '###### '],
         quoteRail: '| ',
         hrCell: '-',
         tableRail: '|',
@@ -969,12 +968,10 @@ function LineView({
       return <Text color={VL_COLOR.code}>{line.raw || ' '}</Text>;
     case 'heading': {
       const depth = line.depth ?? 1;
-      const color = depth === 1 ? VL_COLOR.accent : depth === 2 ? VL_COLOR.info : VL_COLOR.muted;
-      const marker =
-        depth === 1 ? marks.headingStrong : depth === 2 ? marks.headingMedium : marks.headingSubtle;
+      const color = depth <= 2 ? VL_COLOR.accent : depth <= 4 ? VL_COLOR.info : VL_COLOR.muted;
       return (
-        <Text bold={depth <= 2} italic={depth >= 3} underline={depth === 1} color={color}>
-          {marker}
+        <Text bold={depth <= 4} italic={depth >= 5} underline={depth <= 2} color={color}>
+          {marks.headings[depth - 1] ?? marks.headings[0]}
           <Spans spans={line.spans ?? []} base={color} />
         </Text>
       );
