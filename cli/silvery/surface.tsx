@@ -11,12 +11,14 @@ import {
   countVisualLines,
   ListView,
   ModalDialog,
+  renderStringSync,
   Screen,
   Text,
   TextArea,
   TextInput,
   useApp,
   useInput,
+  useOnBoxRectCommitted,
   useStdout,
   type TextAreaHandle,
 } from 'silvery';
@@ -37,9 +39,15 @@ import { estimateTokens, formatElapsed, formatTokenCount } from '../tui-status.j
 import { detectUnicode } from '../tui-theme.js';
 import type { SilveryController, SilverySnapshot, SilveryTranscriptItem } from './controller.js';
 import { MarkdownBody } from './markdown.js';
+import {
+  assertTranscriptRenderContract,
+  tuiRenderAssertionsEnabled,
+  type TranscriptRenderSnapshot,
+} from './render-contract.js';
 import { PushThemeProvider } from './theme.js';
 import {
   groupSilveryTranscriptRows,
+  type SilveryTranscriptDisplayItem,
   type SilveryTranscriptToolGroup,
 } from './transcript-groups.js';
 import {
@@ -67,6 +75,8 @@ import {
   type ModalMotionState,
   type StreamMarkKind,
 } from './visual-language.js';
+
+const TUI_RENDER_ASSERTIONS_ENABLED = tuiRenderAssertionsEnabled();
 
 const COMMANDS = [
   { id: 'config', label: 'Open config', hint: 'edit API keys in a masked field' },
@@ -507,6 +517,144 @@ function Message({
   );
 }
 
+function renderTranscriptRowContent(item: SilveryTranscriptDisplayItem, width: number) {
+  return item.kind === 'tool_group' ? (
+    <ToolGroup group={item} />
+  ) : (
+    <Message item={item} tinted={item.kind === 'message' && item.role === 'user'} width={width} />
+  );
+}
+
+export function TranscriptRow({
+  item,
+  width,
+}: {
+  item: SilveryTranscriptDisplayItem;
+  width: number;
+}) {
+  return renderTranscriptRowContent(item, width);
+}
+
+function AssertedTranscriptRow({
+  item,
+  width,
+}: {
+  item: SilveryTranscriptDisplayItem;
+  width: number;
+}) {
+  return (
+    <>
+      {renderTranscriptRowContent(item, width)}
+      <TranscriptRenderObserver item={item} componentWidth={width} />
+    </>
+  );
+}
+
+function transcriptItemSourceText(item: SilveryTranscriptDisplayItem): string {
+  if (item.kind === 'tool_group') {
+    return item.items.map((entry) => transcriptItemSourceText(entry)).join('\n');
+  }
+  return [
+    item.text,
+    item.resultPreview,
+    item.card ? JSON.stringify(item.card) : '',
+    item.diff ? item.diff.lines.map((line) => line.text).join('\n') : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Render the same row tree into an independent buffer. The generous height is
+ * derived from source content rather than the committed measurement, so an
+ * under-measured row cannot clip the evidence used to diagnose itself.
+ */
+export function renderTranscriptRowForAssertion({
+  item,
+  layoutWidth,
+  componentWidth = layoutWidth,
+}: {
+  item: SilveryTranscriptDisplayItem;
+  layoutWidth: number;
+  componentWidth?: number;
+}): TranscriptRenderSnapshot {
+  const width = Math.max(1, Math.floor(layoutWidth));
+  const sourceHeight = countVisualLines(transcriptItemSourceText(item), width);
+  const bufferHeight = Math.max(8, sourceHeight + 16);
+  let contentHeight = 0;
+  const ansi = renderStringSync(
+    <Box flexDirection="column" width={width}>
+      {renderTranscriptRowContent(item, componentWidth)}
+    </Box>,
+    {
+      width,
+      height: bufferHeight,
+      plain: false,
+      trimTrailingWhitespace: false,
+      trimEmptyLines: false,
+      onContentHeight: (height) => {
+        contentHeight = height;
+      },
+    },
+  );
+  return { ansi, contentHeight };
+}
+
+function TranscriptRenderObserver({
+  item,
+  componentWidth,
+}: {
+  item: SilveryTranscriptDisplayItem;
+  componentWidth: number;
+}) {
+  const latestRect = useRef<{ width: number; height: number } | null>(null);
+  const lastAssertion = useRef<{
+    item: SilveryTranscriptDisplayItem;
+    width: number;
+    height: number;
+  } | null>(null);
+  const scheduleAssertion = useCallback(
+    (rect: { width: number; height: number }) => {
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const layoutWidth = Math.max(1, Math.floor(rect.width));
+      const measuredHeight = Math.floor(rect.height);
+      const previous = lastAssertion.current;
+      if (
+        previous?.item === item &&
+        previous.width === layoutWidth &&
+        previous.height === measuredHeight
+      ) {
+        return;
+      }
+      lastAssertion.current = { item, width: layoutWidth, height: measuredHeight };
+      queueMicrotask(() => {
+        const rendered = renderTranscriptRowForAssertion({
+          item,
+          layoutWidth,
+          componentWidth,
+        });
+        assertTranscriptRenderContract({
+          rowId: item.id,
+          rowKind: item.kind,
+          width: layoutWidth,
+          measuredHeight,
+          rendered,
+        });
+      });
+    },
+    [componentWidth, item],
+  );
+
+  useOnBoxRectCommitted((rect) => {
+    latestRect.current = rect;
+    scheduleAssertion(rect);
+  });
+  useEffect(() => {
+    if (latestRect.current) scheduleAssertion(latestRect.current);
+  }, [scheduleAssertion]);
+  return null;
+}
+
 function InteractionModal({
   interaction,
   controller,
@@ -728,14 +876,10 @@ function Transcript({
       scrollbarVisibility="always"
       getKey={(item) => item.id}
       renderItem={(item) =>
-        item.kind === 'tool_group' ? (
-          <ToolGroup group={item} />
+        TUI_RENDER_ASSERTIONS_ENABLED ? (
+          <AssertedTranscriptRow item={item} width={width} />
         ) : (
-          <Message
-            item={item}
-            tinted={item.kind === 'message' && item.role === 'user'}
-            width={width}
-          />
+          renderTranscriptRowContent(item, width)
         )
       }
     />
