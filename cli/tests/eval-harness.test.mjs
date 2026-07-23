@@ -17,7 +17,9 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 
 import {
+  buildCacheProbePlan,
   countSessionEvents,
+  evaluateCacheProbe,
   extractCliRunFields,
   isCompleted,
   median,
@@ -310,4 +312,209 @@ test('summarizeTrials computes completion rate, medians, and tool-error rate', (
   assert.equal(median([]), null);
   assert.equal(median([7]), 7);
   assert.equal(median([1, 2, 3]), 2);
+});
+
+// ─── cache-bypass preflight (#1554) ──────────────────────────────────────
+
+test('buildCacheProbePlan mirrors the transport: bypass header on gateway routes only', () => {
+  const gateway = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/zen/api/paas/v4/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in gateway);
+  assert.equal(gateway.request.headers['cf-aig-skip-cache'], 'true');
+  assert.equal(gateway.request.headers.Authorization, 'Bearer k');
+
+  const direct = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://api.z.ai/api/paas/v4/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in direct);
+  assert.equal(direct.request.headers['cf-aig-skip-cache'], undefined);
+});
+
+test('buildCacheProbePlan sends identical bodies across calls and omits auth when keyless', () => {
+  const build = () =>
+    buildCacheProbePlan({
+      id: 'zen',
+      url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/zen/v1/chat/completions',
+      apiKey: '',
+      model: 'glm-5.1',
+    });
+  const a = build();
+  const b = build();
+  assert.ok('request' in a && 'request' in b);
+  // The whole point of the probe: the second request must be byte-identical.
+  assert.equal(a.request.body, b.request.body);
+  assert.equal(a.request.headers.Authorization, undefined);
+  const body = JSON.parse(a.request.body);
+  assert.equal(body.model, 'glm-5.1');
+  assert.equal(body.stream, false);
+});
+
+test('buildCacheProbePlan speaks each dialect', () => {
+  const anthropic = buildCacheProbePlan({
+    id: 'anthropic',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/anthropic/v1/messages',
+    streamShape: 'anthropic',
+    apiKey: 'sk',
+    model: 'claude-sonnet-4-6',
+  });
+  assert.ok('request' in anthropic);
+  assert.equal(anthropic.request.headers['x-api-key'], 'sk');
+  assert.equal(anthropic.request.headers['anthropic-version'], '2023-06-01');
+  assert.equal(JSON.parse(anthropic.request.body).max_tokens, 16);
+
+  const responses = buildCacheProbePlan({
+    id: 'openai',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/openai/responses',
+    streamShape: 'openai-responses',
+    apiKey: 'k',
+    model: 'gpt-5.4',
+  });
+  assert.ok('request' in responses);
+  assert.equal(JSON.parse(responses.request.body).max_output_tokens, 16);
+
+  const gemini = buildCacheProbePlan({
+    id: 'google',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/google-ai-studio/v1beta',
+    streamShape: 'gemini',
+    apiKey: 'AIza',
+    model: 'gemini-3.1-pro-preview',
+  });
+  assert.ok('request' in gemini);
+  assert.match(gemini.request.url, /:streamGenerateContent/);
+  assert.equal(gemini.request.headers['x-goog-api-key'], 'AIza');
+  // The model rides the URL for gemini, so the header check keys off the
+  // final upstream URL, not the base.
+  assert.equal(gemini.request.headers['cf-aig-skip-cache'], 'true');
+});
+
+test('buildCacheProbePlan skips openrouter only on its direct host', () => {
+  const direct = buildCacheProbePlan({
+    id: 'openrouter',
+    url: 'https://openrouter.ai/api/v1',
+    streamShape: 'openai-responses',
+    apiKey: 'k',
+    model: 'anthropic/claude-haiku-4.5',
+  });
+  assert.ok('skip' in direct);
+  assert.match(direct.skip, /openrouter/);
+
+  // A gateway-pinned OpenRouter URL (profile/env override) gets the strict
+  // probe on the chat wire, not the skip — the production transports send
+  // the bypass on it, so the preflight must assert it (fugu, #1581).
+  const gateway = buildCacheProbePlan({
+    id: 'openrouter',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/openrouter/api/v1/responses',
+    streamShape: 'openai-responses',
+    apiKey: 'k',
+    model: 'anthropic/claude-haiku-4.5',
+  });
+  assert.ok('request' in gateway);
+  assert.equal(gateway.request.gatewayRoute, true);
+  assert.match(gateway.request.url, /\/chat\/completions$/);
+  assert.equal(gateway.request.headers['cf-aig-skip-cache'], 'true');
+  const body = JSON.parse(gateway.request.body);
+  assert.ok(Array.isArray(body.messages));
+  assert.equal(body.max_tokens, 16);
+});
+
+function probePair(
+  secondCacheStatus,
+  { gatewayRoute = false, first = 200, second = 200, firstCacheStatus = null } = {},
+) {
+  return {
+    gatewayRoute,
+    first: { status: first, cacheStatus: firstCacheStatus },
+    second: { status: second, cacheStatus: secondCacheStatus },
+  };
+}
+
+test('evaluateCacheProbe fails on a verified replay on any route', () => {
+  assert.equal(evaluateCacheProbe(probePair('HIT')).ok, false);
+  assert.equal(evaluateCacheProbe(probePair('hit')).ok, false);
+  assert.equal(evaluateCacheProbe(probePair('HIT', { gatewayRoute: true })).ok, false);
+  // A HIT outranks the status gate — even an error pair with a HIT fails as
+  // a replay, not as an unclean probe.
+  assert.equal(evaluateCacheProbe(probePair('HIT', { first: 500, second: 500 })).ok, false);
+  assert.match(evaluateCacheProbe(probePair('HIT')).reason, /1554/);
+  // A FIRST-call HIT is replay evidence too: the constant probe body can hit
+  // an entry seeded by an earlier preflight (aborted-run re-run), and that
+  // entry can expire before the delayed second call — HIT/MISS must not pass.
+  assert.equal(evaluateCacheProbe(probePair('MISS', { firstCacheStatus: 'HIT' })).ok, false);
+  assert.equal(
+    evaluateCacheProbe(probePair('BYPASS', { gatewayRoute: true, firstCacheStatus: 'hit' })).ok,
+    false,
+  );
+  assert.match(
+    evaluateCacheProbe(probePair('MISS', { firstCacheStatus: 'HIT' })).reason,
+    /first call/,
+  );
+});
+
+test('evaluateCacheProbe is strict on detected gateway routes', () => {
+  const gw = { gatewayRoute: true };
+  assert.equal(evaluateCacheProbe(probePair('MISS', gw)).ok, true);
+  assert.equal(evaluateCacheProbe(probePair('BYPASS', gw)).ok, true);
+  // Unverified is failure where verification was possible: a missing header
+  // or an unclean status pair aborts instead of passing as inconclusive.
+  assert.equal(evaluateCacheProbe(probePair(null, gw)).ok, false);
+  assert.match(evaluateCacheProbe(probePair(null, gw)).reason, /unverified/);
+  assert.equal(
+    evaluateCacheProbe(probePair('MISS', { gatewayRoute: true, second: 429 })).ok,
+    false,
+  );
+  assert.equal(
+    evaluateCacheProbe(probePair(null, { gatewayRoute: true, first: 401, second: 401 })).ok,
+    false,
+  );
+});
+
+test('evaluateCacheProbe stays lenient off gateway routes', () => {
+  assert.equal(evaluateCacheProbe(probePair('MISS')).ok, true);
+  assert.equal(evaluateCacheProbe(probePair(null)).ok, true);
+  assert.equal(evaluateCacheProbe(probePair('')).ok, true);
+  // Direct providers carry no gateway header and may 4xx on the hand-built
+  // probe; neither is replay evidence, so the suite proceeds (with a caveat
+  // in the reason, not a silent pass).
+  const errPair = evaluateCacheProbe(probePair(null, { first: 404, second: 404 }));
+  assert.equal(errPair.ok, true);
+  assert.match(errPair.reason, /404/);
+});
+
+test('buildCacheProbePlan stamps gatewayRoute from the final probe URL', () => {
+  const gateway = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/zen/v1/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in gateway);
+  assert.equal(gateway.request.gatewayRoute, true);
+
+  const direct = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://api.z.ai/api/paas/v4/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in direct);
+  assert.equal(direct.request.gatewayRoute, false);
+
+  // Gemini's model rides the URL — the stamp comes off the FINAL upstream
+  // URL, same as its header check.
+  const gemini = buildCacheProbePlan({
+    id: 'google',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/google-ai-studio/v1beta',
+    streamShape: 'gemini',
+    apiKey: 'AIza',
+    model: 'gemini-3.1-pro-preview',
+  });
+  assert.ok('request' in gemini);
+  assert.equal(gemini.request.gatewayRoute, true);
 });

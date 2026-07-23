@@ -27,6 +27,7 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
+import { aiGatewaySkipCacheHeaders } from '../lib/ai-gateway.ts';
 import { geminiEventStream, toGeminiGenerateContent } from '../lib/gemini-bridge.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
@@ -82,6 +83,7 @@ async function* cliGeminiStream(
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers['x-goog-api-key'] = apiKey;
+  Object.assign(headers, aiGatewaySkipCacheHeaders(upstreamUrl));
 
   const response = await fetch(upstreamUrl, {
     method: 'POST',

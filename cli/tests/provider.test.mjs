@@ -2498,3 +2498,121 @@ describe('streamCompletion reasoning-block forwarding (direct Anthropic)', () =>
     });
   });
 });
+
+// ─── AI Gateway cache bypass (#1554) ─────────────────────────────────────
+//
+// Every CLI transport must send `cf-aig-skip-cache: true` when its
+// configured URL is an AI Gateway route (user config can point any provider
+// at a push-gate provider-native route), and must NOT leak the header to
+// direct provider hosts. The gemini transport's copy of this test lives in
+// gemini-stream.test.mjs beside its URL-construction fixtures.
+
+describe('AI Gateway cache-bypass headers (#1554)', () => {
+  const GATEWAY_BASE = 'https://gateway.ai.cloudflare.com/v1/acct/push-gate';
+
+  function stringToStream(s) {
+    const encoder = new TextEncoder();
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(s));
+        controller.close();
+      },
+    });
+  }
+
+  function captureFetch(sse) {
+    const calls = [];
+    const handler = async (url, init) => {
+      calls.push({ url, init });
+      return {
+        ok: true,
+        status: 200,
+        body: stringToStream(sse),
+        headers: new Headers({ 'content-type': 'text/event-stream' }),
+        text: async () => sse,
+      };
+    };
+    return { calls, handler };
+  }
+
+  const CHAT_SSE = `data: ${JSON.stringify({
+    choices: [{ delta: { content: 'ok' } }],
+  })}\n\ndata: [DONE]\n\n`;
+  const RESPONSES_SSE = [
+    `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'ok' })}\n\n`,
+    `data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed' } })}\n\n`,
+  ].join('');
+  const ANTHROPIC_SSE = [
+    `data: ${JSON.stringify({
+      type: 'content_block_delta',
+      delta: { type: 'text_delta', text: 'ok' },
+    })}\n\n`,
+    `data: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+  ].join('');
+
+  let originalFetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  async function drain(stream, provider, model) {
+    for await (const _ of stream({
+      provider,
+      model,
+      messages: [{ id: 'm0', role: 'user', content: 'hi', timestamp: 0 }],
+    })) {
+      // drain
+    }
+  }
+
+  it('openai-compat sends the bypass on gateway routes only', async () => {
+    const { calls, handler } = captureFetch(CHAT_SSE);
+    globalThis.fetch = handler;
+    const gateway = {
+      id: 'zen',
+      url: `${GATEWAY_BASE}/zen/api/paas/v4/chat/completions`,
+      defaultModel: 'glm-5.1',
+      apiKeyEnv: ['TEST_AIG_KEY'],
+      requiresKey: false,
+    };
+    await drain(createProviderStream(gateway, 'key'), 'zen', 'glm-5.1');
+    assert.equal(calls[0].init.headers['cf-aig-skip-cache'], 'true');
+
+    const direct = { ...gateway, url: 'https://api.z.ai/api/paas/v4/chat/completions' };
+    await drain(createProviderStream(direct, 'key'), 'zen', 'glm-5.1');
+    assert.equal(calls[1].init.headers['cf-aig-skip-cache'], undefined);
+  });
+
+  it('openai-responses sends the bypass on gateway routes', async () => {
+    const { calls, handler } = captureFetch(RESPONSES_SSE);
+    globalThis.fetch = handler;
+    const gateway = {
+      id: 'openai',
+      url: `${GATEWAY_BASE}/openai/responses`,
+      defaultModel: 'gpt-5.4',
+      apiKeyEnv: ['TEST_AIG_KEY'],
+      requiresKey: false,
+      streamShape: 'openai-responses',
+    };
+    await drain(createProviderStream(gateway, 'key'), 'openai', 'gpt-5.4');
+    assert.equal(calls[0].init.headers['cf-aig-skip-cache'], 'true');
+  });
+
+  it('anthropic sends the bypass on gateway routes', async () => {
+    const { calls, handler } = captureFetch(ANTHROPIC_SSE);
+    globalThis.fetch = handler;
+    const gateway = {
+      id: 'anthropic',
+      url: `${GATEWAY_BASE}/anthropic/v1/messages`,
+      defaultModel: 'claude-sonnet-4-6',
+      apiKeyEnv: ['TEST_AIG_KEY'],
+      requiresKey: false,
+      streamShape: 'anthropic',
+    };
+    await drain(createProviderStream(gateway, 'sk'), 'anthropic', 'claude-opus-4-7');
+    assert.equal(calls[0].init.headers['cf-aig-skip-cache'], 'true');
+  });
+});
