@@ -115,6 +115,16 @@ is real but spread across `working-memory` / `context-memory*` /
 `correlation-context`; a facade pressures it into one object.
 
 ### 3. OpenTelemetry exporter — cheap ops win
+
+> **Resolved by posture, not code (2026-07-23).** #1190 closed as not-planned:
+> the visibility goal this gap ranked on is met Cloudflare-natively for the
+> sole deployment that exists (Workers Observability over the structured logs,
+> Logpush→R2 traces #1577, cost/cache capture #951 + AI Gateway inspection,
+> `/api/_stats` via Analytics Engine). What remained was portability to
+> arbitrary OTel backends — a maintenance contract for external users Push
+> doesn't have. Accepted residue and the reopen trigger live in #1190's
+> closing comment.
+
 Push has the telemetry *data* (`prompt-cost-telemetry.ts`, `loop-metrics.ts`,
 structured logs) but no OTel exporter. A thin `registerTelemetry`-shaped adapter
 that maps existing `RunEvent`s + cost telemetry to OTel spans would let users
