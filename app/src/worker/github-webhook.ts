@@ -632,14 +632,22 @@ async function handlePullRequestReviewRoutine(c: WebhookRoutineContext): Promise
 
 /**
  * Delay before the single transient-failure retry. `waitUntil` gives the whole
- * request 30 seconds after the response, shared across every deferred task —
- * the delay must leave headroom inside that budget for the retry's own GitHub
- * calls (token mint, refs lookup, DO forward, reaction/notice). GitHub's
- * secondary-limit guidance prefers a 60s wait, but that doesn't fit the
- * runtime; one 20s-delayed attempt plus a visible failure notice is the
- * tradeoff (#1584).
+ * request 30 seconds after the response, shared across every deferred task, so
+ * the arithmetic must close: 10s delay + a 12s-bounded attempt + feedback
+ * posting lands well inside the budget. GitHub's secondary-limit guidance
+ * prefers a 60s wait, which doesn't fit the runtime at all; one delayed
+ * attempt plus a visible failure notice is the tradeoff (#1584).
  */
-export const COMMENT_RETRY_DELAY_MS = 20_000;
+export const COMMENT_RETRY_DELAY_MS = 10_000;
+
+/**
+ * Hard bound on the retry attempt itself. An unbounded attempt can outspend
+ * the whole budget on its own — `githubFetch` allows 15s per call with up to 3
+ * retries — and a `waitUntil` cancellation at the budget edge would kill the
+ * task *before the feedback posts*, recreating the silent failure this path
+ * exists to eliminate. Feedback wins over completion.
+ */
+export const COMMENT_RETRY_ATTEMPT_BUDGET_MS = 12_000;
 
 /**
  * Failure codes worth one retry: the GitHub-API-transient shapes (a 403/5xx on
@@ -653,6 +661,20 @@ const RETRYABLE_COMMENT_FAILURE_CODES = new Set([
   'PR_LOOKUP_FAILED',
   'ENQUEUE_UNREACHABLE',
 ]);
+
+/**
+ * Missing App credentials make `mintInstallationToken` return `null` exactly
+ * like a transient exchange failure, but deterministically: the retry replays
+ * the same `null` and has no token to post feedback with. Keep the pre-retry
+ * terminal 502 for that misconfiguration (Codex P2 on #1585).
+ */
+function isRetryableCommentFailure(code: string, env: Env): boolean {
+  if (!RETRYABLE_COMMENT_FAILURE_CODES.has(code)) return false;
+  if (code === 'TOKEN_MINT_FAILED' && (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY)) {
+    return false;
+  }
+  return true;
+}
 
 /**
  * Comment-trigger path: a collaborator @-mentioned the bot with `review`. Gates
@@ -861,7 +883,7 @@ async function handleCommentReviewTrigger(
     return new Response(null, { status: 204 });
   }
 
-  if (RETRYABLE_COMMENT_FAILURE_CODES.has(first.result.code)) {
+  if (isRetryableCommentFailure(first.result.code, env)) {
     log('info', 'webhook_comment_retry_scheduled', {
       deliveryId,
       repo: req.repoFullName,
@@ -871,7 +893,27 @@ async function handleCommentReviewTrigger(
     });
     const retryTask = (async () => {
       await deps.delay(COMMENT_RETRY_DELAY_MS);
-      const second = await attempt();
+      // Bounded attempt: on timeout the underlying work keeps running
+      // unobserved (waitUntil cancels it at the budget edge) while the
+      // feedback posts now. If the attempt then lands anyway, the arriving
+      // review supersedes the notice — rare and self-correcting, unlike the
+      // silent cancellation this bound prevents.
+      const second = await Promise.race([
+        attempt(),
+        deps.delay(COMMENT_RETRY_ATTEMPT_BUDGET_MS).then(() => 'timeout' as const),
+      ]);
+      if (second === 'timeout') {
+        log('error', 'webhook_comment_retry_failed', {
+          deliveryId,
+          repo: req.repoFullName,
+          pr: req.prNumber,
+          code: 'RETRY_TIMED_OUT',
+        });
+        if (!first.token) return; // no credentials — nothing can reach GitHub
+        await ackReaction('confused', first.token);
+        await postFailureNotice('RETRY_TIMED_OUT', true, first.token);
+        return;
+      }
       if (second.result.ok) {
         log('info', 'webhook_comment_retry_succeeded', {
           deliveryId,

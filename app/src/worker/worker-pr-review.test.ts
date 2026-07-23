@@ -332,6 +332,24 @@ describe('handlePrReviewRoute — run', () => {
     expect(res.status).toBe(503);
   });
 
+  it('maps a rejected DO forward to 502 ENQUEUE_UNREACHABLE instead of throwing', async () => {
+    // Exercises the production catch in enqueueReviewForExistingPr (this suite
+    // runs the real helper): a DO stub fetch can reject on transport failure,
+    // which must become a result, not an escaped rejection that 500s the route.
+    const stub: FakeStub = {
+      fetch: vi.fn(async () => {
+        throw new Error('durable object reset');
+      }),
+    };
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/run', { repo: 'octo/repo', pr: 7 }),
+      runEnv({ PrReviewJob: makePrReviewNamespace(stub) }),
+      'run',
+    );
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: 'ENQUEUE_UNREACHABLE' });
+  });
+
   it('rejects a draft or closed PR (409) without enqueueing', async () => {
     fetchRefsMock.mockResolvedValueOnce({
       headSha: 'sha-1',
