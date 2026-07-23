@@ -257,6 +257,42 @@ No toasts, no spinner-with-a-lie, no passive voice hiding the actor. Ops narrati
 stream content (law 1) styled as prose, not as chrome. When writing a new runtime event's
 user-facing line, write the sentence a competent operator would say out loud.
 
+## Streaming Markdown adaptation
+
+Adopted 2026-07-23 after comparing the Silvery renderer with Vercel's
+[Streamdown](https://github.com/vercel/streamdown). The useful portability boundary is its
+streaming behavior, not its React-DOM renderer: Streamdown repairs incomplete Markdown
+before parsing and keeps completed blocks stable while the active tail grows. Its browser
+components, Tailwind styling, remark/rehype tree, controls, animation, Mermaid, and math do
+not belong in the terminal.
+
+The TUI adopts the first behavior through its own grammar:
+
+- Only a **live** machine-authored message receives incomplete-inline repair. Settled
+  malformed Markdown stays literal; history is never silently rewritten.
+- Repair is limited to the **active final source line**, and never runs inside fenced code.
+  This preserves the renderer's one-source-line/one-row height contract and deliberately
+  avoids inventing cross-line emphasis semantics.
+- The repair vocabulary is exactly the syntax `markdown.tsx` can render: asterisk emphasis,
+  inline backticks, and a link whose label is complete but destination is still arriving.
+  An incomplete link renders as label text only; a partial URL is neither accented nor
+  echoed into the transcript.
+- Repair may only remove visible marker cells. It must not add a row or increase the
+  displayed width of a source line. The table fit-or-raw rule remains unchanged.
+
+The second Streamdown idea — stable block parsing and memoized completed blocks — is a
+measured follow-up, not part of this slice. `markdown.tsx` is substantially cheaper than a
+remark pipeline, and Silvery already reconciles retained rows; introduce block caching only
+if profiling a long live response shows full-tail parsing or repeated fence highlighting is
+material. In particular, the current choice to syntax-highlight an unterminated fence is
+intentional and stays in force unless measurement justifies trading live color for less
+work.
+
+Streaming Markdown regressions are tested as prefixes, not only as completed examples. For
+every relevant partial form, tests pin source-line count, width non-expansion, live-only
+repair, fence isolation, and convergence on the ordinary settled parse once the closing
+syntax arrives.
+
 ## Capability tiers (inherited from v1 spec)
 
 The language must remain fully usable at every tier:

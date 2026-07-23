@@ -17,12 +17,12 @@ import {
 
 const stripAnsi = (text) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 
-async function renderMarkdownBody(text, availableWidth) {
+async function renderMarkdownBody(text, availableWidth, streaming = false) {
   const previousLang = process.env.LANG;
   process.env.LANG = 'C.UTF-8';
   try {
     const rendered = await renderStatic(
-      React.createElement(MarkdownBody, { text, availableWidth }),
+      React.createElement(MarkdownBody, { text, availableWidth, streaming }),
       { width: 80, height: 12 },
     );
     return stripAnsi(rendered).trimEnd();
@@ -148,6 +148,55 @@ describe('parseInline (law 2 span budget)', () => {
     assert.deepEqual(parseInline('    indented line'), [{ text: '    indented line' }]);
     assert.deepEqual(parseInline('col1    col2    '), [{ text: 'col1    col2    ' }]);
   });
+
+  it('repairs supported half-open inline syntax only for a streaming tail', () => {
+    assert.deepEqual(parseInline('This is **bold', { streamingTail: true }), [
+      { text: 'This is ' },
+      { text: 'bold', bold: true },
+    ]);
+    assert.deepEqual(parseInline('Run `npm test', { streamingTail: true }), [
+      { text: 'Run ' },
+      { text: 'npm test', code: true },
+    ]);
+    assert.deepEqual(parseInline('***both', { streamingTail: true }), [
+      { text: 'both', bold: true, italic: true },
+    ]);
+    assert.deepEqual(parseInline('*italic', { streamingTail: true }), [
+      { text: 'italic', italic: true },
+    ]);
+  });
+
+  it('preserves the opened emphasis kind while a closing delimiter arrives', () => {
+    assert.deepEqual(parseInline('**bold*', { streamingTail: true }), [
+      { text: 'bold', bold: true },
+    ]);
+    assert.deepEqual(parseInline('***both**', { streamingTail: true }), [
+      { text: 'both', bold: true, italic: true },
+    ]);
+    assert.deepEqual(parseInline('*hello ', { streamingTail: true }), [
+      { text: 'hello ', italic: true },
+    ]);
+  });
+
+  it('renders an incomplete link as label text without a partial destination', () => {
+    assert.deepEqual(parseInline('See [Push](https://exam', { streamingTail: true }), [
+      { text: 'See ' },
+      { text: 'Push' },
+    ]);
+    // Image syntax is not link syntax; leave the partial source lossless.
+    assert.deepEqual(parseInline('![alt](https://exam', { streamingTail: true }), [
+      { text: '![alt](https://exam' },
+    ]);
+  });
+
+  it('does not reinterpret ambiguous asterisks as partial emphasis', () => {
+    assert.deepEqual(parseInline('2 * 3', { streamingTail: true }), [{ text: '2 * 3' }]);
+    assert.deepEqual(parseInline('2*3', { streamingTail: true }), [{ text: '2*3' }]);
+    assert.deepEqual(parseInline('src/*', { streamingTail: true }), [{ text: 'src/*' }]);
+    assert.deepEqual(parseInline('src/**generated', { streamingTail: true }), [
+      { text: 'src/**generated' },
+    ]);
+  });
 });
 
 describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
@@ -212,6 +261,67 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.equal(line.kind, 'ordered');
     assert.equal(line.marker, '  2. ');
     assert.deepEqual(line.spans, [{ text: 'second' }]);
+  });
+
+  it('repairs only the final line of a live message', () => {
+    const lines = parseMarkdown('settled **open\nlive **tail', { streaming: true });
+    assert.deepEqual(lines[0].spans, [{ text: 'settled **open' }]);
+    assert.deepEqual(lines[1].spans, [{ text: 'live ' }, { text: 'tail', bold: true }]);
+    assert.deepEqual(parseMarkdown('live **tail')[0].spans, [{ text: 'live **tail' }]);
+  });
+
+  it('never repairs inside an unterminated fenced code block', () => {
+    const lines = parseMarkdown('```ts\nconst label = "**open"', { streaming: true });
+    assert.equal(lines[1].kind, 'code');
+    assert.equal(lines[1].raw, 'const label = "**open"');
+  });
+
+  it('repairs the open final cell of a streaming table without changing row count', () => {
+    const text = '| A | B |\n| --- | --- |\n| one | **two';
+    const lines = parseMarkdown(text, { streaming: true });
+    assert.equal(lines.length, text.split('\n').length);
+    assert.deepEqual(lines[2].cells[1], [{ text: 'two', bold: true }]);
+
+    const shortRow = parseMarkdown('| A | B | C |\n| --- | --- | --- |\n| one | **two', {
+      streaming: true,
+    });
+    assert.deepEqual(shortRow[2].cells[1], [{ text: 'two', bold: true }]);
+    assert.deepEqual(shortRow[2].cells[2], [{ text: '' }]);
+  });
+});
+
+describe('MarkdownBody — streaming prefix contract', () => {
+  it('hides half-open markers live but leaves the same malformed text literal when settled', async () => {
+    assert.equal(await renderMarkdownBody('Use **bold', 80, true), 'Use bold');
+    assert.equal(await renderMarkdownBody('Use **bold', 80), 'Use **bold');
+    assert.equal(await renderMarkdownBody('See [Push](https://exam', 80, true), 'See Push');
+  });
+
+  it('keeps partial closing delimiters hidden without changing emphasis kind', async () => {
+    assert.equal(await renderMarkdownBody('**bold*', 80, true), 'bold');
+    assert.equal(await renderMarkdownBody('***both**', 80, true), 'both');
+    assert.equal(await renderMarkdownBody('*hello ', 80, true), 'hello');
+  });
+
+  it('preserves streaming repair when a table falls back to raw rows', async () => {
+    const text = '| A | B |\n| --- | --- |\n| one | **two';
+    assert.equal(await renderMarkdownBody(text, 8, true), '| A | B |\n| --- | --- |\n| one | two');
+    assert.equal(await renderMarkdownBody(text, 8), text);
+  });
+
+  it('preserves source line count and never expands ASCII width for every streamed prefix', async () => {
+    const final = 'Use **bold** with `code` and [docs](https://example.com).';
+    for (let end = 1; end <= final.length; end += 1) {
+      const prefix = final.slice(0, end);
+      const parsed = parseMarkdown(prefix, { streaming: true });
+      assert.equal(parsed.length, prefix.split('\n').length, `line count at prefix ${end}`);
+      const rendered = await renderMarkdownBody(prefix, 120, true);
+      assert.ok(rendered.length <= prefix.length, `width expanded at prefix ${end}`);
+    }
+    assert.equal(
+      await renderMarkdownBody(final, 120, true),
+      await renderMarkdownBody(final, 120, false),
+    );
   });
 });
 
