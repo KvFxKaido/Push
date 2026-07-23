@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import React from 'react';
-import { renderStatic } from 'silvery';
+import { parseAnsiText, renderStatic, stripAnsi } from 'silvery';
 
 import {
   MarkdownBody,
@@ -15,21 +15,22 @@ import {
   stripDecorativeEmoji,
 } from '../silvery/markdown.tsx';
 
-const stripAnsi = (text) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
-
-async function renderMarkdownBody(text, availableWidth, streaming = false) {
+async function renderMarkdownBodyRaw(text, availableWidth, streaming = false) {
   const previousLang = process.env.LANG;
   process.env.LANG = 'C.UTF-8';
   try {
-    const rendered = await renderStatic(
+    return await renderStatic(
       React.createElement(MarkdownBody, { text, availableWidth, streaming }),
       { width: 80, height: 12 },
     );
-    return stripAnsi(rendered).trimEnd();
   } finally {
     if (previousLang === undefined) delete process.env.LANG;
     else process.env.LANG = previousLang;
   }
+}
+
+async function renderMarkdownBody(text, availableWidth, streaming = false) {
+  return stripAnsi(await renderMarkdownBodyRaw(text, availableWidth, streaming)).trimEnd();
 }
 
 describe('stripDecorativeEmoji (#1433 / law 2)', () => {
@@ -115,6 +116,26 @@ describe('parseInline (law 2 span budget)', () => {
     ]);
   });
 
+  it('recognizes an image before ordinary link syntax and keeps its alt fallback', () => {
+    assert.deepEqual(parseInline('see ![architecture](https://x/diagram.png) here'), [
+      { text: 'see ' },
+      { text: 'architecture', image: true, url: 'https://x/diagram.png' },
+      { text: ' here' },
+    ]);
+  });
+
+  it('keeps balanced and escaped parentheses in link and image destinations', () => {
+    assert.deepEqual(parseInline('[wiki](https://x/Function_(mathematics))'), [
+      { text: 'wiki', link: true, url: 'https://x/Function_(mathematics)' },
+    ]);
+    assert.deepEqual(parseInline('[wiki](https://x/Function_\\(mathematics\\))'), [
+      { text: 'wiki', link: true, url: 'https://x/Function_(mathematics)' },
+    ]);
+    assert.deepEqual(parseInline('![](https://x/Figure_(one).png)'), [
+      { text: '', image: true, url: 'https://x/Figure_(one).png' },
+    ]);
+  });
+
   it('does not treat snake_case or bare underscores as emphasis', () => {
     assert.deepEqual(parseInline('call foo_bar_baz and __init__'), [
       { text: 'call foo_bar_baz and __init__' },
@@ -196,6 +217,49 @@ describe('parseInline (law 2 span budget)', () => {
     assert.deepEqual(parseInline('src/**generated', { streamingTail: true }), [
       { text: 'src/**generated' },
     ]);
+  });
+});
+
+describe('MarkdownBody — terminal links', () => {
+  it('carries a safe destination on both the label and visible URL', async () => {
+    const raw = await renderMarkdownBodyRaw('[Push](https://push.local/docs)', 80);
+    const linked = parseAnsiText(raw).filter((segment) => segment.hyperlink);
+    assert.ok(linked.some((segment) => segment.text.includes('Push')));
+    assert.ok(linked.some((segment) => segment.text.includes('https://push.local/docs')));
+    assert.ok(linked.every((segment) => segment.hyperlink === 'https://push.local/docs'));
+    assert.equal(stripAnsi(raw).trimEnd(), 'Push https://push.local/docs');
+  });
+
+  it('links the complete destination when its path contains balanced parentheses', async () => {
+    const url = 'https://en.wikipedia.org/wiki/Function_(mathematics)';
+    const raw = await renderMarkdownBodyRaw(`[wiki](${url})`, 80);
+    const linked = parseAnsiText(raw).filter((segment) => segment.hyperlink);
+    assert.ok(linked.some((segment) => segment.text.includes('wiki')));
+    assert.ok(linked.some((segment) => segment.text.includes(url)));
+    assert.ok(linked.every((segment) => segment.hyperlink === url));
+    assert.equal(stripAnsi(raw).trimEnd(), `wiki ${url}`);
+  });
+
+  it('renders rejected destinations as inert but readable text', async () => {
+    const raw = await renderMarkdownBodyRaw('[unsafe](javascript:alert)', 80);
+    assert.equal(parseAnsiText(raw).filter((segment) => segment.hyperlink).length, 0);
+    assert.equal(stripAnsi(raw).trimEnd(), 'unsafe javascript:alert');
+  });
+
+  it('renders image alt text and destination without a stray image marker', async () => {
+    assert.equal(
+      await renderMarkdownBody('![diagram](https://push.local/diagram.png)', 80),
+      'diagram https://push.local/diagram.png',
+    );
+  });
+
+  it('renders an empty-alt image as only its linked destination', async () => {
+    const url = 'https://push.local/diagram.png';
+    const raw = await renderMarkdownBodyRaw(`![](${url})`, 80);
+    const linked = parseAnsiText(raw).filter((segment) => segment.hyperlink);
+    assert.ok(linked.some((segment) => segment.text.includes(url)));
+    assert.ok(linked.every((segment) => segment.hyperlink === url));
+    assert.equal(stripAnsi(raw).trimEnd(), url);
   });
 });
 

@@ -9,28 +9,7 @@
 
 import type { UrlCitation } from '../lib/provider-contract.ts';
 
-/**
- * Parse a citation URL, returning null for anything that isn't a plain
- * http(s) link. Citation URLs come from upstream web-search results, so a
- * hostile or malformed entry could carry a `javascript:` / `data:` scheme —
- * those must never be surfaced as a clickable/echoed source.
- */
-export function safeCitationUrl(url: string): URL | null {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Display hostname for a parsed citation URL (drops a leading `www.`). */
-export function citationHost(parsed: URL): string {
-  return parsed.hostname.replace(/^www\./, '');
-}
-
-// Characters that must never reach the terminal verbatim from an upstream
-// page title:
+// Characters that must never reach the terminal verbatim from upstream text:
 //   - C0 (0x00–0x1F) + DEL (0x7F) + C1 (0x80–0x9F) controls, incl. ANSI ESC.
 //   - soft hyphen (00AD), zero-width + directional marks (200B–200F),
 //     line/paragraph separators (2028–2029), Bidi overrides (202A–202E,
@@ -39,10 +18,44 @@ export function citationHost(parsed: URL): string {
 // even though they aren't "control codes" in the C0/C1 sense. Built from a
 // string so no literal control bytes live in source (and to sidestep the
 // control-char regex-literal lint).
-const CONTROL_CHARS = new RegExp(
-  '[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069\\ufeff]',
-  'g',
-);
+const UNSAFE_TERMINAL_CHAR_CLASS =
+  '[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u200b-\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069\\ufeff]';
+const UNSAFE_TERMINAL_CHAR = new RegExp(UNSAFE_TERMINAL_CHAR_CLASS);
+const UNSAFE_TERMINAL_CHARS = new RegExp(UNSAFE_TERMINAL_CHAR_CLASS, 'g');
+
+function parseHttpUrl(url: string): URL | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a citation URL, returning null for anything that isn't a plain
+ * http(s) link. Citation URLs come from upstream web-search results, so a
+ * hostile or malformed entry could carry a `javascript:` / `data:` scheme —
+ * those must never be surfaced as a clickable/echoed source.
+ */
+export function safeCitationUrl(url: string): URL | null {
+  return parseHttpUrl(url);
+}
+
+/**
+ * Validate a URL before placing it into terminal hyperlink metadata. Unlike a
+ * citation URL that is only echoed as text, an OSC 8 target rejects invisible
+ * and control characters outright rather than relying on URL percent-encoding.
+ */
+export function safeTerminalUrl(url: string): URL | null {
+  if (!url || url !== url.trim() || UNSAFE_TERMINAL_CHAR.test(url)) return null;
+  return parseHttpUrl(url);
+}
+
+/** Display hostname for a parsed citation URL (drops a leading `www.`). */
+export function citationHost(parsed: URL): string {
+  return parsed.hostname.replace(/^www\./, '');
+}
 
 /**
  * Strip terminal control characters from upstream text before echoing it to
@@ -52,7 +65,7 @@ const CONTROL_CHARS = new RegExp(
  * percent-encodes control bytes.
  */
 export function sanitizeCitationText(text: string): string {
-  return text.replace(CONTROL_CHARS, ' ').trim();
+  return text.replace(UNSAFE_TERMINAL_CHARS, ' ').trim();
 }
 
 /**

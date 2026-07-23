@@ -25,8 +25,9 @@
  * onto silvery nodes.
  */
 import React, { useMemo } from 'react';
-import { Box, Text, displayWidth } from 'silvery';
+import { Box, Link, Text, displayWidth } from 'silvery';
 
+import { safeTerminalUrl } from '../citation-format.js';
 import { type CodeSpan, highlightToSpans } from '../tui-highlight.js';
 import { detectUnicode } from '../tui-theme.js';
 import { VL_COLOR, type VlColor } from './visual-language.js';
@@ -87,6 +88,8 @@ export interface InlineSpan {
   code?: boolean;
   /** Link label — rendered in the accent; `url` trails dim when informative. */
   link?: boolean;
+  /** Image alt text — terminal fallback for an image destination. */
+  image?: boolean;
   url?: string;
 }
 
@@ -105,7 +108,8 @@ export interface MdTableLayout {
 // lossy, and asterisk forms cover the common case unambiguously.
 const RE = {
   code: /`([^`\n]+)`/y,
-  link: /\[([^\]\n]+)\]\(([^)\n]+)\)/y,
+  imageStart: /!\[([^\]\n]*)\]\(/y,
+  linkStart: /\[([^\]\n]+)\]\(/y,
   boldItalic: /\*\*\*([^*\n]+?)\*\*\*/y,
   bold: /\*\*([^*\n]+?)\*\*/y,
   italic: /\*(\S|\S[^*\n]*?\S)\*/y,
@@ -145,6 +149,42 @@ function canOpenStreamingEmphasis(line: string, index: number): boolean {
   );
 }
 
+interface InlineDestination {
+  url: string;
+  end: number;
+}
+
+/** Parse a Markdown destination through its balanced closing parenthesis. */
+function parseInlineDestination(line: string, start: number): InlineDestination | null {
+  let depth = 1;
+  let url = '';
+  for (let index = start; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '\n') return null;
+    if (char === '\\' && index + 1 < line.length) {
+      const escaped = line[index + 1];
+      if (escaped === '(' || escaped === ')' || escaped === '\\') {
+        url += escaped;
+        index += 1;
+        continue;
+      }
+    }
+    if (char === '(') {
+      depth += 1;
+      url += char;
+      continue;
+    }
+    if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return url ? { url, end: index + 1 } : null;
+      url += char;
+      continue;
+    }
+    url += char;
+  }
+  return null;
+}
+
 /**
  * Split one line into styled spans. Plain runs are emoji-stripped; `code`
  * content is preserved verbatim (identifiers may legitimately hold any char).
@@ -175,12 +215,22 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
       i = RE.code.lastIndex;
       continue;
     }
-    RE.link.lastIndex = i;
-    const link = RE.link.exec(line);
-    if (link && link.index === i) {
+    RE.imageStart.lastIndex = i;
+    const image = RE.imageStart.exec(line);
+    const imageDestination = image ? parseInlineDestination(line, RE.imageStart.lastIndex) : null;
+    if (image && image.index === i && imageDestination) {
       flush();
-      spans.push({ text: stripDecorativeEmoji(link[1]), link: true, url: link[2] });
-      i = RE.link.lastIndex;
+      spans.push({ text: stripDecorativeEmoji(image[1]), image: true, url: imageDestination.url });
+      i = imageDestination.end;
+      continue;
+    }
+    RE.linkStart.lastIndex = i;
+    const link = RE.linkStart.exec(line);
+    const linkDestination = link ? parseInlineDestination(line, RE.linkStart.lastIndex) : null;
+    if (link && link.index === i && linkDestination) {
+      flush();
+      spans.push({ text: stripDecorativeEmoji(link[1]), link: true, url: linkDestination.url });
+      i = linkDestination.end;
       continue;
     }
     RE.boldItalic.lastIndex = i;
@@ -268,11 +318,15 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
   // the trim consumed it; drop those.
   if (didStrip) {
     const first = spans[0];
-    if (first && !first.code && !first.link) first.text = first.text.replace(/^ +/, '');
+    if (first && !first.code && !first.link && !first.image) {
+      first.text = first.text.replace(/^ +/, '');
+    }
     const last = spans[spans.length - 1];
-    if (last && !last.code && !last.link) last.text = last.text.replace(/ +$/, '');
+    if (last && !last.code && !last.link && !last.image) {
+      last.text = last.text.replace(/ +$/, '');
+    }
   }
-  const kept = spans.filter((span) => span.text !== '' || span.code || span.link);
+  const kept = spans.filter((span) => span.text !== '' || span.code || span.link || span.image);
   // A line that was pure emoji (or emptied by trimming) survives as a blank
   // cell so the row — and the height estimate — is preserved.
   return kept.length === 0 ? [{ text: '' }] : kept;
@@ -377,7 +431,9 @@ function spanDisplayWidth(spans: InlineSpan[]): number {
   let width = 0;
   for (const span of spans) {
     width += displayWidth(span.text);
-    if (span.link && span.url && span.url !== span.text) width += 1 + displayWidth(span.url);
+    if ((span.link || span.image) && span.url && span.url !== span.text) {
+      width += (span.text ? 1 : 0) + displayWidth(span.url);
+    }
   }
   return width;
 }
@@ -665,25 +721,55 @@ function marksFor(unicode: boolean): Marks {
       };
 }
 
-function spanColor(span: InlineSpan, base: VlColor | undefined): VlColor | undefined {
+function spanColor(
+  span: InlineSpan,
+  base: VlColor | undefined,
+  interactive = span.link || span.image,
+): VlColor | undefined {
   if (span.code) return VL_COLOR.muted;
-  if (span.link) return VL_COLOR.accent;
+  if (interactive) return VL_COLOR.accent;
   return base;
 }
 
 function Spans({ spans, base }: { spans: InlineSpan[]; base: VlColor | undefined }) {
   return (
     <>
-      {spans.map((span, index) => (
-        <React.Fragment key={index}>
-          <Text bold={span.bold} italic={span.italic} color={spanColor(span, base)}>
+      {spans.map((span, index) => {
+        const href = span.url ? safeTerminalUrl(span.url)?.href : null;
+        const isLinkLike = span.link || span.image;
+        const label = !span.text ? null : href ? (
+          <Link
+            href={href}
+            bold={span.bold}
+            italic={span.italic}
+            color={spanColor(span, base, true)}
+          >
+            {span.text}
+          </Link>
+        ) : (
+          <Text bold={span.bold} italic={span.italic} color={spanColor(span, base, false)}>
             {span.text}
           </Text>
-          {span.link && span.url && span.url !== span.text ? (
-            <Text color={VL_COLOR.muted}> {span.url}</Text>
-          ) : null}
-        </React.Fragment>
-      ))}
+        );
+        return (
+          <React.Fragment key={index}>
+            {label}
+            {isLinkLike && span.url && span.url !== span.text ? (
+              href ? (
+                <Link href={href} color={VL_COLOR.muted}>
+                  {span.text ? ' ' : ''}
+                  {span.url}
+                </Link>
+              ) : (
+                <Text color={VL_COLOR.muted}>
+                  {span.text ? ' ' : ''}
+                  {span.url}
+                </Text>
+              )
+            ) : null}
+          </React.Fragment>
+        );
+      })}
     </>
   );
 }
