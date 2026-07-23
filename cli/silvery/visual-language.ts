@@ -524,6 +524,7 @@ export type FooterScope =
   | 'running'
   | 'palette'
   | 'picker'
+  | 'reasoning'
   | 'approval'
   | 'question'
   | 'fault';
@@ -535,6 +536,8 @@ export function footerKeybinds(scope: FooterScope): string {
       return '↑↓ move · ↵ run · esc close';
     case 'picker':
       return '↑↓ move · ↵ select · esc close';
+    case 'reasoning':
+      return 'ctrl+g toggle · esc close';
     case 'approval':
       return 'y approve · n/esc deny';
     case 'question':

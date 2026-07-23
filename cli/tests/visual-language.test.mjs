@@ -389,6 +389,7 @@ describe('visual language v2 frame helpers', () => {
     assert.match(footerKeybinds('approval'), /approve/i);
     assert.match(footerKeybinds('palette'), /esc/i);
     assert.match(footerKeybinds('picker'), /select/i);
+    assert.match(footerKeybinds('reasoning'), /ctrl\+g/i);
     assert.match(footerKeybinds('running'), /cancel/i);
   });
 

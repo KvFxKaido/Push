@@ -132,6 +132,36 @@ describe('daemon transcript mirror', () => {
     assert.equal(adopted.lastSeq, 4);
   });
 
+  it('counts reasoning as visible and warns only once for each unknown event type', () => {
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'assistant_thinking_token',
+      payload: { text: 'considering' },
+    });
+    applyDaemonTranscriptEvent(mirror, { seq: 2, type: 'run_complete', payload: {} });
+    assert.equal(
+      mirror.rows.filter((row) => /response was empty/i.test(row.text)).length,
+      0,
+      'reasoning-only runs are visible through Ctrl+G',
+    );
+
+    applyDaemonTranscriptEvent(mirror, { seq: 3, type: 'future.event', payload: {} });
+    applyDaemonTranscriptEvent(mirror, { seq: 4, type: 'future.event', payload: {} });
+    assert.equal(
+      mirror.rows.filter((row) => /unknown event type "future\.event"/i.test(row.text)).length,
+      1,
+    );
+
+    const adopted = createDaemonTranscriptMirror(snapshotDaemonTranscript(mirror));
+    applyDaemonTranscriptEvent(adopted, { seq: 5, type: 'future.event', payload: {} });
+    assert.equal(
+      adopted.rows.filter((row) => /unknown event type "future\.event"/i.test(row.text)).length,
+      1,
+      'the once-per-type registry survives a daemon transcript resync',
+    );
+  });
+
   it('carries a mid-run visible-output count across a snapshot, so a post-reconnect completion is not misread as empty', () => {
     // The reason the count rides in the snapshot at all. A run emits visible
     // output, THEN the client reconnects (rebuilding the mirror from a

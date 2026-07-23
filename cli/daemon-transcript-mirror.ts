@@ -8,7 +8,9 @@ import {
   formatCitationsRow,
   formatEmptyRunWarning,
   isVisibleEmission,
+  shouldWarnAboutUnknownSilveryEvent,
 } from './silvery/event-diagnostics.js';
+import { formatUnknownEventWarning } from './tui-daemon-handshake.js';
 import { sessionMessagesToTranscriptRows } from './tui-history.ts';
 
 export type DaemonTranscriptRole =
@@ -52,11 +54,15 @@ export interface DaemonTranscriptSnapshot {
   /** Visible event count for an in-progress run. Carried through reconnect
    * snapshots so a later run_complete cannot misclassify that run as empty. */
   runVisibleEmissionCount?: number;
+  /** Unknown types already surfaced by this mirror. Preserved across daemon
+   * snapshots so completion resyncs cannot repeat the warning. */
+  warnedUnknownEventTypeList?: string[];
 }
 
 export interface DaemonTranscriptMirror extends DaemonTranscriptSnapshot {
   nextLocalId: number;
   runVisibleEmissionCount: number;
+  warnedUnknownEventTypes: Set<string>;
 }
 
 type EventLike = Pick<SessionEvent, 'seq' | 'type' | 'payload'> & { ts?: number };
@@ -154,6 +160,13 @@ export function createDaemonTranscriptMirror(
         ? snapshot.runVisibleEmissionCount
         : 0,
     nextLocalId: 0,
+    warnedUnknownEventTypes: new Set(
+      Array.isArray(snapshot?.warnedUnknownEventTypeList)
+        ? snapshot.warnedUnknownEventTypeList.filter(
+            (type): type is string => typeof type === 'string',
+          )
+        : [],
+    ),
   };
 }
 
@@ -163,6 +176,12 @@ export function snapshotDaemonTranscript(mirror: DaemonTranscriptMirror): Daemon
     liveText: mirror.liveText,
     lastSeq: mirror.lastSeq,
     runVisibleEmissionCount: mirror.runVisibleEmissionCount,
+    // Older in-memory mirrors (including a daemon that survived a CLI update)
+    // predate this registry. Omit the optional wire field instead of failing
+    // the entire reconnect snapshot on an undefined Set.
+    ...(mirror.warnedUnknownEventTypes instanceof Set
+      ? { warnedUnknownEventTypeList: [...mirror.warnedUnknownEventTypes] }
+      : {}),
   };
 }
 
@@ -170,6 +189,12 @@ export function applyDaemonTranscriptEvent(
   mirror: DaemonTranscriptMirror,
   event: EventLike,
 ): DaemonTranscriptMirror {
+  // Hot-updated daemons and legacy test fixtures can hand us the pre-#1531
+  // mirror shape. Upgrade it in place before the reducer touches new fields.
+  if (!Number.isFinite(mirror.runVisibleEmissionCount)) mirror.runVisibleEmissionCount = 0;
+  if (!(mirror.warnedUnknownEventTypes instanceof Set)) {
+    mirror.warnedUnknownEventTypes = new Set();
+  }
   if (typeof event.seq === 'number') mirror.lastSeq = Math.max(mirror.lastSeq, event.seq);
   const payload = payloadOf(event);
   let visibleEmission = isVisibleEmission(event.type);
@@ -195,6 +220,12 @@ export function applyDaemonTranscriptEvent(
     }
     case 'assistant_token':
       mirror.liveText += stringField(payload, 'text');
+      break;
+    // The controller owns the ephemeral reasoning buffer/modal. Keep these
+    // explicit here so the daemon lane recognizes them without persisting
+    // private reasoning into transcript rows.
+    case 'assistant_thinking_token':
+    case 'assistant_thinking_done':
       break;
     case 'assistant_done':
       if (mirror.liveText.trim()) {
@@ -374,6 +405,18 @@ export function applyDaemonTranscriptEvent(
       }
       mirror.runVisibleEmissionCount = 0;
       break;
+    default:
+      if (
+        shouldWarnAboutUnknownSilveryEvent(mirror.warnedUnknownEventTypes, event.type, 'daemon')
+      ) {
+        visibleEmission = true;
+        mirror.rows.push({
+          id: eventId(mirror, event, 'unknown-event'),
+          kind: 'status',
+          role: 'status',
+          text: formatUnknownEventWarning(event.type),
+        });
+      }
   }
   if (visibleEmission) mirror.runVisibleEmissionCount += 1;
   return mirror;

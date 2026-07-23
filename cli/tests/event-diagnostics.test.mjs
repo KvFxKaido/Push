@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
+import { TRANSCRIPT_MUTATION_EVENT_TYPES } from '../../lib/session-transcript-events.ts';
 import {
   formatCitationsRow,
   formatEmptyRunWarning,
   isVisibleEmission,
+  shouldWarnAboutUnknownSilveryEvent,
+  SILVERY_DAEMON_HANDLED_EVENT_TYPES,
+  SILVERY_INLINE_HANDLED_EVENT_TYPES,
   VISIBLE_EMISSION_TYPES,
 } from '../silvery/event-diagnostics.ts';
 
@@ -78,6 +83,7 @@ describe('isVisibleEmission', () => {
   it('counts content and tool/status events as visible', () => {
     for (const t of [
       'assistant_token',
+      'assistant_thinking_token',
       'tool_call',
       'tool.execution_complete',
       'status',
@@ -102,6 +108,69 @@ describe('isVisibleEmission', () => {
   it('exposes a frozen-ish positive list (empty-run rests on this, not a denylist)', () => {
     assert.ok(VISIBLE_EMISSION_TYPES.has('assistant_token'));
     assert.ok(!VISIBLE_EMISSION_TYPES.has('run_complete'));
+  });
+});
+
+describe('silvery unknown-event drift registry', () => {
+  const caseTypesBetween = (source, startMarker, endMarker) => {
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start + startMarker.length);
+    assert.ok(start >= 0 && end > start, `missing source markers: ${startMarker} → ${endMarker}`);
+    return [...source.slice(start, end).matchAll(/case '([^']+)'/g)].map((match) => match[1]);
+  };
+
+  it('stays exactly synchronized with both event switch statements', () => {
+    const controllerSource = readFileSync(
+      new URL('../silvery/controller.ts', import.meta.url),
+      'utf8',
+    );
+    const mirrorSource = readFileSync(
+      new URL('../daemon-transcript-mirror.ts', import.meta.url),
+      'utf8',
+    );
+    const inlineCases = caseTypesBetween(
+      controllerSource,
+      'const onEvent = (event: EngineEvent)',
+      'const onDaemonEvent =',
+    );
+    const daemonCases = caseTypesBetween(
+      mirrorSource,
+      'export function applyDaemonTranscriptEvent(',
+      'export function rebuildDaemonTranscriptMirror(',
+    );
+    const sorted = (values) => [...new Set(values)].sort();
+
+    // Citations are rendered by the inline diagnostic observer immediately
+    // before the switch; daemon-only approvals and transcript mutations are
+    // handled immediately after the mirror reducer.
+    assert.deepEqual(
+      sorted(SILVERY_INLINE_HANDLED_EVENT_TYPES),
+      sorted([...inlineCases, 'assistant_citations']),
+    );
+    assert.deepEqual(
+      sorted(SILVERY_DAEMON_HANDLED_EVENT_TYPES),
+      sorted([
+        ...daemonCases,
+        'approval_required',
+        'approval_received',
+        ...TRANSCRIPT_MUTATION_EVENT_TYPES,
+      ]),
+    );
+  });
+
+  it('warns once per type and respects lane-specific handling', () => {
+    const inline = new Set();
+    assert.equal(shouldWarnAboutUnknownSilveryEvent(inline, 'future.event', 'inline'), true);
+    assert.equal(shouldWarnAboutUnknownSilveryEvent(inline, 'future.event', 'inline'), false);
+    assert.equal(shouldWarnAboutUnknownSilveryEvent(inline, 'assistant_token', 'inline'), false);
+
+    // Delegation rows exist in the daemon mirror, not the inline switch. If
+    // they ever arrive inline, surfacing drift is more honest than silence.
+    assert.equal(shouldWarnAboutUnknownSilveryEvent(inline, 'subagent.started', 'inline'), true);
+    assert.equal(
+      shouldWarnAboutUnknownSilveryEvent(new Set(), 'subagent.started', 'daemon'),
+      false,
+    );
   });
 });
 
