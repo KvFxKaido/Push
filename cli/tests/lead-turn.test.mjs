@@ -12,9 +12,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { execFile as execFileCallback } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   runLeadKernelTurn,
@@ -39,6 +41,7 @@ import { normalizeTaskLedgerScope } from '../../lib/task-ledger.ts';
 import { canListenOnLoopback } from './test-environment.mjs';
 
 const loopbackAvailable = await canListenOnLoopback();
+const execFile = promisify(execFileCallback);
 const needsLoopback = {
   skip: !loopbackAvailable && 'loopback HTTP listeners are unavailable in this sandbox',
 };
@@ -882,6 +885,90 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         assert.ok(steeredRequest.includes('source=\\"task_drift\\"'));
         assert.ok(steeredRequest.includes('Inspecting notes.txt'));
         assert.ok(steeredRequest.includes('read activity found no new target'));
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('adopts and re-injects the destination ledger after a CLI branch switch', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const repoDir = path.join(cwd, 'repo');
+      await fs.mkdir(repoDir);
+      await execFile('git', ['init', '-b', 'branch-a'], { cwd: repoDir });
+      await execFile('git', ['config', 'user.name', 'Push Test'], { cwd: repoDir });
+      await execFile('git', ['config', 'user.email', 'push-test@example.com'], { cwd: repoDir });
+      await fs.writeFile(path.join(repoDir, 'notes.txt'), 'branch ledger fixture\n');
+      await execFile('git', ['add', 'notes.txt'], { cwd: repoDir });
+      await execFile('git', ['commit', '-m', 'fixture'], { cwd: repoDir });
+      await execFile('git', ['branch', 'branch-b'], { cwd: repoDir });
+
+      const repoFullName = path.basename(repoDir);
+      const sourceScope = normalizeTaskLedgerScope({ repoFullName, branch: 'branch-a' });
+      const destinationScope = normalizeTaskLedgerScope({ repoFullName, branch: 'branch-b' });
+      const sourceSteps = [
+        {
+          id: 'source',
+          content: 'Source branch step',
+          activeForm: 'Working on the source branch',
+          status: 'in_progress',
+        },
+      ];
+      const destinationSteps = [
+        {
+          id: 'destination',
+          content: 'Destination branch step',
+          activeForm: 'Working on the destination branch',
+          status: 'pending',
+        },
+      ];
+      const updatedDestinationSteps = [
+        { ...destinationSteps[0], status: 'completed' },
+        {
+          id: 'verify',
+          content: 'Verify destination branch',
+          activeForm: 'Verifying destination branch',
+          status: 'in_progress',
+        },
+      ];
+      await saveTaskLedger(sourceScope, sourceSteps);
+      await saveTaskLedger(destinationScope, destinationSteps);
+
+      const server = await startSequencedProviderServer([
+        { tokens: [fencedCall('git_switch_branch', { branch: 'branch-b' })] },
+        { tokens: [fencedCall('todo_read', {})] },
+        { tokens: [fencedCall('todo_write', { todos: updatedDestinationSteps })] },
+        { tokens: [fencedCall('git_status', {})] },
+        { tokens: ['The destination branch ledger is updated.'] },
+      ]);
+
+      try {
+        const state = makeState(repoDir);
+        const emitted = [];
+        const result = await runLeadKernelTurn(
+          state,
+          makeProviderConfig(server.url),
+          'mock-key',
+          "What should branch-b's implementation plan include?",
+          8,
+          { emit: (event) => emitted.push(event), explicitMaxRounds: true },
+        );
+
+        assert.equal(result.outcome, 'success');
+        assert.equal(server.requests.length, 5);
+        assert.match(JSON.stringify(server.requests[1]), /Destination branch step/);
+        assert.match(JSON.stringify(server.requests[2]), /Destination branch step/);
+        assert.ok(
+          emitted.some(
+            (event) =>
+              event.type === 'task.ledger_snapshot' &&
+              event.payload.cause === 'loaded' &&
+              event.payload.scope.branch === 'branch-b',
+          ),
+          'destination ledger snapshot was not emitted after branch switch',
+        );
+        assert.deepEqual((await loadTaskLedger(sourceScope)).steps, sourceSteps);
+        assert.deepEqual((await loadTaskLedger(destinationScope)).steps, updatedDestinationSteps);
       } finally {
         await server.stop();
       }

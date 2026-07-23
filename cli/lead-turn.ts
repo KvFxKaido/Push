@@ -59,6 +59,7 @@ import { classifyTurnIntent } from '../lib/turn-intent.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import {
   normalizeTaskLedgerScope,
+  taskLedgerScopeKey,
   taskLikelyRequiresMutation,
   type TaskLedgerScope,
   type TaskLedgerStep,
@@ -127,7 +128,11 @@ import { recordMalformedToolCall, resetToolCallMetrics } from './tool-call-metri
 import { recordWriteFile, resetWriteFileMetrics } from './edit-metrics.js';
 import { resetContextMetrics } from './context-metrics.js';
 import { loadUserGoalFile } from './user-goal-file.js';
-import { loadTaskLedger, saveTaskLedger } from './task-ledger-store.js';
+import {
+  loadTaskLedger,
+  saveTaskLedger,
+  TaskLedgerRevisionConflictError,
+} from './task-ledger-store.js';
 import {
   deriveUserGoalAnchor,
   formatUserGoalBlock,
@@ -142,6 +147,15 @@ interface CliToolCall {
   args?: Record<string, unknown>;
   source?: string;
 }
+
+const TASK_LEDGER_BRANCH_MOVE_TOOLS = new Set([
+  'create_branch',
+  'sandbox_create_branch',
+  'git_create_branch',
+  'switch_branch',
+  'sandbox_switch_branch',
+  'git_switch_branch',
+]);
 
 /**
  * Kernel-shaped wrapper around a CLI call. The kernel's structural cast
@@ -594,8 +608,11 @@ export async function runLeadKernelTurn(
   ]);
   let taskLedgerScope: TaskLedgerScope = normalizeTaskLedgerScope(workspaceIdentity);
   let taskLedgerSteps: TaskLedgerStep[] = [];
+  let taskLedgerRevision = 0;
   try {
-    taskLedgerSteps = (await loadTaskLedger(taskLedgerScope)).steps;
+    const loaded = await loadTaskLedger(taskLedgerScope);
+    taskLedgerSteps = loaded.steps;
+    taskLedgerRevision = loaded.revision;
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -616,6 +633,17 @@ export async function runLeadKernelTurn(
     dispatchEvent('task.ledger_snapshot', payload);
   };
   if (taskLedgerSteps.length > 0) emitTaskLedgerSnapshot('loaded');
+
+  const adoptCurrentTaskLedgerScope = async (): Promise<boolean> => {
+    const nextScope = normalizeTaskLedgerScope(await resolveWorkspaceIdentity(state.cwd));
+    if (taskLedgerScopeKey(nextScope) === taskLedgerScopeKey(taskLedgerScope)) return false;
+    const loaded = await loadTaskLedger(nextScope);
+    taskLedgerScope = loaded.scope;
+    taskLedgerSteps = loaded.steps;
+    taskLedgerRevision = loaded.revision;
+    emitTaskLedgerSnapshot('loaded');
+    return true;
+  };
 
   // Pre-turn LLM compaction (§14, CLI parity): when the durable history has
   // grown past the budget, collapse the older span into a model-written
@@ -997,6 +1025,21 @@ export async function runLeadKernelTurn(
         if (isCliToolDisabled(rawCall.tool, disabledTools)) {
           return { kind: 'denied', reason: `Tool "${rawCall.tool}" is disabled by user config.` };
         }
+        try {
+          // A typed branch change may have occurred earlier in this run. Load
+          // the destination snapshot before interpreting any todo call so a
+          // source-branch list can never be persisted under the new scope.
+          await adoptCurrentTaskLedgerScope();
+        } catch (error) {
+          return applyAfterToolPolicy(
+            {
+              kind: 'executed',
+              resultText: `[Task ledger error: ${error instanceof Error ? error.message : String(error)}]`,
+              errorType: 'TASK_LEDGER_LOAD_FAILED',
+            },
+            rawCall,
+          );
+        }
         let nextSteps: TaskLedgerStep[] | undefined;
         const result = executeTodoToolCall(todoCall, taskLedgerSteps, {
           replace: (steps) => {
@@ -1008,13 +1051,26 @@ export async function runLeadKernelTurn(
         });
         if (result.ok && nextSteps) {
           try {
-            // Re-resolve before a write so a typed branch switch earlier in the
-            // same run cannot persist the next position under the old branch.
-            taskLedgerScope = normalizeTaskLedgerScope(await resolveWorkspaceIdentity(state.cwd));
-            const saved = await saveTaskLedger(taskLedgerScope, nextSteps);
+            const saved = await saveTaskLedger(taskLedgerScope, nextSteps, {
+              expectedRevision: taskLedgerRevision,
+            });
             taskLedgerSteps = saved.steps;
+            taskLedgerRevision = saved.revision;
             emitTaskLedgerSnapshot(todoCall.tool === 'todo_clear' ? 'cleared' : 'updated');
           } catch (error) {
+            if (error instanceof TaskLedgerRevisionConflictError) {
+              taskLedgerSteps = error.current.steps;
+              taskLedgerRevision = error.current.revision;
+              emitTaskLedgerSnapshot('loaded');
+              return applyAfterToolPolicy(
+                {
+                  kind: 'executed',
+                  resultText: `[Task ledger conflict: another run updated this branch. Re-read the current ledger and retry your intended change.]\n\n${buildTodoContext(taskLedgerSteps)}`,
+                  errorType: error.code,
+                },
+                rawCall,
+              );
+            }
             return applyAfterToolPolicy(
               {
                 kind: 'executed',
@@ -1052,11 +1108,27 @@ export async function runLeadKernelTurn(
         hooks: defaultCliHookRegistry,
         getCurrentBranch: () => readCliCurrentBranch(state.cwd),
       });
-      const resultText: string = typeof result?.text === 'string' ? result.text : '';
+      let resultText: string = typeof result?.text === 'string' ? result.text : '';
       // File-mutation results carry a structured diff in meta.editDiff
       // (cli/tools.ts) — lift it onto the exec result so the kernel can
       // stamp it on `tool.execution_complete` for transcript rendering.
       const meta = result?.meta as Record<string, unknown> | null | undefined;
+      if (
+        result?.ok === true &&
+        TASK_LEDGER_BRANCH_MOVE_TOOLS.has(rawCall.tool) &&
+        typeof meta?.branch === 'string'
+      ) {
+        try {
+          if (await adoptCurrentTaskLedgerScope()) {
+            // Re-orient the model immediately. The tool result is part of the
+            // next model request; a runtime event alone would update the UI but
+            // leave model context carrying the source branch's full snapshot.
+            resultText = `${resultText}\n\n${buildTodoContext(taskLedgerSteps)}`;
+          }
+        } catch (error) {
+          resultText = `${resultText}\n\n[Task ledger error after branch change: ${error instanceof Error ? error.message : String(error)}]`;
+        }
+      }
       const metaDiff = meta?.editDiff;
       const editDiff = isEditDiff(metaDiff) ? metaDiff : undefined;
       // Typed render payload. GitHub tools (and any tool that builds one) return

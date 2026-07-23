@@ -148,6 +148,11 @@ export function useTodo(repoFullName: string | null = null, branch: string | nul
     setTodosState(next);
   }, []);
 
+  const loadScoped = useCallback(
+    (scope: TaskLedgerScope) => readStoredTodos(scope.repoFullName, scope.branch),
+    [],
+  );
+
   const replaceScoped = useCallback(
     (scope: TaskLedgerScope, next: TodoItem[]) => {
       const targetKey = getStorageKey(scope.repoFullName, scope.branch);
@@ -182,6 +187,7 @@ export function useTodo(repoFullName: string | null = null, branch: string | nul
     todos,
     hasItems,
     replace,
+    loadScoped,
     replaceScoped,
     clear,
     toggleStatus,

@@ -607,6 +607,7 @@ export interface InlineScratchpadHandlers {
 export interface InlineTodoHandlers {
   todos: readonly TodoItem[];
   replace: (todos: TodoItem[]) => void;
+  loadScoped?: (scope: TaskLedgerScope) => TodoItem[];
   replaceScoped?: (scope: TaskLedgerScope, todos: TodoItem[]) => void;
   clear: () => void;
 }
@@ -873,6 +874,28 @@ export async function runInPageCoderKernel(
     repoFullName: spec.branchContext?.repoFullName ?? spec.memoryScope?.repoFullName,
     branch: spec.branchContext?.activeBranch ?? spec.memoryScope?.branch,
   });
+  const adoptTaskLedgerBranch = (branch: string): string | null => {
+    // A caller without a scope loader cannot safely retarget the in-memory
+    // snapshot. Keep that run bound to its original scope instead of copying
+    // source-branch steps into the destination branch.
+    if (!spec.todo?.loadScoped) return null;
+    const nextScope = normalizeTaskLedgerScope({
+      repoFullName: taskLedgerScope.repoFullName,
+      branch,
+    });
+    todos = [...spec.todo.loadScoped(nextScope)];
+    taskLedgerScope = nextScope;
+    callbacks.onRunEvent?.({
+      type: 'task.ledger_snapshot',
+      scope: taskLedgerScope,
+      steps: todos,
+      cause: 'loaded',
+    });
+    // This block rides the branch tool result back to the model. Merely
+    // changing persistence scope would leave its context anchored to the
+    // source branch and invite a stale full-snapshot todo_write.
+    return buildTodoContext(todos);
+  };
   if (leadRuntime && spec.todo && todos.length > 0) {
     callbacks.onRunEvent?.({
       type: 'task.ledger_snapshot',
@@ -973,10 +996,8 @@ export async function runInPageCoderKernel(
         callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });
       }
       if (result.branchSwitch) {
-        taskLedgerScope = normalizeTaskLedgerScope({
-          repoFullName: taskLedgerScope.repoFullName,
-          branch: result.branchSwitch.name,
-        });
+        const ledgerContext = adoptTaskLedgerBranch(result.branchSwitch.name);
+        if (ledgerContext) result.text = `${result.text}\n\n${ledgerContext}`;
         callbacks.onBranchSwitchPayload?.(result.branchSwitch);
       }
       if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
@@ -1117,10 +1138,8 @@ export async function runInPageCoderKernel(
             );
           }
           if (result.branchSwitch) {
-            taskLedgerScope = normalizeTaskLedgerScope({
-              repoFullName: taskLedgerScope.repoFullName,
-              branch: result.branchSwitch.name,
-            });
+            const ledgerContext = adoptTaskLedgerBranch(result.branchSwitch.name);
+            if (ledgerContext) result.text = `${result.text}\n\n${ledgerContext}`;
             callbacks.onBranchSwitchPayload?.(result.branchSwitch);
           }
           return {

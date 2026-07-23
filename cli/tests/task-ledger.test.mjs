@@ -14,6 +14,7 @@ import {
   clearTaskLedger,
   loadTaskLedger,
   saveTaskLedger,
+  TaskLedgerRevisionConflictError,
   taskLedgerFilePath,
 } from '../task-ledger-store.ts';
 
@@ -67,11 +68,70 @@ describe('shared task ledger', () => {
     };
     const saved = await saveTaskLedger(scope, [step]);
     assert.equal(saved.scope.repoFullName, 'kvfxkaido/push');
+    assert.equal(saved.revision, 1);
     assert.deepEqual((await loadTaskLedger(scope)).steps, [step]);
     assert.match(taskLedgerFilePath(scope), /^[\s\S]*[a-f0-9]{64}\.json$/);
 
-    await clearTaskLedger(scope);
+    const cleared = await clearTaskLedger(scope, { expectedRevision: saved.revision });
+    assert.equal(cleared.revision, 2);
     assert.deepEqual((await loadTaskLedger(scope)).steps, []);
+  });
+
+  it('quarantines corrupt JSON, emits a structured warning, and resumes empty', async () => {
+    const file = taskLedgerFilePath(scope);
+    await fs.writeFile(file, '{"steps": [', 'utf8');
+    const warnings = [];
+    const originalConsoleError = console.error;
+    console.error = (...args) => warnings.push(args.join(' '));
+    try {
+      const loaded = await loadTaskLedger(scope);
+      assert.deepEqual(loaded.steps, []);
+      assert.equal(loaded.revision, 0);
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    await assert.rejects(fs.access(file));
+    const quarantined = (await fs.readdir(tmpRoot)).filter((name) => name.includes('.corrupt-'));
+    assert.equal(quarantined.length, 1);
+    assert.ok(
+      warnings.some((line) => {
+        const event = JSON.parse(line);
+        return event.event === 'task_ledger_corrupt_recovered';
+      }),
+      'missing structured corrupt-ledger recovery warning',
+    );
+  });
+
+  it('rejects one of two concurrent writers based on the same revision', async () => {
+    const initial = await saveTaskLedger(scope, [
+      {
+        id: 'initial',
+        content: 'Initial step',
+        activeForm: 'Running initial step',
+        status: 'in_progress',
+      },
+    ]);
+    const candidates = [
+      [{ id: 'writer-a', content: 'Writer A', activeForm: 'Running A', status: 'in_progress' }],
+      [{ id: 'writer-b', content: 'Writer B', activeForm: 'Running B', status: 'in_progress' }],
+    ];
+    const results = await Promise.allSettled(
+      candidates.map((steps) =>
+        saveTaskLedger(scope, steps, { expectedRevision: initial.revision }),
+      ),
+    );
+
+    const fulfilled = results.filter((result) => result.status === 'fulfilled');
+    const rejected = results.filter((result) => result.status === 'rejected');
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.ok(rejected[0].reason instanceof TaskLedgerRevisionConflictError);
+    assert.equal(rejected[0].reason.current.revision, initial.revision + 1);
+
+    const stored = await loadTaskLedger(scope);
+    assert.equal(stored.revision, initial.revision + 1);
+    assert.deepEqual(stored.steps, fulfilled[0].value.steps);
   });
 
   it('only enables the no-mutation signal for explicit change requests', () => {

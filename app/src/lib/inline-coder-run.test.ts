@@ -404,6 +404,23 @@ describe('runInPageCoderKernel inline knobs', () => {
     });
     const onBranchSwitchPayload = vi.fn();
     const replaceScoped = vi.fn();
+    const sourceSteps = [
+      {
+        id: 'source',
+        content: 'Source branch step',
+        activeForm: 'Working on the source branch',
+        status: 'in_progress' as const,
+      },
+    ];
+    const destinationSteps = [
+      {
+        id: 'destination',
+        content: 'Destination branch step',
+        activeForm: 'Working on the destination branch',
+        status: 'pending' as const,
+      },
+    ];
+    const loadScoped = vi.fn().mockReturnValue(destinationSteps);
 
     await runInPageCoderKernel(
       {
@@ -417,7 +434,13 @@ describe('runInPageCoderKernel inline knobs', () => {
           protectMain: false,
         },
         memoryScope: { repoFullName: 'KvFxKaido/Push', branch: 'feat/x', chatId: 'chat-1' },
-        todo: { todos: [], replace: vi.fn(), replaceScoped, clear: vi.fn() },
+        todo: {
+          todos: sourceSteps,
+          replace: vi.fn(),
+          loadScoped,
+          replaceScoped,
+          clear: vi.fn(),
+        },
         leadToolSurface: true,
       },
       { onStatus: () => {}, onBranchSwitchPayload },
@@ -433,10 +456,14 @@ describe('runInPageCoderKernel inline knobs', () => {
     );
 
     expect(onBranchSwitchPayload).toHaveBeenCalledWith(payload);
+    expect(loadScoped).toHaveBeenCalledWith({ repoFullName: 'kvfxkaido/push', branch: 'main' });
     expect(result).toMatchObject({
       kind: 'executed',
-      resultText: '[Tool Result — sandbox_switch_branch]',
     });
+    expect(result.kind === 'executed' && result.resultText).toContain('Destination branch step');
+    expect(result.kind === 'executed' && result.resultText).not.toContain(
+      'Working on the source branch',
+    );
 
     await options.toolExec(
       {
@@ -445,20 +472,17 @@ describe('runInPageCoderKernel inline knobs', () => {
           tool: 'todo_write',
           todos: [
             {
-              id: 'verify',
-              content: 'Verify the branch',
-              activeForm: 'Verifying the branch',
-              status: 'in_progress',
+              ...destinationSteps[0],
+              status: 'completed',
             },
           ],
         },
       } as AnyToolCall,
       { round: 2, executionId: 'exec-update-ledger' },
     );
-    expect(replaceScoped).toHaveBeenCalledWith(
-      { repoFullName: 'kvfxkaido/push', branch: 'main' },
-      expect.any(Array),
-    );
+    expect(replaceScoped).toHaveBeenCalledWith({ repoFullName: 'kvfxkaido/push', branch: 'main' }, [
+      { ...destinationSteps[0], status: 'completed' },
+    ]);
   });
 
   it('leaves branchSwitch payloads as a no-op when the delegated arc omits the callback', async () => {

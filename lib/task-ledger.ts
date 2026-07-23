@@ -35,6 +35,8 @@ export interface TaskLedgerSnapshot {
   version: typeof TASK_LEDGER_VERSION;
   scope: TaskLedgerScope;
   steps: TaskLedgerStep[];
+  /** Monotonic storage revision used by adapters that support CAS writes. */
+  revision: number;
   updatedAt: number;
 }
 
@@ -108,11 +110,13 @@ export function createTaskLedgerSnapshot(
   scope: TaskLedgerScope,
   steps: readonly TaskLedgerStep[],
   updatedAt = Date.now(),
+  revision = 0,
 ): TaskLedgerSnapshot {
   return {
     version: TASK_LEDGER_VERSION,
     scope: normalizeTaskLedgerScope(scope),
     steps: normalizeTaskLedgerSteps(steps),
+    revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
     updatedAt,
   };
 }
