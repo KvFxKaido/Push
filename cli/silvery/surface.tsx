@@ -534,7 +534,12 @@ function Message({
           </Box>
         ) : null}
         {renderMarkdown ? (
-          <MarkdownBody text={bodyText} base={bodyColor} availableWidth={Math.max(1, width - 4)} />
+          <MarkdownBody
+            text={bodyText}
+            base={bodyColor}
+            availableWidth={Math.max(1, width - 4)}
+            streaming={item.live}
+          />
         ) : (
           <Text color={bodyColor}>{bodyText}</Text>
         )}

@@ -111,11 +111,44 @@ const RE = {
   italic: /\*(\S|\S[^*\n]*?\S)\*/y,
 };
 
+// The active streaming tail gets a deliberately smaller, terminal-shaped
+// equivalent of Streamdown's incomplete-markdown repair. These matchers only
+// accept a construct that runs to the end of the source line; completed syntax
+// above always wins first. Keeping this in the parser (rather than rewriting
+// the source string) makes the width/line invariants explicit: synthetic closing
+// markers never become cells.
+const STREAMING_RE = {
+  code: /`([^`\n]+)$/y,
+  link: /\[([^\]\n]+)\]\([^)\n]*$/y,
+  boldItalic: /\*\*\*(\S[^*\n]*)$/y,
+  bold: /\*\*(\S[^*\n]*)$/y,
+  italic: /\*(\S|\S[^*\n]*\S)$/y,
+};
+
+export interface ParseInlineOptions {
+  /** Style supported half-open syntax at the end of a live source line. */
+  streamingTail?: boolean;
+}
+
+function canOpenStreamingEmphasis(line: string, index: number): boolean {
+  if (index === 0) return true;
+  const previous = line[index - 1];
+  // Be more conservative than the settled parser while the closing marker is
+  // still hypothetical: do not transiently restyle identifiers, arithmetic,
+  // or glob/path fragments such as `2*3` and `src/**generated`.
+  return !(
+    /[\p{L}\p{N}_]/u.test(previous) ||
+    previous === '/' ||
+    previous === '\\' ||
+    previous === '*'
+  );
+}
+
 /**
  * Split one line into styled spans. Plain runs are emoji-stripped; `code`
  * content is preserved verbatim (identifiers may legitimately hold any char).
  */
-export function parseInline(line: string): InlineSpan[] {
+export function parseInline(line: string, options: ParseInlineOptions = {}): InlineSpan[] {
   const spans: InlineSpan[] = [];
   let buf = '';
   // Track whether emoji removal actually touched this line — the edge-space trim
@@ -165,6 +198,56 @@ export function parseInline(line: string): InlineSpan[] {
       i = RE.bold.lastIndex;
       continue;
     }
+    if (options.streamingTail) {
+      STREAMING_RE.code.lastIndex = i;
+      const partialCode = STREAMING_RE.code.exec(line);
+      if (partialCode && partialCode.index === i) {
+        flush();
+        spans.push({ text: partialCode[1], code: true });
+        i = STREAMING_RE.code.lastIndex;
+        continue;
+      }
+      STREAMING_RE.link.lastIndex = i;
+      const partialLink = STREAMING_RE.link.exec(line);
+      if (partialLink && partialLink.index === i && (i === 0 || line[i - 1] !== '!')) {
+        flush();
+        // A partial destination is not a usable link target.
+        // Keep only the label until the closing `)` makes this a real link.
+        spans.push({ text: stripDecorativeEmoji(partialLink[1]) });
+        i = STREAMING_RE.link.lastIndex;
+        continue;
+      }
+      STREAMING_RE.boldItalic.lastIndex = i;
+      const partialBoldItalic = STREAMING_RE.boldItalic.exec(line);
+      if (partialBoldItalic && partialBoldItalic.index === i && canOpenStreamingEmphasis(line, i)) {
+        flush();
+        spans.push({
+          text: stripDecorativeEmoji(partialBoldItalic[1]),
+          bold: true,
+          italic: true,
+        });
+        i = STREAMING_RE.boldItalic.lastIndex;
+        continue;
+      }
+      STREAMING_RE.bold.lastIndex = i;
+      const partialBold = STREAMING_RE.bold.exec(line);
+      if (partialBold && partialBold.index === i && canOpenStreamingEmphasis(line, i)) {
+        flush();
+        spans.push({ text: stripDecorativeEmoji(partialBold[1]), bold: true });
+        i = STREAMING_RE.bold.lastIndex;
+        continue;
+      }
+      STREAMING_RE.italic.lastIndex = i;
+      const partialItalic = STREAMING_RE.italic.exec(line);
+      if (partialItalic && partialItalic.index === i && canOpenStreamingEmphasis(line, i)) {
+        flush();
+        spans.push({ text: stripDecorativeEmoji(partialItalic[1]), italic: true });
+        i = STREAMING_RE.italic.lastIndex;
+        continue;
+      }
+    }
+    // Streaming partials run before completed single-asterisk emphasis so a
+    // tail such as `***both` is not prematurely consumed as italic literal `*`.
     RE.italic.lastIndex = i;
     const italic = RE.italic.exec(line);
     if (italic && italic.index === i) {
@@ -320,6 +403,7 @@ function isBlockConstruct(line: string): boolean {
 function tryParseTable(
   rawLines: string[],
   start: number,
+  streamingTailIndex: number,
 ): { lines: MdLine[]; next: number } | null {
   // A header that is itself a block construct (e.g. `# A | B`) stays that block,
   // never a table header.
@@ -330,8 +414,26 @@ function tryParseTable(
   const alignments = parseTableDelimiter(rawLines[start + 1] ?? '', headerCells.length);
   if (!alignments) return null;
 
+  const parseCells = (
+    cells: string[],
+    rowIndex: number,
+    raw: string,
+    tailColumn = cells.length - 1,
+  ): InlineSpan[][] => {
+    const hasOpenTailCell = rowIndex === streamingTailIndex && !raw.trimEnd().endsWith('|');
+    return cells.map((cell, column) =>
+      parseInline(cell, {
+        streamingTail: hasOpenTailCell && column === tailColumn,
+      }),
+    );
+  };
+
   const rows: Array<{ role: TableRowRole; raw: string; cells: InlineSpan[][] }> = [
-    { role: 'header', raw: rawLines[start], cells: headerCells.map(parseInline) },
+    {
+      role: 'header',
+      raw: rawLines[start],
+      cells: parseCells(headerCells, start, rawLines[start]),
+    },
     { role: 'divider', raw: rawLines[start + 1], cells: headerCells.map(() => [{ text: '' }]) },
   ];
 
@@ -346,10 +448,11 @@ function tryParseTable(
     // whole candidate falls back to lossless raw text instead (no content is
     // silently dropped — the fit-or-raw promise).
     if (cells.length > headerCells.length) return null;
+    const normalizedCells = normalizeBodyCells(cells, headerCells.length);
     rows.push({
       role: 'body',
       raw: rawLines[next],
-      cells: normalizeBodyCells(cells, headerCells.length).map(parseInline),
+      cells: parseCells(normalizedCells, next, rawLines[next], cells.length - 1),
     });
     next += 1;
   }
@@ -386,9 +489,15 @@ function tryParseTable(
  * Fenced blocks toggle on ``` and render verbatim; everything else is
  * classified and inline-parsed.
  */
-export function parseMarkdown(text: string): MdLine[] {
+export interface ParseMarkdownOptions {
+  /** Apply incomplete-inline repair to the active final source line. */
+  streaming?: boolean;
+}
+
+export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}): MdLine[] {
   const out: MdLine[] = [];
   const rawLines = text.split(/\r?\n/);
+  const streamingTailIndex = options.streaming ? rawLines.length - 1 : -1;
   let inFence = false;
   // Open fence's language + the code-line objects collected so far, so the
   // whole block can be highlighted at once on close. Block-level, not
@@ -430,7 +539,7 @@ export function parseMarkdown(text: string): MdLine[] {
       out.push(codeLine);
       continue;
     }
-    const table = tryParseTable(rawLines, index);
+    const table = tryParseTable(rawLines, index, streamingTailIndex);
     if (table) {
       out.push(...table.lines);
       index = table.next - 1;
@@ -448,12 +557,18 @@ export function parseMarkdown(text: string): MdLine[] {
     }
     const heading = HEADING.exec(raw);
     if (heading) {
-      out.push({ kind: 'heading', spans: parseInline(heading[2]) });
+      out.push({
+        kind: 'heading',
+        spans: parseInline(heading[2], { streamingTail: index === streamingTailIndex }),
+      });
       continue;
     }
     const quote = QUOTE.exec(raw);
     if (quote) {
-      out.push({ kind: 'quote', spans: parseInline(quote[1]) });
+      out.push({
+        kind: 'quote',
+        spans: parseInline(quote[1], { streamingTail: index === streamingTailIndex }),
+      });
       continue;
     }
     const ordered = ORDERED.exec(raw);
@@ -461,16 +576,23 @@ export function parseMarkdown(text: string): MdLine[] {
       out.push({
         kind: 'ordered',
         marker: `${ordered[1]}${ordered[2]}. `,
-        spans: parseInline(ordered[3]),
+        spans: parseInline(ordered[3], { streamingTail: index === streamingTailIndex }),
       });
       continue;
     }
     const bullet = BULLET.exec(raw);
     if (bullet) {
-      out.push({ kind: 'bullet', marker: bullet[1], spans: parseInline(bullet[2]) });
+      out.push({
+        kind: 'bullet',
+        marker: bullet[1],
+        spans: parseInline(bullet[2], { streamingTail: index === streamingTailIndex }),
+      });
       continue;
     }
-    out.push({ kind: 'text', spans: parseInline(raw) });
+    out.push({
+      kind: 'text',
+      spans: parseInline(raw, { streamingTail: index === streamingTailIndex }),
+    });
   }
   // An unterminated fence (streaming mid-block, or a missing close) still gets
   // highlighted — the collected lines are valid code, just without a trailing
@@ -726,13 +848,16 @@ export function MarkdownBody({
   text,
   base,
   availableWidth,
+  streaming = false,
 }: {
   text: string;
   base?: VlColor;
   availableWidth?: number;
+  /** True only for the currently growing machine-authored message. */
+  streaming?: boolean;
 }) {
   const unicode = useMemo(() => detectUnicode(), []);
-  const lines = useMemo(() => parseMarkdown(text), [text]);
+  const lines = useMemo(() => parseMarkdown(text, { streaming }), [text, streaming]);
   const marks = useMemo(() => marksFor(unicode), [unicode]);
   return (
     <Box flexDirection="column">
