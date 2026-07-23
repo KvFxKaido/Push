@@ -42,8 +42,10 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
+  buildCacheProbePlan,
   buildMarkdownSummary,
   countSessionEvents,
+  evaluateCacheProbe,
   extractCliRunFields,
   fmtMs,
   isCompleted,
@@ -54,6 +56,8 @@ import {
   type TrialResult,
 } from './eval-lib';
 import { EVAL_TASKS } from './tasks';
+import { applyConfigToEnv, loadConfig } from '../../cli/config-store.js';
+import { PROVIDER_CONFIGS, redirectDeprecatedProvider, resolveApiKey } from '../../cli/provider.js';
 import { runCommandInResolvedShellSync } from '../../cli/shell.js';
 
 // ---------------------------------------------------------------------------
@@ -112,7 +116,7 @@ Options:
   --label <text>         Label for the report header.
   --out <dir>            Results directory (default: scripts/eval/results).
   --keep-workspaces      Keep ALL trial workspaces (failed ones are always kept).
-  --skip-preflight       Skip the 1-round provider sanity check.
+  --skip-preflight       Skip the provider sanity + cache-bypass preflights.
   --list                 Print task ids and exit.
   -h, --help             Show this help.
 `);
@@ -370,6 +374,78 @@ async function preflight(): Promise<boolean> {
   }
 }
 
+/**
+ * Cache-bypass assertion (#1554): two identical tiny calls through the same
+ * URL/auth/headers the CLI transports will use; a `cf-aig-cache-status: HIT`
+ * on the repeat means eval outputs would be edge replays, not model output —
+ * abort before burning a suite. Provider config resolves exactly the way the
+ * spawned CLI resolves it (config file hydrated into env, lazy env getters).
+ */
+async function cacheBypassPreflight(): Promise<boolean> {
+  try {
+    applyConfigToEnv(await loadConfig());
+  } catch {
+    // No config file — env-only setups are valid; the getters read env.
+  }
+  const providerId = redirectDeprecatedProvider(PROVIDER) ?? PROVIDER;
+  const providerConfig = PROVIDER_CONFIGS[providerId];
+  if (!providerConfig) {
+    log(`cache preflight: unknown provider "${providerId}" — skipped (sanity run gates this).`);
+    return true;
+  }
+  let apiKey = '';
+  try {
+    apiKey = resolveApiKey(providerConfig);
+  } catch {
+    // Keyless is legitimate on gateway BYOK routes — probe without auth.
+  }
+  const plan = buildCacheProbePlan({
+    id: providerConfig.id,
+    url: providerConfig.url,
+    streamShape: providerConfig.streamShape,
+    apiKey,
+    model: MODEL,
+  });
+  if ('skip' in plan) {
+    log(`cache preflight: skipped — ${plan.skip}.`);
+    return true;
+  }
+  const call = async () => {
+    const res = await fetch(plan.request.url, {
+      method: 'POST',
+      headers: plan.request.headers,
+      body: plan.request.body,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const cacheStatus = res.headers.get('cf-aig-cache-status');
+    await res.text().catch(() => '');
+    return { status: res.status, cacheStatus };
+  };
+  try {
+    const first = await call();
+    // The gateway's cache write is async: a back-to-back repeat can land
+    // inside the propagation window and read MISS even when caching is live
+    // (verified against push-gate 2026-07-23 — immediate repeat MISSed, the
+    // same body 5s later HIT). Space the probe past the window or a poisoned
+    // transport passes preflight and still replays mid-suite.
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    const second = await call();
+    const verdict = evaluateCacheProbe(second.cacheStatus);
+    log(
+      `cache preflight: first=${first.status}/${first.cacheStatus ?? 'no-cache-header'} ` +
+        `second=${second.status}/${second.cacheStatus ?? 'no-cache-header'} — ${verdict.reason}`,
+    );
+    return verdict.ok;
+  } catch (err) {
+    // The sanity run already proved the provider reachable; a probe-only
+    // failure (dialect quirk, timeout) is inconclusive, not a cache verdict.
+    log(
+      `cache preflight: probe error (${err instanceof Error ? err.message : String(err)}) — inconclusive, continuing.`,
+    );
+    return true;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -419,6 +495,13 @@ async function main(): Promise<number> {
     const ok = await preflight();
     if (!ok) {
       log('aborting: provider sanity check failed — fix the key/provider before burning a suite.');
+      return 1;
+    }
+    const cacheOk = await cacheBypassPreflight();
+    if (!cacheOk) {
+      log(
+        'aborting: response-cache replay detected — every repeated prompt would score a cached copy, not the model (#1554).',
+      );
       return 1;
     }
   }

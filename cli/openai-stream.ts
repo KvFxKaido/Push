@@ -27,6 +27,7 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
+import { aiGatewaySkipCacheHeaders } from '../lib/ai-gateway.ts';
 import { openAISSEPump } from '../lib/openai-sse-pump.ts';
 import {
   OPENROUTER_PARAMETER_EVENTS,
@@ -106,6 +107,7 @@ async function* cliProviderStream(
     headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
     headers['X-Title'] = 'Push CLI';
   }
+  Object.assign(headers, aiGatewaySkipCacheHeaders(config.url));
 
   // Two callers feed messages differently:
   //   - The legacy CLI path (`engine.ts`) packs the system prompt as the

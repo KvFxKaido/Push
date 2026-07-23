@@ -141,6 +141,35 @@ describe('createCliGeminiStream', () => {
     assert.equal(calls[0].init.headers['x-goog-api-key'], undefined);
   });
 
+  it('adds cf-aig-skip-cache on AI Gateway routes and not on direct routes (#1554)', async () => {
+    const { calls, handler } = captureFetch();
+    globalThis.fetch = handler;
+
+    const gatewayConfig = {
+      ...GEMINI_CONFIG,
+      url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/google-ai-studio/v1beta',
+    };
+    const gatewayStream = createCliGeminiStream(gatewayConfig, 'AIza');
+    await collect(
+      gatewayStream({
+        provider: 'google',
+        model: 'gemini-3.1-pro-preview',
+        messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      }),
+    );
+    assert.equal(calls[0].init.headers['cf-aig-skip-cache'], 'true');
+
+    const directStream = createCliGeminiStream(GEMINI_CONFIG, 'AIza');
+    await collect(
+      directStream({
+        provider: 'google',
+        model: 'gemini-3.1-pro-preview',
+        messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      }),
+    );
+    assert.equal(calls[1].init.headers['cf-aig-skip-cache'], undefined);
+  });
+
   it('translates OpenAI-shaped messages into Gemini contents + systemInstruction', async () => {
     const { calls, handler } = captureFetch();
     globalThis.fetch = handler;

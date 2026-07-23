@@ -9,6 +9,8 @@
  * were gated on.
  */
 
+import { buildGeminiUpstreamUrl } from '../../cli/gemini-stream.js';
+import { aiGatewaySkipCacheHeaders } from '../../lib/ai-gateway.js';
 import { evaluateRuntimeEvents, type RuntimeEvalRunSelector } from '../../lib/runtime-eval.js';
 
 // ---------------------------------------------------------------------------
@@ -322,4 +324,135 @@ export function validateTasks(tasks: EvalTask[]): string[] {
 
 function path_isAbsoluteOrEscaping(p: string): boolean {
   return p.startsWith('/') || p.split('/').includes('..');
+}
+
+// ---------------------------------------------------------------------------
+// Cache-bypass preflight (#1554)
+// ---------------------------------------------------------------------------
+//
+// The gateway posture (lib/ai-gateway.ts) is bypass-per-request, but evals
+// must not TRUST it: a gateway fronted by a custom domain evades the CLI's
+// host detection, and a dashboard cache toggle is exactly the kind of state
+// that drifts. So the harness sends two identical tiny calls through the
+// same URL/auth/header construction the CLI transports use and hard-fails
+// the suite if the second comes back as a cache replay — a silent
+// data-quality bug becomes a loud error at eval start.
+
+const CACHE_PROBE_PROMPT = 'Reply with the single word: ok.';
+
+export interface CacheProbeProvider {
+  id: string;
+  url: string;
+  streamShape?: 'openai-compat' | 'openai-responses' | 'anthropic' | 'gemini';
+  apiKey: string;
+  model: string;
+}
+
+export interface CacheProbeRequest {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export type CacheProbePlan = { request: CacheProbeRequest } | { skip: string };
+
+/**
+ * Build the dialect-appropriate minimal request for the cache probe. The
+ * skip-cache header comes from the SAME lib helper the CLI transports use,
+ * so the probe cannot drift from what real eval traffic sends.
+ */
+export function buildCacheProbePlan(provider: CacheProbeProvider): CacheProbePlan {
+  const { id, url, streamShape, apiKey, model } = provider;
+  if (id === 'openrouter') {
+    // OpenRouter picks its wire (responses vs chat) per request and is never
+    // an AI Gateway host — replicating that routing here buys nothing.
+    return { skip: 'openrouter routes per-request and is not a gateway host' };
+  }
+  const message = { role: 'user', content: CACHE_PROBE_PROMPT };
+  switch (streamShape) {
+    case 'anthropic':
+      return {
+        request: {
+          url,
+          headers: {
+            'Content-Type': 'application/json',
+            // Mirrors ANTHROPIC_API_VERSION in cli/anthropic-stream.ts.
+            'anthropic-version': '2023-06-01',
+            ...(apiKey ? { 'x-api-key': apiKey } : {}),
+            ...aiGatewaySkipCacheHeaders(url),
+          },
+          body: JSON.stringify({ model, max_tokens: 16, messages: [message], stream: false }),
+        },
+      };
+    case 'gemini': {
+      const upstreamUrl = buildGeminiUpstreamUrl(url, model);
+      return {
+        request: {
+          url: upstreamUrl,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'x-goog-api-key': apiKey } : {}),
+            ...aiGatewaySkipCacheHeaders(upstreamUrl),
+          },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: CACHE_PROBE_PROMPT }] }],
+            generationConfig: { maxOutputTokens: 16 },
+          }),
+        },
+      };
+    }
+    case 'openai-responses':
+      return {
+        request: {
+          url,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            ...aiGatewaySkipCacheHeaders(url),
+          },
+          body: JSON.stringify({
+            model,
+            input: CACHE_PROBE_PROMPT,
+            max_output_tokens: 16,
+            stream: false,
+          }),
+        },
+      };
+    case 'openai-compat':
+    case undefined:
+      return {
+        request: {
+          url,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+            ...aiGatewaySkipCacheHeaders(url),
+          },
+          body: JSON.stringify({ model, messages: [message], max_tokens: 16, stream: false }),
+        },
+      };
+  }
+}
+
+/**
+ * Verdict on the SECOND identical call's `cf-aig-cache-status` header.
+ * Only a verified replay fails the suite; absence of the header means the
+ * route isn't a (detectable) response-caching gateway.
+ */
+export function evaluateCacheProbe(secondCallCacheStatus: string | null): {
+  ok: boolean;
+  reason: string;
+} {
+  const status = secondCallCacheStatus?.trim().toUpperCase() || null;
+  if (status === 'HIT') {
+    return {
+      ok: false,
+      reason:
+        'identical repeat was served from the gateway response cache (cf-aig-cache-status: HIT) — eval outputs would be replays, not model output (#1554)',
+    };
+  }
+  if (status === null) {
+    return { ok: true, reason: 'no gateway cache header on this route' };
+  }
+  return { ok: true, reason: `gateway present and not replaying (cf-aig-cache-status: ${status})` };
 }

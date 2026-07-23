@@ -17,7 +17,9 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 
 import {
+  buildCacheProbePlan,
   countSessionEvents,
+  evaluateCacheProbe,
   extractCliRunFields,
   isCompleted,
   median,
@@ -310,4 +312,106 @@ test('summarizeTrials computes completion rate, medians, and tool-error rate', (
   assert.equal(median([]), null);
   assert.equal(median([7]), 7);
   assert.equal(median([1, 2, 3]), 2);
+});
+
+// ─── cache-bypass preflight (#1554) ──────────────────────────────────────
+
+test('buildCacheProbePlan mirrors the transport: bypass header on gateway routes only', () => {
+  const gateway = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/zen/api/paas/v4/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in gateway);
+  assert.equal(gateway.request.headers['cf-aig-skip-cache'], 'true');
+  assert.equal(gateway.request.headers.Authorization, 'Bearer k');
+
+  const direct = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://api.z.ai/api/paas/v4/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in direct);
+  assert.equal(direct.request.headers['cf-aig-skip-cache'], undefined);
+});
+
+test('buildCacheProbePlan sends identical bodies across calls and omits auth when keyless', () => {
+  const build = () =>
+    buildCacheProbePlan({
+      id: 'zen',
+      url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/zen/v1/chat/completions',
+      apiKey: '',
+      model: 'glm-5.1',
+    });
+  const a = build();
+  const b = build();
+  assert.ok('request' in a && 'request' in b);
+  // The whole point of the probe: the second request must be byte-identical.
+  assert.equal(a.request.body, b.request.body);
+  assert.equal(a.request.headers.Authorization, undefined);
+  const body = JSON.parse(a.request.body);
+  assert.equal(body.model, 'glm-5.1');
+  assert.equal(body.stream, false);
+});
+
+test('buildCacheProbePlan speaks each dialect', () => {
+  const anthropic = buildCacheProbePlan({
+    id: 'anthropic',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/anthropic/v1/messages',
+    streamShape: 'anthropic',
+    apiKey: 'sk',
+    model: 'claude-sonnet-4-6',
+  });
+  assert.ok('request' in anthropic);
+  assert.equal(anthropic.request.headers['x-api-key'], 'sk');
+  assert.equal(anthropic.request.headers['anthropic-version'], '2023-06-01');
+  assert.equal(JSON.parse(anthropic.request.body).max_tokens, 16);
+
+  const responses = buildCacheProbePlan({
+    id: 'openai',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/openai/responses',
+    streamShape: 'openai-responses',
+    apiKey: 'k',
+    model: 'gpt-5.4',
+  });
+  assert.ok('request' in responses);
+  assert.equal(JSON.parse(responses.request.body).max_output_tokens, 16);
+
+  const gemini = buildCacheProbePlan({
+    id: 'google',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/google-ai-studio/v1beta',
+    streamShape: 'gemini',
+    apiKey: 'AIza',
+    model: 'gemini-3.1-pro-preview',
+  });
+  assert.ok('request' in gemini);
+  assert.match(gemini.request.url, /:streamGenerateContent/);
+  assert.equal(gemini.request.headers['x-goog-api-key'], 'AIza');
+  // The model rides the URL for gemini, so the header check keys off the
+  // final upstream URL, not the base.
+  assert.equal(gemini.request.headers['cf-aig-skip-cache'], 'true');
+});
+
+test('buildCacheProbePlan skips openrouter with a stated reason', () => {
+  const plan = buildCacheProbePlan({
+    id: 'openrouter',
+    url: 'https://openrouter.ai/api/v1',
+    streamShape: 'openai-responses',
+    apiKey: 'k',
+    model: 'anthropic/claude-haiku-4.5',
+  });
+  assert.ok('skip' in plan);
+  assert.match(plan.skip, /openrouter/);
+});
+
+test('evaluateCacheProbe fails only on a verified replay', () => {
+  assert.equal(evaluateCacheProbe('HIT').ok, false);
+  assert.equal(evaluateCacheProbe('hit').ok, false);
+  assert.equal(evaluateCacheProbe('MISS').ok, true);
+  assert.equal(evaluateCacheProbe('BYPASS').ok, true);
+  assert.equal(evaluateCacheProbe(null).ok, true);
+  assert.equal(evaluateCacheProbe('').ok, true);
+  assert.match(evaluateCacheProbe('HIT').reason, /1554/);
 });
