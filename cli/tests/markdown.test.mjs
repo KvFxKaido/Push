@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import React from 'react';
-import { parseAnsiText, renderStatic, stripAnsi } from 'silvery';
+import { displayWidth, parseAnsiText, renderStatic, stripAnsi } from 'silvery';
 
 import {
   MarkdownBody,
@@ -14,13 +14,18 @@ import {
   parseMarkdown,
   stripDecorativeEmoji,
 } from '../silvery/markdown.tsx';
+import { PushThemeProvider } from '../silvery/theme.tsx';
 
 async function renderMarkdownBodyRaw(text, availableWidth, streaming = false) {
   const previousLang = process.env.LANG;
   process.env.LANG = 'C.UTF-8';
   try {
     return await renderStatic(
-      React.createElement(MarkdownBody, { text, availableWidth, streaming }),
+      React.createElement(
+        PushThemeProvider,
+        { themeName: 'default' },
+        React.createElement(MarkdownBody, { text, availableWidth, streaming }),
+      ),
       { width: 80, height: 12 },
     );
   } finally {
@@ -29,8 +34,16 @@ async function renderMarkdownBodyRaw(text, availableWidth, streaming = false) {
   }
 }
 
+function renderedText(raw) {
+  return stripAnsi(raw)
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .trimEnd();
+}
+
 async function renderMarkdownBody(text, availableWidth, streaming = false) {
-  return stripAnsi(await renderMarkdownBodyRaw(text, availableWidth, streaming)).trimEnd();
+  return renderedText(await renderMarkdownBodyRaw(text, availableWidth, streaming));
 }
 
 describe('stripDecorativeEmoji (#1433 / law 2)', () => {
@@ -105,6 +118,14 @@ describe('parseInline (law 2 span budget)', () => {
       { text: 'b', bold: true },
       { text: ' and ' },
       { text: 'i', italic: true },
+    ]);
+  });
+
+  it('marks GFM strikethrough without changing the text payload', () => {
+    assert.deepEqual(parseInline('ship ~~later~~ now'), [
+      { text: 'ship ' },
+      { text: 'later', strike: true },
+      { text: ' now' },
     ]);
   });
 
@@ -271,7 +292,11 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
   });
 
   it('classifies headings, lists, quotes, and rules', () => {
-    assert.equal(parseMarkdown('## Heading')[0].kind, 'heading');
+    assert.deepEqual(parseMarkdown('## Heading')[0], {
+      kind: 'heading',
+      depth: 2,
+      spans: [{ text: 'Heading' }],
+    });
     assert.equal(parseMarkdown('- a')[0].kind, 'bullet');
     assert.equal(parseMarkdown('3) third')[0].kind, 'ordered');
     assert.equal(parseMarkdown('> quoted')[0].kind, 'quote');
@@ -279,7 +304,26 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.equal(parseMarkdown('')[0].kind, 'blank');
   });
 
-  it('renders fenced blocks verbatim with dimmed fences', () => {
+  it('classifies GFM task-list state separately from ordinary bullet text', () => {
+    const lines = parseMarkdown('- [ ] open\n- [x] done\n- ordinary');
+    assert.deepEqual(lines[0], {
+      kind: 'bullet',
+      marker: '',
+      task: true,
+      checked: false,
+      spans: [{ text: 'open' }],
+    });
+    assert.deepEqual(lines[1], {
+      kind: 'bullet',
+      marker: '',
+      task: true,
+      checked: true,
+      spans: [{ text: 'done' }],
+    });
+    assert.equal(lines[2].task, undefined);
+  });
+
+  it('renders fenced blocks verbatim with themed fences', () => {
     const lines = parseMarkdown('```js\nconst x = 1;\n```');
     assert.equal(lines[0].kind, 'fence');
     assert.equal(lines[0].lang, 'js');
@@ -351,6 +395,65 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     });
     assert.deepEqual(shortRow[2].cells[1], [{ text: 'two', bold: true }]);
     assert.deepEqual(shortRow[2].cells[2], [{ text: '' }]);
+  });
+});
+
+describe('MarkdownBody — semantic hierarchy', () => {
+  it('keeps heading levels distinct in grayscale while color reinforces them', async () => {
+    const raw = await renderMarkdownBodyRaw('# Primary\n## Secondary\n### Tertiary', 80);
+    assert.equal(renderedText(raw), '▌ Primary\n▪\uFE0E Secondary\n· Tertiary');
+
+    const spans = parseAnsiText(raw);
+    const primary = spans.find((span) => span.text.includes('Primary'));
+    const secondary = spans.find((span) => span.text.includes('Secondary'));
+    const tertiary = spans.find((span) => span.text.includes('Tertiary'));
+    assert.equal(primary?.bold, true);
+    assert.equal(primary?.underline, true);
+    assert.equal(secondary?.bold, true);
+    assert.notEqual(secondary?.underline, true);
+    assert.equal(tertiary?.italic, true);
+    assert.notEqual(primary?.fg, secondary?.fg);
+    assert.notEqual(secondary?.fg, tertiary?.fg);
+  });
+
+  it('renders task state with a glyph and strikes completed text', async () => {
+    const raw = await renderMarkdownBodyRaw('- [ ] open\n- [x] done\n~~superseded~~', 80);
+    assert.equal(renderedText(raw), '☐\uFE0E open\n☑\uFE0E done\nsuperseded');
+    const spans = parseAnsiText(raw);
+    assert.equal(spans.find((span) => span.text.includes('done'))?.strikethrough, true);
+    assert.equal(spans.find((span) => span.text.includes('superseded'))?.strikethrough, true);
+    assert.notEqual(
+      spans.find((span) => span.text.includes('☐'))?.fg,
+      spans.find((span) => span.text.includes('☑'))?.fg,
+    );
+  });
+
+  it('uses separate semantic roles for links, code, and quote structure', async () => {
+    const raw = await renderMarkdownBodyRaw(
+      '[docs](https://push.local/docs) and `pnpm test`\n> quoted',
+      80,
+    );
+    const spans = parseAnsiText(raw);
+    const link = spans.find((span) => span.text.includes('docs'));
+    const code = spans.find((span) => span.text.includes('pnpm test'));
+    const quoteRail = spans.find((span) => span.text.includes('│'));
+    const quote = spans.find((span) => span.text.includes('quoted'));
+    assert.notEqual(link?.fg, code?.fg);
+    assert.notEqual(code?.bg, link?.bg);
+    assert.notEqual(quoteRail?.fg, quote?.fg);
+  });
+
+  it('never expands heading or task-list width beyond its Markdown source', async () => {
+    for (const source of [
+      '# Heading',
+      '## Heading',
+      '###### Heading',
+      '- [ ] open',
+      '- [x] done',
+    ]) {
+      const rendered = await renderMarkdownBody(source, 80);
+      assert.ok(displayWidth(rendered) <= displayWidth(source), source);
+    }
   });
 });
 

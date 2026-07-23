@@ -3,7 +3,7 @@
  *
  * Source of truth: `docs/cli/design/TUI Visual Language v2.md`.
  * This module encodes the laws as helpers the surface and fault shell call —
- * glyphs with ASCII fallback, the one-accent color budget, frame/stream split
+ * glyphs with ASCII fallback, semantic color roles, frame/stream split
  * copy, shared-clock motion phases, and density meters. It does not paint;
  * silvery components consume the return values.
  */
@@ -11,17 +11,26 @@
 import { isReducedMotion } from '../tui-verbs.js';
 import { detectUnicode, VARIANTS } from '../tui-theme.js';
 
-// ── Color budget (laws 2–3) ─────────────────────────────────────────
+// ── Color vocabulary (laws 2–3) ─────────────────────────────────────
 //
-// Silvery semantic tokens the surface may use. Anything outside this set is a
-// design regression: no success green, no warning yellow chrome, no
-// multi-color role rainbow. Themes pick *which hue* `$fg-accent` is; they
-// may not raise the budget.
+// Silvery semantic tokens the surface may use. Themes choose their hues and
+// saturation, while wording, glyphs, weight, and position preserve every
+// distinction in mono/no-color environments.
 
 export const VL_COLOR = {
-  /** The single "where the action is" accent (cursor, selection, live). */
+  /** "Where the action is" (cursor, selection, live). */
   accent: '$fg-accent',
-  /** Fault exception — errors and deny only. Never decoration. */
+  /** References and secondary structure. */
+  info: '$fg-info',
+  /** Terminal-native destinations. */
+  link: '$fg-link',
+  /** Inline and fenced code outside syntax-highlighted spans. */
+  code: '$fg-code',
+  /** Completed work and positive changes. */
+  success: '$fg-success',
+  /** Cautions and blocked/partial states. */
+  warning: '$fg-warning',
+  /** Errors, deny/destructive actions, and negative changes. */
   fault: '$fg-error',
   /** Primary stream text. */
   primary: '$fg-default',
@@ -41,7 +50,7 @@ export type VlColor = (typeof VL_COLOR)[keyof typeof VL_COLOR];
  * `$fg-muted` / `$fg-default` from — so the shimmer's trough lands exactly on
  * `VL_COLOR.muted`, and a static (reduced-motion) verb is indistinguishable
  * from any other muted chrome. Theme-independent by construction: themes move
- * the accent hue, never the grayscale posture.
+ * the semantic hues, never the grayscale foundation.
  */
 const SHIMMER_BASE = VARIANTS.mono.tokens['fg.muted'];
 const SHIMMER_HIGHLIGHT = VARIANTS.mono.tokens['fg.primary'];
@@ -355,7 +364,7 @@ export function reduceModalMotion(
  * `markWork` above states: a helper is named for what it does, not for a
  * behavior it used to have.
  *
- * Three states, distinguished by glyph and the one-accent budget rather than
+ * Three states, distinguished by glyph and semantic accent rather than
  * by motion:
  *   idle      ⬡ hollow, muted
  *   working   ⬢ filled, muted   — filled IS the working signal
@@ -448,9 +457,9 @@ function mixHex(base: string, highlight: string, t: number): string {
  * the verb still says what it says).
  *
  * Base/highlight default to the mono canvas rather than the active theme's
- * accent on purpose: per `theme.tsx`, themes pick the accent hue but never
- * replace the grayscale posture, and the accent is reserved for "where the
- * action is" (law 2). A shimmer is a brightness lift, not a hue tint — same
+ * accent on purpose: themes never replace the grayscale foundation, and the
+ * accent is reserved for "where the action is" (law 2). A shimmer is a
+ * brightness lift, not a hue tint — same
  * call the web makes.
  */
 export function verbShimmerColors(
@@ -640,7 +649,7 @@ export type StreamMarkKind =
 export interface StreamMark {
   /** Leading glyph (square spine or hex attribution). */
   glyph: string;
-  /** Silvery color token — accent, fault, muted, or default. */
+  /** Silvery semantic color token. */
   color: VlColor | undefined;
   /** Bold the label/glyph. */
   bold: boolean;
@@ -653,7 +662,8 @@ export interface StreamMark {
  * wear the FILLED hex (`hexActive`) plus their name so attribution stays legible.
  * The square spine (`markWork`) is Push's tool ACTIVITY and delegated phases; the
  * caret (`human`, ❯) is the one voice that is not Push.
- * No green/cyan role rainbow — grayscale + one accent + fault (laws 2–3).
+ * Color reinforces state; the glyph/label still carries it without color
+ * (laws 2–3).
  *
  * The spine glyph separates exactly one thing: Push WORKING (`markWork`) from Push
  * TALKING (`markQuiet`). Pending / ok / error ride COLOR, not shape — `tool_ok` is a
@@ -676,7 +686,7 @@ export function streamMark(
     case 'tool_pending':
       return { glyph: glyphs.markWork, color: VL_COLOR.accent, bold: true };
     case 'tool_ok':
-      return { glyph: glyphs.markWork, color: VL_COLOR.muted, bold: false };
+      return { glyph: glyphs.markWork, color: VL_COLOR.success, bold: false };
     case 'tool_error':
       return { glyph: glyphs.markWork, color: VL_COLOR.fault, bold: true };
     case 'reviewer':
@@ -692,13 +702,13 @@ export function streamMark(
 }
 
 /**
- * Diff line color under the one-accent budget (law 2).
- * Adds read bold/primary, dels dim/muted — never success green / del red
- * (red is reserved for the fault exception).
+ * Diff line color under the semantic palette (laws 2–3). The caller retains
+ * `+` / `-` markers, line structure, and weight so color is never the only
+ * add/remove signal.
  */
 export function diffLineColor(kind: 'add' | 'del' | 'ctx'): VlColor | undefined {
-  if (kind === 'add') return VL_COLOR.primary;
-  if (kind === 'del') return VL_COLOR.muted;
+  if (kind === 'add') return VL_COLOR.success;
+  if (kind === 'del') return VL_COLOR.fault;
   return VL_COLOR.muted;
 }
 
@@ -729,8 +739,8 @@ export function faultCopy(error: Error | { message: string }): FaultCopy {
 // ── Theme accent resolution ─────────────────────────────────────────
 
 /**
- * Map a Push theme variant's primary accent hex for silvery `generateTheme`.
- * Themes pick the hue; the budget stays one accent (law 2, non-goals).
+ * Validate a Push theme variant's primary accent hex for Silvery.
+ * The remaining semantic roles are bridged directly in `theme.tsx`.
  */
 export function accentHexForTheme(accentPrimaryHex: string): string {
   const hex = (accentPrimaryHex || '').trim();

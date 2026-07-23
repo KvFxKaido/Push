@@ -4,10 +4,10 @@
  * The stream is the product (Visual Language v2, law 1); raw `**asterisks**`,
  * `[label](url)` brackets, and list syntax in the transcript undercut every
  * other law that landed. This renders assistant prose as styled cells under
- * the one-accent budget (law 2): **bold** via weight, `code` via `muted`,
- * links as the single accent — never a rainbow. Emoji are stripped in the
- * render path (law 2 side door / #1433): a full-color glyph that can't be
- * dimmed is an unbudgeted accent.
+ * the semantic palette (law 2): structure remains legible through weight,
+ * glyph, underline/strike, and position while color reinforces the meaning.
+ * Emoji are stripped in the render path (#1433): their uncontrolled palette
+ * cannot participate in the theme or grayscale fallback.
  *
  * Two invariants keep the transcript height math (`countVisualLines` in
  * `surface.tsx`) honest:
@@ -34,8 +34,8 @@ import { VL_COLOR, type VlColor } from './visual-language.js';
 
 // ── Emoji stripping (law 2 / #1433) ──────────────────────────────────
 //
-// Decorative pictographs in model prose bypass the grayscale-plus-one-accent
-// posture. The strip targets *emoji-presentation* glyphs, not every pictograph:
+// Decorative pictographs in model prose bypass the theme's semantic palette.
+// The strip targets *emoji-presentation* glyphs, not every pictograph:
 // a character is emoji only if it defaults to emoji rendering
 // (`\p{Emoji_Presentation}`) or is explicitly forced to it with VS16 (U+FE0F).
 // Text-default pictographs — arrows (↔ ↩ ➡), ▶, ✓ — are meaningful prose and
@@ -84,9 +84,11 @@ export interface InlineSpan {
   text: string;
   bold?: boolean;
   italic?: boolean;
-  /** Inline `code` — rendered muted. */
+  /** GFM `~~strikethrough~~`. */
+  strike?: boolean;
+  /** Inline `code` — rendered on a subtle surface plus the theme's code hue. */
   code?: boolean;
-  /** Link label — rendered in the accent; `url` trails dim when informative. */
+  /** Link label — rendered in the link role; `url` trails dim when informative. */
   link?: boolean;
   /** Image alt text — terminal fallback for an image destination. */
   image?: boolean;
@@ -111,6 +113,7 @@ const RE = {
   imageStart: /!\[([^\]\n]*)\]\(/y,
   linkStart: /\[([^\]\n]+)\]\(/y,
   boldItalic: /\*\*\*([^*\n]+?)\*\*\*/y,
+  strike: /~~([^~\n]+?)~~/y,
   bold: /\*\*([^*\n]+?)\*\*/y,
   italic: /\*(\S|\S[^*\n]*?\S)\*/y,
 };
@@ -241,6 +244,14 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
       i = RE.boldItalic.lastIndex;
       continue;
     }
+    RE.strike.lastIndex = i;
+    const strike = RE.strike.exec(line);
+    if (strike && strike.index === i) {
+      flush();
+      spans.push({ text: stripDecorativeEmoji(strike[1]), strike: true });
+      i = RE.strike.lastIndex;
+      continue;
+    }
     if (options.streamingTail) {
       STREAMING_RE.code.lastIndex = i;
       const partialCode = STREAMING_RE.code.exec(line);
@@ -352,6 +363,11 @@ export interface MdLine {
   spans?: InlineSpan[];
   /** Leading marker rendered dim (bullet glyph, `N.`, quote rail). */
   marker?: string;
+  /** ATX heading depth (1–6). */
+  depth?: number;
+  /** GFM task-list item. */
+  task?: boolean;
+  checked?: boolean;
   /** Verbatim content for code/fence lines. */
   raw?: string;
   /** Fence language tag, when present. */
@@ -631,6 +647,7 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     if (heading) {
       out.push({
         kind: 'heading',
+        depth: heading[1].length,
         spans: parseInline(heading[2], { streamingTail: index === streamingTailIndex }),
       });
       continue;
@@ -654,10 +671,14 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     }
     const bullet = BULLET.exec(raw);
     if (bullet) {
+      const task = /^\[([ xX])\]\s+(.*)$/.exec(bullet[2]);
       out.push({
         kind: 'bullet',
         marker: bullet[1],
-        spans: parseInline(bullet[2], { streamingTail: index === streamingTailIndex }),
+        ...(task ? { task: true, checked: task[1].toLowerCase() === 'x' } : {}),
+        spans: parseInline(task?.[2] ?? bullet[2], {
+          streamingTail: index === streamingTailIndex,
+        }),
       });
       continue;
     }
@@ -693,6 +714,11 @@ function stampHighlight(lang: string, codeLines: MdLine[]): void {
 
 interface Marks {
   bullet: string;
+  taskOpen: string;
+  taskDone: string;
+  headingStrong: string;
+  headingMedium: string;
+  headingSubtle: string;
   quoteRail: string;
   /** Single rule cell, repeated to the source rule's visible length. */
   hrCell: string;
@@ -705,6 +731,13 @@ function marksFor(unicode: boolean): Marks {
   return unicode
     ? {
         bullet: '• ',
+        // Force text presentation so terminals do not promote these generated
+        // chrome glyphs to two-cell, full-color emoji.
+        taskOpen: '☐\uFE0E ',
+        taskDone: '☑\uFE0E ',
+        headingStrong: '▌ ',
+        headingMedium: '▪\uFE0E ',
+        headingSubtle: '· ',
         quoteRail: '│ ',
         hrCell: '─',
         tableRail: '│',
@@ -713,6 +746,11 @@ function marksFor(unicode: boolean): Marks {
       }
     : {
         bullet: '- ',
+        taskOpen: '[ ] ',
+        taskDone: '[x] ',
+        headingStrong: '# ',
+        headingMedium: '## ',
+        headingSubtle: '### ',
         quoteRail: '| ',
         hrCell: '-',
         tableRail: '|',
@@ -726,12 +764,20 @@ function spanColor(
   base: VlColor | undefined,
   interactive = span.link || span.image,
 ): VlColor | undefined {
-  if (span.code) return VL_COLOR.muted;
-  if (interactive) return VL_COLOR.accent;
+  if (span.code) return VL_COLOR.code;
+  if (interactive) return VL_COLOR.link;
   return base;
 }
 
-function Spans({ spans, base }: { spans: InlineSpan[]; base: VlColor | undefined }) {
+function Spans({
+  spans,
+  base,
+  strike = false,
+}: {
+  spans: InlineSpan[];
+  base: VlColor | undefined;
+  strike?: boolean;
+}) {
   return (
     <>
       {spans.map((span, index) => {
@@ -742,12 +788,19 @@ function Spans({ spans, base }: { spans: InlineSpan[]; base: VlColor | undefined
             href={href}
             bold={span.bold}
             italic={span.italic}
+            strikethrough={strike || span.strike}
             color={spanColor(span, base, true)}
           >
             {span.text}
           </Link>
         ) : (
-          <Text bold={span.bold} italic={span.italic} color={spanColor(span, base, false)}>
+          <Text
+            bold={span.bold}
+            backgroundColor={span.code ? '$bg-surface-subtle' : undefined}
+            italic={span.italic}
+            strikethrough={strike || span.strike}
+            color={spanColor(span, base, false)}
+          >
             {span.text}
           </Text>
         );
@@ -798,10 +851,11 @@ function TableCell({
   header: boolean;
 }) {
   const [before, after] = padFor(width, spanDisplayWidth(spans), alignment);
+  const cellBase = header ? VL_COLOR.info : base;
   return (
-    <Text bold={header} color={base}>
+    <Text bold={header} color={cellBase}>
       {before}
-      <Spans spans={spans} base={base} />
+      <Spans spans={spans} base={cellBase} />
       {after}
     </Text>
   );
@@ -884,7 +938,7 @@ function LineView({
         </Text>
       );
     case 'fence':
-      return <Text color={VL_COLOR.muted}>```{line.lang}</Text>;
+      return <Text color={VL_COLOR.code}>```{line.lang}</Text>;
     case 'code':
       // Highlighted when the fence had a known language; flat-muted otherwise
       // (unsupported language, or a whitespace-only line with no spans).
@@ -899,21 +953,43 @@ function LineView({
           </Text>
         );
       }
-      return <Text color={VL_COLOR.muted}>{line.raw || ' '}</Text>;
-    case 'heading':
+      return <Text color={VL_COLOR.code}>{line.raw || ' '}</Text>;
+    case 'heading': {
+      const depth = line.depth ?? 1;
+      const color = depth === 1 ? VL_COLOR.accent : depth === 2 ? VL_COLOR.info : VL_COLOR.muted;
+      const marker =
+        depth === 1 ? marks.headingStrong : depth === 2 ? marks.headingMedium : marks.headingSubtle;
       return (
-        <Text bold color={base}>
-          <Spans spans={line.spans ?? []} base={base} />
+        <Text bold={depth <= 2} italic={depth >= 3} underline={depth === 1} color={color}>
+          {marker}
+          <Spans spans={line.spans ?? []} base={color} />
         </Text>
       );
+    }
     case 'quote':
       return (
         <Text color={VL_COLOR.muted}>
-          {marks.quoteRail}
+          <Text color={VL_COLOR.info}>{marks.quoteRail}</Text>
           <Spans spans={line.spans ?? []} base={VL_COLOR.muted} />
         </Text>
       );
-    case 'bullet':
+    case 'bullet': {
+      if (line.task) {
+        const checked = line.checked === true;
+        return (
+          <Text color={checked ? VL_COLOR.muted : base}>
+            {line.marker}
+            <Text color={checked ? VL_COLOR.success : VL_COLOR.muted}>
+              {checked ? marks.taskDone : marks.taskOpen}
+            </Text>
+            <Spans
+              spans={line.spans ?? []}
+              base={checked ? VL_COLOR.muted : base}
+              strike={checked}
+            />
+          </Text>
+        );
+      }
       return (
         <Text color={base}>
           {line.marker}
@@ -921,6 +997,7 @@ function LineView({
           <Spans spans={line.spans ?? []} base={base} />
         </Text>
       );
+    }
     case 'ordered':
       return (
         <Text color={base}>
@@ -942,9 +1019,9 @@ function LineView({
 }
 
 /**
- * Render assistant/independent-voice prose as styled markdown under the
- * one-accent budget. `base` is the inherited body color (undefined = default
- * stream text); code/link spans override it per law 2.
+ * Render assistant/independent-voice prose as styled Markdown under the
+ * semantic palette. `base` is the inherited body color (undefined = default
+ * stream text); structural and inline roles may override it per law 2.
  */
 export function MarkdownBody({
   text,

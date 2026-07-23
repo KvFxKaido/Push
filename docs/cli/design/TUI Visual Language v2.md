@@ -14,8 +14,8 @@ The language synthesizes two eras. The v1 ANSI TUI (mono theme) was *severe*: gr
 everything, one saturated green cursor cell, hollow/filled circle bullets, vast idle
 emptiness — a terminal that refused to perform. The silvery era adds hierarchy under
 density: an activity spine, tinted turn rows, full-bleed diffs, context-aware footer keys.
-v2 keeps the severity as the default posture and spends the new capability only where
-work is actually happening.
+v2 keeps the AMOLED canvas and grayscale hierarchy as the baseline, then spends semantic
+color only where it makes dense work easier to scan.
 
 ## The laws
 
@@ -35,19 +35,28 @@ The edges hold state; the middle holds work; they never interleave.
 
 This is what keeps honest-chrome from metastasizing into dashboard-chrome.
 
-### 2. One accent
+### 2. Semantic color, grayscale-complete
 
-Color is meaning, never decoration. The language budgets exactly **one accent color** for
-"this is where the action is" (composer cursor, active selection, the live element).
-Themes (`/theme`) may choose *which hue* the accent is; they may not raise the budget.
-Everything else is the grayscale ramp: `bold` / normal / `dim`.
+The AMOLED canvas and grayscale ramp (`bold` / normal / `dim`) establish hierarchy. Color
+reinforces that hierarchy through a small, stable vocabulary:
 
-The v1 mono look proved Push is legible with a single saturated cell on screen. That is
-the default posture, not a degraded mode.
+| Role | Meaning |
+|---|---|
+| **Accent** | focus, selection, live work, and the current input target |
+| **Info / link** | references, branches, destinations, quotes, and secondary structure |
+| **Success** | completed work and additions |
+| **Warning** | caution, partial completion, or a blocked next step |
+| **Error** | failures, denied/destructive actions, and removals |
 
-**No emoji in the stream.** A decorative emoji is a full-color glyph that can't be dimmed —
-every one is an unbudgeted accent entering through a side door, and the narrating voice
-(law 11) doesn't cheerlead. Decorative color enters *only* through the accent budget.
+Themes (`/theme`) choose the hues and saturation of those roles; they never change their
+meaning. `mono` may collapse them toward grayscale, while more chromatic themes may separate
+them strongly. In every theme, removing color must leave the same state legible through
+wording, weight, glyph, underline/strike, border, or position. Color may reinforce meaning;
+it may not carry meaning alone.
+
+**No emoji in the stream.** A decorative emoji is a full-color glyph whose palette cannot
+be themed, dimmed, or made grayscale-complete, and the narrating voice (law 11) doesn't
+cheerlead. Decorative color stays inside the semantic theme vocabulary.
 Model prose can't be trusted to honor this, so the rule is enforced in code: the markdown
 render pass (`cli/silvery/markdown.tsx`, `stripDecorativeEmoji`) strips pictographs before
 they reach a cell. Push's own chrome glyphs (hexagons, squares, density blocks) are
@@ -72,12 +81,13 @@ the visible destination as a link, never the literal `![]()` shell and never an 
 network fetch. This fallback may only remove Markdown marker cells, so the line-count and
 width-non-increasing transcript contracts remain intact.
 
-### 3. The fault exception
+### 3. State color stays semantic
 
-The one sanctioned second color means **something is wrong** — and it is never used for
-anything else. No yellow-ish warnings scale, no success green confetti. Errors earn their
-salience precisely because the rest of the screen refuses color. Warnings are prose in the
-stream (law 10), bolded at most.
+Success, warning, and error are operational states, not decoration. A green completion still
+says "completed" and keeps its settled glyph; a warning names the caution; an error names the
+failure and uses the fault mark. Diff additions/removals retain `+`/`-` or their gutter shape
+when color is unavailable. The palette may be restrained, but roles never borrow one another's
+color merely to make a screen livelier.
 
 ### 4. Outline / filled is the state axis
 
@@ -213,8 +223,8 @@ full-repaints-on-local-change is a design regression, not just a perf one.
 ### 8. One clock, phase-locked, one live animation
 
 All motion derives from a single tick counter, so concurrent effects stay in phase —
-two animations beating at different periods read as flicker. And the motion budget matches
-the color budget: **one live animation at a time.**
+two animations beating at different periods read as flicker. Motion remains tighter than
+the color vocabulary: **one live animation at a time.**
 
 - *Idle:* nothing moves.
 - *Streaming:* the reveal cadence **is** the motion (same word, same concept as the web
@@ -231,7 +241,7 @@ the verb was not rendered at all. Both moved for the same reason: the budget is 
 animation, and it should sit on the element carrying the most information. A breathing hex
 can only say *alive*; a shimmering verb says *alive **and what***. The hex keeps its three
 states — hollow/idle, filled/working, filled+accent/attention — distinguished by glyph and
-the one-accent budget rather than by motion, which is why freezing it costs nothing.
+semantic accent rather than by motion, which is why freezing it costs nothing.
 
 > **Do not use silvery's `TextShimmer` for this.** The name matches; the component does not.
 > It is a whole-word binary flip between two colors (`value > .5 ? high : low`), not a band
@@ -275,6 +285,25 @@ Push narrates its own runtime in plain first-person sentences, cause then action
 No toasts, no spinner-with-a-lie, no passive voice hiding the actor. Ops narration is
 stream content (law 1) styled as prose, not as chrome. When writing a new runtime event's
 user-facing line, write the sentence a competent operator would say out loud.
+
+## Markdown presentation
+
+Markdown styling follows the same grayscale-complete rule as runtime chrome:
+
+- ATX headings collapse six source levels into three terminal tiers: primary is bold +
+  underlined with a strong rail, secondary is bold with a square marker, and tertiary is
+  italic + muted with a middle dot. Color reinforces those shape/weight differences.
+- GFM tasks replace `- [ ]` / `- [x]` with text-presentation boxes. Completion adds the
+  success role and strikes the label; either signal remains readable without the other.
+- Links use the link role plus a visible destination and OSC 8 metadata. Inline code uses
+  the code role plus a subtle neutral surface. Quote rails and table headers use info color while their
+  body text remains grayscale.
+- Fences and unsupported-language code use the code role; known languages keep syntax
+  highlighting. Neither treatment changes source-line count.
+
+These substitutions may remove marker cells but may not add a row or render wider than the
+source line. That keeps heading/task styling inside the same transcript measurement contract
+as streaming repair and fit-or-raw tables.
 
 ## Streaming Markdown adaptation
 
@@ -320,8 +349,9 @@ The language must remain fully usable at every tier:
 - **Tier 2** — 256-color + Unicode: alpha degrades per silvery's documented ANSI ramping;
   everything else intact.
 - **Tier 3** — 16-color + ASCII: hexagons → `o`/`@`, squares → `-`/`+`, density ramps →
-  `.:#`, fades → discrete dim/normal steps. The one-accent budget makes this tier nearly
-  free: a language that only needs one color and a grayscale ramp survives 16 colors.
+  `.:#`, fades → discrete dim/normal steps, and semantic roles map to the nearest ANSI hue.
+- **No color** — the same wording, glyphs, weight, underline/strike, borders, and position
+  carry every distinction on the AMOLED/grayscale baseline.
 
 ## Fault surfaces
 
@@ -342,7 +372,8 @@ best-designed screen in the app, not the ugliest.
 
 - **Web parity.** The surfaces share vocabulary (motion axes, reveal cadence, role
   display), not pixels. No card cosplay in the terminal.
-- **Theming beyond the budget.** Themes pick hues; the budget and the grayscale posture
-  are the language, not a theme option.
+- **Theme-specific semantics.** Themes may change hue and saturation, not what accent,
+  info/link, success, warning, or error mean. The AMOLED/grayscale hierarchy is the shared
+  baseline, not an optional afterthought.
 - **Ambient personality.** The personality lives in the voice (law 11) and the restraint,
   not in mascots, gradients, or idle animations.
