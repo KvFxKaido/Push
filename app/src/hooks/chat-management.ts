@@ -429,7 +429,6 @@ export function useChatManagement({
       activeChatId,
       branchInfoRef,
       clearQueuedFollowUps,
-      conversations,
       deletedConversationIdsRef,
       dirtyConversationIdsRef,
       repoRef,
