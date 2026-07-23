@@ -890,6 +890,15 @@ export async function createSilveryController(
     if (event.type === 'user_message') {
       optimisticUserRow = null;
       optimisticDaemonInsertIndex = null;
+      // A user_message is the turn boundary in the daemon lane. A remote-initiated
+      // turn never passes through submit(), so without this reset the modal would
+      // show the previous turn's reasoning as current and append the new turn's
+      // tokens onto it. For a local submit this is a harmless double-clear: the
+      // daemon appends the user message before running the model, so the echo
+      // always precedes the same turn's thinking tokens.
+      reasoningBuffer = '';
+      lastReasoning = '';
+      reasoningStreaming = false;
     }
     if (event.type === 'run_complete') {
       running = false;
@@ -1818,6 +1827,9 @@ export async function createSilveryController(
       activityRows = [];
       liveText = '';
       reasoningBuffer = '';
+      // Without this the buffer wipe is unobservable: the snapshot falls back to
+      // `lastReasoning`, which between turns holds the identical text.
+      lastReasoning = '';
       reasoningStreaming = false;
       notify();
       return true;
@@ -2376,6 +2388,7 @@ export async function createSilveryController(
       activityRows = [];
       liveText = '';
       reasoningBuffer = '';
+      lastReasoning = '';
       reasoningStreaming = false;
       // Fresh run: reset the visible-output counter so a prior turn's output
       // can't suppress this turn's empty-run diagnostic (defensive — a completed
