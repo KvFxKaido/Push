@@ -166,6 +166,18 @@ describe('parseInline (law 2 span budget)', () => {
     ]);
   });
 
+  it('preserves the opened emphasis kind while a closing delimiter arrives', () => {
+    assert.deepEqual(parseInline('**bold*', { streamingTail: true }), [
+      { text: 'bold', bold: true },
+    ]);
+    assert.deepEqual(parseInline('***both**', { streamingTail: true }), [
+      { text: 'both', bold: true, italic: true },
+    ]);
+    assert.deepEqual(parseInline('*hello ', { streamingTail: true }), [
+      { text: 'hello ', italic: true },
+    ]);
+  });
+
   it('renders an incomplete link as label text without a partial destination', () => {
     assert.deepEqual(parseInline('See [Push](https://exam', { streamingTail: true }), [
       { text: 'See ' },
@@ -283,6 +295,18 @@ describe('MarkdownBody — streaming prefix contract', () => {
     assert.equal(await renderMarkdownBody('Use **bold', 80, true), 'Use bold');
     assert.equal(await renderMarkdownBody('Use **bold', 80), 'Use **bold');
     assert.equal(await renderMarkdownBody('See [Push](https://exam', 80, true), 'See Push');
+  });
+
+  it('keeps partial closing delimiters hidden without changing emphasis kind', async () => {
+    assert.equal(await renderMarkdownBody('**bold*', 80, true), 'bold');
+    assert.equal(await renderMarkdownBody('***both**', 80, true), 'both');
+    assert.equal(await renderMarkdownBody('*hello ', 80, true), 'hello');
+  });
+
+  it('preserves streaming repair when a table falls back to raw rows', async () => {
+    const text = '| A | B |\n| --- | --- |\n| one | **two';
+    assert.equal(await renderMarkdownBody(text, 8, true), '| A | B |\n| --- | --- |\n| one | two');
+    assert.equal(await renderMarkdownBody(text, 8), text);
   });
 
   it('preserves source line count and never expands ASCII width for every streamed prefix', async () => {

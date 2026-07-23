@@ -113,16 +113,17 @@ const RE = {
 
 // The active streaming tail gets a deliberately smaller, terminal-shaped
 // equivalent of Streamdown's incomplete-markdown repair. These matchers only
-// accept a construct that runs to the end of the source line; completed syntax
-// above always wins first. Keeping this in the parser (rather than rewriting
-// the source string) makes the width/line invariants explicit: synthetic closing
-// markers never become cells.
+// accept a construct that runs to the end of the source line. A longer opened
+// emphasis run wins before a completed lower-precedence form so partial closing
+// delimiters cannot make bold or bold-italic flicker to italic while streaming.
+// Keeping this in the parser (rather than rewriting the source string) makes the
+// width/line invariants explicit: synthetic closing markers never become cells.
 const STREAMING_RE = {
   code: /`([^`\n]+)$/y,
   link: /\[([^\]\n]+)\]\([^)\n]*$/y,
-  boldItalic: /\*\*\*(\S[^*\n]*)$/y,
-  bold: /\*\*(\S[^*\n]*)$/y,
-  italic: /\*(\S|\S[^*\n]*\S)$/y,
+  boldItalic: /\*\*\*([^\s*\n][^*\n]*?)(?:\*{1,2})?$/y,
+  bold: /\*\*([^\s*\n][^*\n]*?)\*?$/y,
+  italic: /\*([^\s*\n][^*\n]*)$/y,
 };
 
 export interface ParseInlineOptions {
@@ -190,14 +191,6 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
       i = RE.boldItalic.lastIndex;
       continue;
     }
-    RE.bold.lastIndex = i;
-    const bold = RE.bold.exec(line);
-    if (bold && bold.index === i) {
-      flush();
-      spans.push({ text: stripDecorativeEmoji(bold[1]), bold: true });
-      i = RE.bold.lastIndex;
-      continue;
-    }
     if (options.streamingTail) {
       STREAMING_RE.code.lastIndex = i;
       const partialCode = STREAMING_RE.code.exec(line);
@@ -246,8 +239,16 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
         continue;
       }
     }
-    // Streaming partials run before completed single-asterisk emphasis so a
-    // tail such as `***both` is not prematurely consumed as italic literal `*`.
+    RE.bold.lastIndex = i;
+    const bold = RE.bold.exec(line);
+    if (bold && bold.index === i) {
+      flush();
+      spans.push({ text: stripDecorativeEmoji(bold[1]), bold: true });
+      i = RE.bold.lastIndex;
+      continue;
+    }
+    // Streaming partials run before completed lower-precedence emphasis so a
+    // tail such as `***both**` keeps its opened bold-italic kind throughout.
     RE.italic.lastIndex = i;
     const italic = RE.italic.exec(line);
     if (italic && italic.index === i) {
@@ -428,13 +429,26 @@ function tryParseTable(
     );
   };
 
-  const rows: Array<{ role: TableRowRole; raw: string; cells: InlineSpan[][] }> = [
+  const rows: Array<{
+    role: TableRowRole;
+    raw: string;
+    spans: InlineSpan[];
+    cells: InlineSpan[][];
+  }> = [
     {
       role: 'header',
       raw: rawLines[start],
+      spans: parseInline(rawLines[start], { streamingTail: start === streamingTailIndex }),
       cells: parseCells(headerCells, start, rawLines[start]),
     },
-    { role: 'divider', raw: rawLines[start + 1], cells: headerCells.map(() => [{ text: '' }]) },
+    {
+      role: 'divider',
+      raw: rawLines[start + 1],
+      spans: parseInline(rawLines[start + 1], {
+        streamingTail: start + 1 === streamingTailIndex,
+      }),
+      cells: headerCells.map(() => [{ text: '' }]),
+    },
   ];
 
   let next = start + 2;
@@ -452,6 +466,7 @@ function tryParseTable(
     rows.push({
       role: 'body',
       raw: rawLines[next],
+      spans: parseInline(rawLines[next], { streamingTail: next === streamingTailIndex }),
       cells: parseCells(normalizedCells, next, rawLines[next], cells.length - 1),
     });
     next += 1;
@@ -477,6 +492,7 @@ function tryParseTable(
       kind: 'table',
       role: row.role,
       raw: row.raw,
+      spans: row.spans,
       cells: row.cells,
       table,
     })),
