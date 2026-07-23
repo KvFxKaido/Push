@@ -5,6 +5,16 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { launchTui } from '../cli.ts';
+import {
+  createVirtualTerminalFrameReader,
+  createVirtualTerminalReplay,
+  waitForVirtualTerminalFrame,
+} from './silvery-test-helpers.mjs';
+
+// The P0 harness is the enforcement lane for the optional production checker.
+// Outside tests the same env flag reports structured diagnostics without
+// turning a development terminal into an exception boundary.
+process.env.PUSH_TUI_ASSERT = '1';
 
 const nodeMajor = Number(process.versions.node.split('.')[0]);
 const silverySkip =
@@ -4278,6 +4288,413 @@ describe('silvery header — one row at any width', () => {
   });
 });
 
+describe('silvery transcript render contracts', () => {
+  it('pins a real transcript row through Silvery renderString', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { TranscriptRow } = await import('../silvery/surface.tsx');
+    const previousLang = process.env.LANG;
+    process.env.LANG = 'C.UTF-8';
+    try {
+      const item = {
+        id: 'golden-assistant',
+        kind: 'message',
+        role: 'assistant',
+        text: 'Golden **row**',
+      };
+      const output = await Silvery.renderString(
+        React.createElement(
+          Silvery.Box,
+          { flexDirection: 'column', width: 32 },
+          React.createElement(TranscriptRow, { item, width: 32 }),
+        ),
+        {
+          width: 32,
+          height: 8,
+          plain: true,
+          trimTrailingWhitespace: true,
+          trimEmptyLines: true,
+        },
+      );
+      assert.equal(output, ' ⬡ Golden row');
+    } finally {
+      if (previousLang === undefined) delete process.env.LANG;
+      else process.env.LANG = previousLang;
+    }
+  });
+
+  it('replays an incremental row update to Silvery’s target cells and styles', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const Runtime = await import('silvery/runtime');
+    const { TranscriptRow } = await import('../silvery/surface.tsx');
+    const { PushThemeProvider } = await import('../silvery/theme.tsx');
+    const columns = 36;
+    const rows = 6;
+    const writes = [];
+    const initial = {
+      id: 'replay-row',
+      kind: 'message',
+      role: 'assistant',
+      text: 'Initial row',
+    };
+    const updated = {
+      ...initial,
+      text: '**Updated** 界 row',
+    };
+    const app = Runtime.createApp(() => () => ({ item: initial }));
+    function ReplayRow() {
+      const item = Runtime.useApp((state) => state.item);
+      return React.createElement(
+        PushThemeProvider,
+        { themeName: 'mono' },
+        React.createElement(TranscriptRow, { item, width: columns }),
+      );
+    }
+
+    let handle;
+    try {
+      handle = await app.run(React.createElement(ReplayRow), {
+        cols: columns,
+        rows,
+        writable: { write: (data) => writes.push(data) },
+        alternateScreen: false,
+        mouse: false,
+      });
+      const replay = createVirtualTerminalReplay({ Silvery, columns, rows });
+      await handle.waitForLayoutStable();
+      replay.apply(writes.join(''));
+      assert.ok(handle.buffer, 'headless runtime did not expose its target buffer');
+      replay.assertMatches(handle.buffer, 'initial transcript render diverged');
+
+      writes.length = 0;
+      handle.store.setState({ item: updated });
+      await handle.waitForLayoutStable();
+      await sleep(20);
+      assert.ok(writes.length > 0, 'row update did not emit an incremental ANSI write');
+      replay.apply(writes.join(''));
+      assert.ok(handle.buffer, 'updated runtime did not expose its target buffer');
+      replay.assertMatches(handle.buffer, 'updated transcript render diverged');
+    } finally {
+      handle?.unmount();
+    }
+  });
+
+  it('keeps wide, ANSI-fenced, table-boundary, and trailing-newline rows honest', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { assertTranscriptRenderContract } = await import('../silvery/render-contract.ts');
+    const { renderTranscriptRowForAssertion } = await import('../silvery/surface.tsx');
+
+    // Initialise Silvery once; the production assertion path intentionally uses
+    // renderStringSync after the live surface has already initialised layout.
+    await Silvery.renderString(React.createElement(Silvery.Text, null, 'init'));
+    const table = '| A | 字 |\n| --- | --- |\n| bb | c |';
+    const fixtures = [
+      { id: 'wide-cjk', width: 18, text: '界面 width 調整' },
+      {
+        id: 'ansi-fence',
+        width: 24,
+        text: '```ansi\n\u001b[31mred\u001b[0m + \u001b[1mbold\u001b[0m\n```',
+      },
+      // Message body width is row width minus the four-cell glyph/padding gutter:
+      // 11 => the seven-cell table fits exactly; 10 => raw one-cell-narrow fallback.
+      { id: 'table-exact-fit', width: 11, text: table },
+      { id: 'table-one-too-narrow', width: 10, text: table },
+      { id: 'trailing-newline', width: 20, text: 'first line\n' },
+    ];
+
+    for (const fixture of fixtures) {
+      const item = {
+        id: fixture.id,
+        kind: 'message',
+        role: 'assistant',
+        text: fixture.text,
+      };
+      const rendered = renderTranscriptRowForAssertion({
+        item,
+        layoutWidth: fixture.width,
+      });
+      assert.deepEqual(
+        assertTranscriptRenderContract(
+          {
+            rowId: item.id,
+            rowKind: item.kind,
+            width: fixture.width,
+            measuredHeight: rendered.contentHeight,
+            rendered,
+          },
+          { enabled: true, throwOnFailure: true, writeDiagnostic: () => undefined },
+        ),
+        [],
+        fixture.id,
+      );
+    }
+  });
+
+  it('reproduces expanded review and tool state in the assertion render', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { renderTranscriptRowForAssertion } = await import('../silvery/surface.tsx');
+    const { assertTranscriptRenderContract, inspectTranscriptRenderContract } = await import(
+      '../silvery/render-contract.ts'
+    );
+    await Silvery.renderString(React.createElement(Silvery.Text, null, 'init'));
+
+    const preview = Array.from({ length: 6 }, (_, i) => `detail line ${i}`).join('\n');
+    const fixtures = [
+      {
+        item: {
+          id: 'exp-tool',
+          kind: 'tool',
+          toolName: 'run_command',
+          text: 'run_command',
+          resultPreview: preview,
+        },
+        key: 'tool:exp-tool',
+        expandedEvidence: 'detail line 5',
+      },
+      {
+        item: {
+          id: 'exp-review',
+          kind: 'review',
+          role: 'reviewer',
+          text: 'verdict line\nsecond finding\nthird finding',
+        },
+        key: 'review:exp-review',
+        expandedEvidence: 'third finding',
+      },
+    ];
+
+    for (const fixture of fixtures) {
+      const collapsed = renderTranscriptRowForAssertion({ item: fixture.item, layoutWidth: 40 });
+      const expanded = renderTranscriptRowForAssertion({
+        item: fixture.item,
+        layoutWidth: 40,
+        expansion: new Map([[fixture.key, true]]),
+      });
+      assert.ok(
+        expanded.contentHeight > collapsed.contentHeight,
+        `${fixture.key}: expanding should grow the row`,
+      );
+      assert.ok(
+        expanded.ansi.includes(fixture.expandedEvidence),
+        `${fixture.key}: expanded render must show the tail`,
+      );
+      assert.ok(
+        !collapsed.ansi.includes(fixture.expandedEvidence),
+        `${fixture.key}: collapsed render must fold the tail`,
+      );
+      // An expanded live row verifies clean against an equally-expanded
+      // duplicate tree...
+      assert.deepEqual(
+        assertTranscriptRenderContract(
+          {
+            rowId: fixture.item.id,
+            rowKind: fixture.item.kind,
+            width: 40,
+            measuredHeight: expanded.contentHeight,
+            rendered: expanded,
+          },
+          { enabled: true, throwOnFailure: true, writeDiagnostic: () => undefined },
+        ),
+        [],
+        fixture.key,
+      );
+      // ...where a collapsed duplicate would have reported exactly the
+      // spurious measured_height violation the snapshot plumbing prevents.
+      assert.deepEqual(
+        inspectTranscriptRenderContract({
+          rowId: fixture.item.id,
+          rowKind: fixture.item.kind,
+          width: 40,
+          measuredHeight: expanded.contentHeight,
+          rendered: collapsed,
+        }).map((violation) => violation.invariant),
+        ['measured_height'],
+        `${fixture.key}: state desync must be visible to the contract`,
+      );
+    }
+  });
+
+  it('shares one live expansion store between committed rows and the observer', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { TranscriptRow } = await import('../silvery/surface.tsx');
+    const { transcriptExpansion } = await import('../silvery/transcript-expansion.ts');
+    assert.ok(transcriptExpansion, 'PUSH_TUI_ASSERT=1 must provision the shared expansion store');
+
+    const item = {
+      id: 'live-exp',
+      kind: 'tool',
+      toolName: 'run_command',
+      text: 'run_command',
+      resultPreview: 'first detail\nsecond detail',
+    };
+    const render = () =>
+      Silvery.renderString(
+        React.createElement(
+          Silvery.Box,
+          { flexDirection: 'column', width: 40 },
+          React.createElement(TranscriptRow, { item, width: 40 }),
+        ),
+        { width: 40, height: 12, plain: true },
+      );
+    const before = await render();
+    transcriptExpansion.toggle('tool:live-exp');
+    try {
+      const after = await render();
+      assert.ok(!before.includes('second detail'), 'collapsed row must fold the preview tail');
+      assert.ok(after.includes('second detail'), 'committed rows must read the shared store');
+    } finally {
+      transcriptExpansion.toggle('tool:live-exp');
+    }
+  });
+
+  it('keeps unclipped evidence when the render outgrows the raw-text estimate', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { renderTranscriptRowForAssertion } = await import('../silvery/surface.tsx');
+    const { inspectTranscriptRenderContract, transcriptRenderLines } = await import(
+      '../silvery/render-contract.ts'
+    );
+    await Silvery.renderString(React.createElement(Silvery.Text, null, 'init'));
+
+    // Message renders Markdown at width - 4, so raw text counted at the full
+    // layout width (~100 lines here) undershoots the real render (~150) — the
+    // drift that would defeat any fixed buffer margin. The contract instead
+    // relies on renderStringSync growing its cell buffer to the laid-out
+    // content; this pins that invariant so a silvery that starts clamping to
+    // the layout viewport fails loudly here instead of silently hiding the
+    // very overflow evidence the checker exists to surface.
+    const words = Array.from({ length: 300 }, () => 'abc').join(' ');
+    const item = { id: 'long-narrow', kind: 'message', role: 'assistant', text: words };
+    const layoutWidth = 12;
+    const rawEstimate = Silvery.countVisualLines(words, layoutWidth);
+
+    const rendered = renderTranscriptRowForAssertion({ item, layoutWidth });
+    const lines = transcriptRenderLines(rendered);
+    assert.ok(
+      rendered.contentHeight > rawEstimate,
+      `render (${rendered.contentHeight}) must outgrow the raw estimate (${rawEstimate})`,
+    );
+    assert.equal(lines.length, rendered.contentHeight);
+    assert.ok(lines.at(-1).includes('abc'), 'tail of the row is missing from the buffer');
+    assert.deepEqual(
+      inspectTranscriptRenderContract({
+        rowId: item.id,
+        rowKind: item.kind,
+        width: layoutWidth,
+        measuredHeight: rendered.contentHeight,
+        rendered,
+      }),
+      [],
+      'an honest tall row must verify clean',
+    );
+    // An under-measured row reports the full unclipped height as evidence.
+    assert.deepEqual(
+      inspectTranscriptRenderContract({
+        rowId: item.id,
+        rowKind: item.kind,
+        width: layoutWidth,
+        measuredHeight: rawEstimate,
+        rendered,
+      }),
+      [
+        {
+          invariant: 'measured_height',
+          rowId: 'long-narrow',
+          rowKind: 'message',
+          lineIndex: null,
+          expected: rendered.contentHeight,
+          actual: rawEstimate,
+        },
+      ],
+    );
+  });
+
+  it('fails a lying row with structured row identity and stays inert when disabled', async () => {
+    const { assertTranscriptRenderContract } = await import('../silvery/render-contract.ts');
+    const diagnostics = [];
+    const lying = {
+      rowId: 'lying-row',
+      rowKind: 'message',
+      width: 3,
+      measuredHeight: 1,
+      rendered: { ansi: '界界\nsecond', contentHeight: 2 },
+    };
+
+    assert.throws(
+      () =>
+        assertTranscriptRenderContract(lying, {
+          enabled: true,
+          throwOnFailure: true,
+          writeDiagnostic: (line) => diagnostics.push(JSON.parse(line)),
+        }),
+      /message row lying-row/,
+    );
+    assert.deepEqual(
+      diagnostics.map(({ rowId, rowKind, invariant, lineIndex, expected, actual }) => ({
+        rowId,
+        rowKind,
+        invariant,
+        lineIndex,
+        expected,
+        actual,
+      })),
+      [
+        {
+          rowId: 'lying-row',
+          rowKind: 'message',
+          invariant: 'line_width',
+          lineIndex: 0,
+          expected: 3,
+          actual: 4,
+        },
+        {
+          rowId: 'lying-row',
+          rowKind: 'message',
+          invariant: 'line_width',
+          lineIndex: 1,
+          expected: 3,
+          actual: 6,
+        },
+        {
+          rowId: 'lying-row',
+          rowKind: 'message',
+          invariant: 'measured_height',
+          lineIndex: null,
+          expected: 2,
+          actual: 1,
+        },
+      ],
+    );
+
+    const disabledDiagnostics = [];
+    assert.deepEqual(
+      assertTranscriptRenderContract(lying, {
+        enabled: false,
+        throwOnFailure: true,
+        writeDiagnostic: (line) => disabledDiagnostics.push(line),
+      }),
+      [],
+    );
+    assert.deepEqual(disabledDiagnostics, []);
+  });
+});
+
 describe('silvery surface — constrained-height chrome budget', () => {
   it('keeps inline transcript, error, rule, three-row composer, and footer visible', {
     skip: silverySkip,
@@ -4347,30 +4764,20 @@ describe('silvery surface — constrained-height chrome budget', () => {
       await sleep(80);
 
       const composer = 'composer row one\ncomposer row two\ncomposer row three';
-      const readFrameRows = () => {
-        const terminal = new Silvery.VirtualTerminal(columns, terminalRows);
-        terminal.applyAnsi(stdout.bytes);
-        return Array.from({ length: terminalRows }, (_, y) =>
-          Array.from({ length: columns }, (_, x) => terminal.getChar(x, y) || ' ')
-            .join('')
-            .trimEnd(),
-        );
-      };
-      const waitForFrame = async (predicate) => {
-        let rows = [];
-        for (let i = 0; i < 300; i++) {
-          rows = readFrameRows();
-          if (predicate(rows)) break;
-          await sleep(10);
-        }
-        return rows;
-      };
+      const { readRows: readFrameRows } = createVirtualTerminalFrameReader({
+        Silvery,
+        stdout,
+        columns,
+        rows: terminalRows,
+      });
 
       // Let Silvery finish the initial full-screen write before scheduling the
       // composer state update, then read the observable terminal frame.
-      await waitForFrame((rows) => rows.some((line) => line.includes('auto ·')));
+      await waitForVirtualTerminalFrame(readFrameRows, (rows) =>
+        rows.some((line) => line.includes('auto ·')),
+      );
       hook.setComposerInput(composer);
-      const frameRows = await waitForFrame((rows) =>
+      const frameRows = await waitForVirtualTerminalFrame(readFrameRows, (rows) =>
         rows.some((line) => line.includes('composer row three')),
       );
 
@@ -4486,27 +4893,19 @@ describe('silvery surface — constrained-height chrome budget', () => {
     const lifecycle = handle.run();
     const instance = await handle;
     await sleep(80);
-    const readFrameRows = () => {
-      const terminal = new Silvery.VirtualTerminal(columns, terminalRows);
-      terminal.applyAnsi(stdout.bytes);
-      return Array.from({ length: terminalRows }, (_, y) =>
-        Array.from({ length: columns }, (_, x) => terminal.getChar(x, y) || ' ')
-          .join('')
-          .trimEnd(),
-      );
-    };
-    const waitForFrame = async (pred) => {
-      let rows = [];
-      for (let i = 0; i < 300; i++) {
-        rows = readFrameRows();
-        if (pred(rows)) break;
-        await sleep(10);
-      }
-      return rows;
-    };
-    await waitForFrame((rows) => rows.some((line) => line.trim().length > 0));
+    const { readRows: readFrameRows } = createVirtualTerminalFrameReader({
+      Silvery,
+      stdout,
+      columns,
+      rows: terminalRows,
+    });
+    await waitForVirtualTerminalFrame(readFrameRows, (rows) =>
+      rows.some((line) => line.trim().length > 0),
+    );
     if (composerInput != null) hook.setComposerInput(composerInput);
-    const frameRows = settleOn ? await waitForFrame(settleOn) : readFrameRows();
+    const frameRows = settleOn
+      ? await waitForVirtualTerminalFrame(readFrameRows, settleOn)
+      : readFrameRows();
     const cleanup = async () => {
       instance?.unmount();
       if (lifecycle) await lifecycle;
