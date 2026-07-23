@@ -34,6 +34,7 @@ import { createComposerHistoryNav } from '../tui-composer-history.js';
 import { createComposerUndo } from '../tui-composer-undo.js';
 import { FocusStack } from '../tui-focus.js';
 import { getListNavigationAction } from '../tui-modal-input.js';
+import { wordWrap } from '../tui-renderer.js';
 import { isReducedMotion, verbForActivity, type StatusActivity } from '../tui-verbs.js';
 import { estimateTokens, formatElapsed, formatTokenCount } from '../tui-status.js';
 import { detectUnicode } from '../tui-theme.js';
@@ -89,6 +90,7 @@ const COMMANDS = [
   { id: 'resume', label: 'Resume session', hint: 'browse saved conversations' },
   { id: 'model', label: 'Switch model', hint: 'pick a curated model' },
   { id: 'provider', label: 'Switch provider', hint: 'pick a provider' },
+  { id: 'reasoning', label: 'Show reasoning', hint: 'live tail · Ctrl+G' },
   { id: 'copy', label: 'Copy last response', hint: 'yank to clipboard · Ctrl+O' },
   { id: 'clear', label: 'Clear transcript', hint: 'hide the current display' },
   { id: 'cancel', label: 'Cancel turn', hint: 'abort the active round loop' },
@@ -240,6 +242,27 @@ export function tailWindow(
     rows += itemRows;
   }
   return visible;
+}
+
+/** Terminal-safe, bottom-anchored reasoning window. Reasoning can be much
+ * taller than the modal and arrives incrementally, so the newest rows win. */
+export function reasoningTailWindow(
+  text: string,
+  width: number,
+  height: number,
+): { lines: string[]; hidden: number } {
+  const safe = text
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: provider text must not control the terminal
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strip OSC hyperlinks/window titles
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // Preserve newlines/tabs but strip every other terminal control.
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: terminal-safety boundary
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '');
+  const wrapped = wordWrap(safe, Math.max(1, width));
+  const visibleHeight = Math.max(1, height);
+  const hidden = Math.max(0, wrapped.length - visibleHeight);
+  return { lines: wrapped.slice(hidden), hidden };
 }
 
 function useTerminalSize() {
@@ -725,6 +748,68 @@ function InteractionModal({
               placeholder="type your answer…"
               isActive={active}
             />
+          )}
+        </Box>
+      </ModalDialog>
+    </Box>
+  );
+}
+
+function ReasoningModal({
+  reasoning,
+  controller,
+  width,
+  height,
+  fade,
+  active,
+}: {
+  reasoning: SilverySnapshot['reasoning'];
+  controller: SilveryController;
+  width: number;
+  height: number;
+  fade: number;
+  active: boolean;
+}) {
+  useInput(
+    (input, key) => {
+      if (key.escape || (key.ctrl && input.toLowerCase() === 'g')) controller.closeReasoning();
+    },
+    { isActive: active },
+  );
+  const modalWidth = Math.max(36, Math.min(80, width - 4));
+  const modalHeight = Math.max(8, Math.min(22, height - 4));
+  const bodyWidth = Math.max(10, modalWidth - 4);
+  const bodyHeight = Math.max(2, modalHeight - 6);
+  const tail = reasoningTailWindow(reasoning.text, bodyWidth, bodyHeight);
+  return (
+    <Box
+      position="absolute"
+      marginLeft={Math.max(2, Math.floor((width - modalWidth) / 2))}
+      marginTop={Math.max(1, Math.floor((height - modalHeight) / 2))}
+      width={modalWidth}
+    >
+      <ModalDialog
+        title={`Reasoning${reasoning.live ? ' · live' : ''}`}
+        width={modalWidth}
+        footer={footerKeybinds('reasoning')}
+        onClose={() => controller.closeReasoning()}
+        fade={fade}
+      >
+        <Box flexDirection="column">
+          {!reasoning.text.trim() ? (
+            <Text color={VL_COLOR.muted}>No reasoning captured yet in this TUI session.</Text>
+          ) : (
+            <>
+              {tail.hidden > 0 ? (
+                <Text color={VL_COLOR.muted}>{`[${tail.hidden} more lines above]`}</Text>
+              ) : null}
+              {tail.lines.map((line, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: wrapped live-tail rows have no stable identity
+                <Text key={index} color={VL_COLOR.muted}>
+                  {line || ' '}
+                </Text>
+              ))}
+            </>
           )}
         </Box>
       </ModalDialog>
@@ -1706,6 +1791,7 @@ export type ComposerShortcut =
   | 'provider'
   | 'session'
   | 'copy'
+  | 'reasoning'
   | 'undo'
   | 'redo'
   | null;
@@ -1735,6 +1821,7 @@ export function resolveComposerShortcut(
   if (inputKey === 'p') return 'provider';
   if (inputKey === 'r') return 'session';
   if (inputKey === 'o') return 'copy';
+  if (inputKey === 'g') return 'reasoning';
   if (inputKey === 'z' || inputKey === 'Z') return key.shift || inputKey === 'Z' ? 'redo' : 'undo';
   if (inputKey === '/') return 'undo';
   return null;
@@ -1748,6 +1835,10 @@ export function PushSurface({
   hook?: PushSurfaceHook;
 }) {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  // Several render-fixture tests intentionally provide a minimal legacy
+  // snapshot. Keep the surface compatible while the real controller always
+  // supplies this field.
+  const reasoning = snapshot.reasoning ?? { open: false, text: '', live: false };
   const { columns, rows } = useTerminalSize();
   const { exit } = useApp();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -1757,6 +1848,7 @@ export function PushSurface({
   const [interactionAnimating, setInteractionAnimating] = useState(false);
   const [pickerAnimating, setPickerAnimating] = useState(false);
   const [configAnimating, setConfigAnimating] = useState(false);
+  const [reasoningAnimating, setReasoningAnimating] = useState(false);
   const reducedMotion = isReducedMotion();
   // The empty launch screen shimmers its mark (the idle state's single live
   // animation, law 8), so the clock keeps ticking there — the ONE idle exception
@@ -1772,7 +1864,8 @@ export function PushSurface({
       paletteOpen ||
       Boolean(snapshot.interaction) ||
       Boolean(snapshot.picker) ||
-      Boolean(snapshot.configEditor),
+      Boolean(snapshot.configEditor) ||
+      reasoning.open,
     draftLength: input.length,
   });
   const tick = useSharedClock(
@@ -1781,6 +1874,7 @@ export function PushSurface({
       interactionAnimating ||
       pickerAnimating ||
       configAnimating ||
+      reasoningAnimating ||
       launchShimmerActive,
   );
   const paletteMotion = useModalMotion(paletteOpen, tick, 0.35, reducedMotion, setPaletteAnimating);
@@ -1805,12 +1899,21 @@ export function PushSurface({
     reducedMotion,
     setConfigAnimating,
   );
+  const reasoningMotion = useModalMotion(
+    reasoning.open,
+    tick,
+    0.35,
+    reducedMotion,
+    setReasoningAnimating,
+  );
   const retainedInteraction = useRef(snapshot.interaction);
   if (snapshot.interaction) retainedInteraction.current = snapshot.interaction;
   const retainedPicker = useRef(snapshot.picker);
   if (snapshot.picker) retainedPicker.current = snapshot.picker;
   const retainedConfigEditor = useRef(snapshot.configEditor);
   if (snapshot.configEditor) retainedConfigEditor.current = snapshot.configEditor;
+  const retainedReasoning = useRef(reasoning);
+  retainedReasoning.current = reasoning;
   const paletteOpenRef = useRef(false);
   paletteOpenRef.current = paletteMotion.visible;
   const interactionOpenRef = useRef(false);
@@ -1819,6 +1922,8 @@ export function PushSurface({
   pickerOpenRef.current = pickerMotion.visible;
   const configOpenRef = useRef(false);
   configOpenRef.current = configMotion.visible;
+  const reasoningOpenRef = useRef(false);
+  reasoningOpenRef.current = reasoningMotion.visible;
   const lastAttentionInteractionId = useRef<string | null>(null);
   const [attentionTick, setAttentionTick] = useState<number | null>(null);
   const completer = useMemo(
@@ -1992,6 +2097,7 @@ export function PushSurface({
       else if (id === 'resume') controller.openPicker('session');
       else if (id === 'model') controller.openPicker('model');
       else if (id === 'provider') controller.openPicker('provider');
+      else if (id === 'reasoning') controller.toggleReasoning();
       else if (id === 'copy') controller.copyLastResponse();
       else if (id === 'clear') controller.clearDisplay();
       else if (id === 'cancel') controller.cancel();
@@ -2019,6 +2125,11 @@ export function PushSurface({
           handleKey: () => true,
         })
         .register({
+          id: 'reasoning',
+          isActive: () => reasoningOpenRef.current,
+          handleKey: () => true,
+        })
+        .register({
           id: 'command-palette',
           isActive: () => paletteOpenRef.current,
           handleKey: () => true,
@@ -2037,15 +2148,22 @@ export function PushSurface({
     !snapshot.running &&
     !interactionMotion.visible &&
     !pickerMotion.visible &&
-    !configMotion.visible;
+    !configMotion.visible &&
+    !reasoningMotion.visible;
   useInput(
     (inputKey, key) => {
       if (key.ctrl && inputKey === 'c') {
         handleTuiInterrupt(snapshot.running, controller.cancel, exit);
         return;
       }
-      if (!inputActive) return;
       const shortcut = resolveComposerShortcut(inputKey, key);
+      // Reasoning is useful precisely while the model is working, so this one
+      // chord bypasses the ordinary idle-only composer gate.
+      if (shortcut === 'reasoning') {
+        controller.toggleReasoning();
+        return;
+      }
+      if (!inputActive) return;
       if (shortcut === 'complete') {
         complete(key.shift);
         return;
@@ -2085,7 +2203,8 @@ export function PushSurface({
         !paletteMotion.visible &&
         !interactionMotion.visible &&
         !pickerMotion.visible &&
-        !configMotion.visible,
+        !configMotion.visible &&
+        !reasoningMotion.visible,
     },
   );
 
@@ -2132,6 +2251,7 @@ export function PushSurface({
     scope = 'question';
   else if (configMotion.visible) scope = 'picker';
   else if (pickerMotion.visible) scope = 'picker';
+  else if (reasoningMotion.visible) scope = 'reasoning';
   else if (paletteMotion.visible) scope = 'palette';
   else if (snapshot.running) scope = 'running';
 
@@ -2190,7 +2310,8 @@ export function PushSurface({
             paletteMotion.visible ||
             interactionMotion.visible ||
             pickerMotion.visible ||
-            configMotion.visible
+            configMotion.visible ||
+            reasoningMotion.visible
           }
         />
         <Transcript
@@ -2201,7 +2322,8 @@ export function PushSurface({
             !paletteMotion.visible &&
             !interactionMotion.visible &&
             !pickerMotion.visible &&
-            !configMotion.visible
+            !configMotion.visible &&
+            !reasoningMotion.visible
           }
           showLaunchShortcuts={inputActive && input.length === 0}
           tick={tick}
@@ -2264,6 +2386,15 @@ export function PushSurface({
             width={columns}
             fade={pickerMotion.fade}
             active={pickerMotion.interactive}
+          />
+        ) : reasoningMotion.visible ? (
+          <ReasoningModal
+            reasoning={retainedReasoning.current}
+            controller={controller}
+            width={columns}
+            height={rows}
+            fade={reasoningMotion.fade}
+            active={reasoningMotion.interactive}
           />
         ) : paletteMotion.visible ? (
           <Palette

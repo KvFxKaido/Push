@@ -232,7 +232,27 @@ describe('silvery Phase 0 fault shell', () => {
     assert.equal(resolveComposerShortcut('l', { ctrl: true }), 'clear');
     assert.equal(resolveComposerShortcut('p', { ctrl: true }), 'provider');
     assert.equal(resolveComposerShortcut('r', { ctrl: true }), 'session');
+    assert.equal(resolveComposerShortcut('g', { ctrl: true }), 'reasoning');
     assert.equal(resolveComposerShortcut('p', {}), null);
+  });
+
+  it('keeps the reasoning modal on a terminal-safe live tail', {
+    skip: silverySkip,
+  }, async () => {
+    const { reasoningTailWindow } = await import('../silvery/surface.tsx');
+    const tail = reasoningTailWindow(
+      `old line\n${'wide '.repeat(5)}\n\u001b[2Jnew line\u0007\u0085`,
+      12,
+      3,
+    );
+    assert.ok(tail.hidden > 0, 'long reasoning should report hidden rows above');
+    assert.match(tail.lines.join('\n'), /new line/);
+    assert.ok(!tail.lines.join('').includes('\u001b'), 'ANSI controls must not reach the modal');
+    assert.ok(
+      !tail.lines.join('').includes('\u0007'),
+      'terminal controls must not reach the modal',
+    );
+    assert.ok(!tail.lines.join('').includes('\u0085'), 'C1 controls must not reach the modal');
   });
 
   it('advertises only launch shortcuts backed by a real binding (honest surface)', {
@@ -5016,7 +5036,7 @@ describe('silvery surface — constrained-height chrome budget', () => {
   });
 });
 
-describe('silvery event diagnostics — citations + empty-run', () => {
+describe('silvery event diagnostics — reasoning + citations + warnings', () => {
   // Against the real inline lane: a runTurn mock emits engine events through
   // `options.emit`, and we read the rendered transcript rows.
   const baseState = () => ({
@@ -5072,6 +5092,94 @@ describe('silvery event diagnostics — citations + empty-run', () => {
       rowsText(controller).some((t) => /Sources \(1\)/.test(t) && /silvery\.dev/.test(t)),
       `no sources row: ${JSON.stringify(rowsText(controller))}`,
     );
+    await controller.dispose();
+  });
+
+  it('captures reasoning live, keeps the completed tail, and does not mislabel the run empty', async () => {
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const { controller } = await harness(async (options, state) => {
+      emit(options, 'assistant_thinking_token', { text: 'first thought\n' }, state.sessionId);
+      emit(options, 'assistant_thinking_token', { text: 'second thought' }, state.sessionId);
+      await gate;
+      emit(options, 'assistant_thinking_done', {}, state.sessionId);
+      emit(options, 'run_complete', {}, state.sessionId);
+      return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+    });
+
+    const turn = controller.submit('think about it');
+    while (!controller.getSnapshot().reasoning.live) await sleep(0);
+    controller.toggleReasoning();
+    assert.deepEqual(controller.getSnapshot().reasoning, {
+      open: true,
+      text: 'first thought\nsecond thought',
+      live: true,
+    });
+    release();
+    await turn;
+    assert.equal(controller.getSnapshot().reasoning.live, false);
+    assert.equal(controller.getSnapshot().reasoning.text, 'first thought\nsecond thought');
+    assert.ok(
+      !rowsText(controller).some((text) => /response was empty/i.test(text)),
+      'reasoning-only run should count as visible output',
+    );
+    controller.closeReasoning();
+    assert.equal(controller.getSnapshot().reasoning.open, false);
+    await controller.dispose();
+  });
+
+  it('renders the reasoning tail as a real modal', { skip: silverySkip }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const { controller } = await harness(async (options, state) => {
+      emit(
+        options,
+        'assistant_thinking_token',
+        { text: Array.from({ length: 12 }, (_, index) => `thought ${index + 1}`).join('\n') },
+        state.sessionId,
+      );
+      emit(options, 'assistant_thinking_done', {}, state.sessionId);
+      emit(options, 'run_complete', {}, state.sessionId);
+      return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('show the modal');
+    controller.toggleReasoning();
+
+    const stdout = new FakeStdout(72, 16);
+    const stdin = new FakeStdin();
+    const handle = Silvery.render(React.createElement(PushSurface, { controller, hook: {} }), {
+      stdout,
+      stdin,
+    });
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(180);
+    assert.match(stdout.bytes, /Reasoning/);
+    assert.match(stdout.bytes, /more lines above/);
+    assert.match(stdout.bytes, /thought 12/);
+
+    instance.unmount();
+    await lifecycle;
+    await controller.dispose();
+  });
+
+  it('surfaces an inline unknown event once instead of silently dropping it', async () => {
+    const { controller } = await harness(async (options, state) => {
+      emit(options, 'future.event', {}, state.sessionId);
+      emit(options, 'future.event', {}, state.sessionId);
+      emit(options, 'run_complete', {}, state.sessionId);
+      return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('exercise drift');
+    assert.equal(
+      rowsText(controller).filter((text) => /unknown event type "future\.event"/i.test(text))
+        .length,
+      1,
+    );
+    assert.ok(!rowsText(controller).some((text) => /response was empty/i.test(text)));
     await controller.dispose();
   });
 

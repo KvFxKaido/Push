@@ -1,26 +1,92 @@
 /**
- * event-diagnostics.ts — pure helpers for two transcript diagnostics the
+ * event-diagnostics.ts — pure helpers for transcript diagnostics the
  * silvery lanes restore from the deleted ANSI TUI:
  *
  *   1. web-search citations → a muted "Sources" block,
  *   2. the empty-run warning (a turn that produced no visible output — the
- *      Tool-Call Parser Convergence Gap symptom).
+ *      Tool-Call Parser Convergence Gap symptom),
+ *   3. a once-per-type warning when either lane receives an event it does not
+ *      handle.
  *
  * Both the inline lane (`controller.ts`'s `onEvent`) and the daemon lane
  * (`daemon-transcript-mirror.ts`) feed these, so the logic lives here, pure and
  * unit-tested, rather than duplicated where it would drift.
  *
- * The third old-TUI diagnostic — the unknown-event drift warning
- * (`tui-daemon-handshake.ts`'s surviving `shouldWarnAboutUnknownEvent`) — is
- * deliberately NOT here. It needs a maintained set of TUI-handled event types
- * to decide what "unknown" means, plus a drift-detector test so that set can't
- * rot against the two switch statements. Both of THESE diagnostics rest on a
- * positive list of what to show, which needs no such bookkeeping; the drift
- * warning is a separate, later change. See #1531.
+ * The lane-specific handled sets are intentionally explicit. A source-level
+ * drift test pins them to the inline and daemon switch statements so a new
+ * engine event cannot quietly become a silent TUI drop. See #1531.
  */
 
 import type { UrlCitation } from '../../lib/provider-contract.ts';
+import { TRANSCRIPT_MUTATION_EVENT_TYPES } from '../../lib/session-transcript-events.ts';
 import { safeCitations, sanitizeCitationText } from '../citation-format.js';
+import { shouldWarnAboutUnknownEvent } from '../tui-daemon-handshake.js';
+
+/** Events consumed by the inline controller switch (plus citations, which its
+ * diagnostic observer renders immediately before that switch). */
+export const SILVERY_INLINE_HANDLED_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'assistant_thinking_token',
+  'assistant_thinking_done',
+  'assistant_token',
+  'assistant_done',
+  'assistant_citations',
+  'assistant.tool_prose',
+  'tool_call',
+  'tool.execution_start',
+  'tool_result',
+  'tool.execution_complete',
+  'warning',
+  'error',
+  'status',
+  'run_complete',
+]);
+
+/** Events consumed across the daemon mirror reducer and the controller's
+ * daemon-only approval/transcript-resync path. */
+export const SILVERY_DAEMON_HANDLED_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'user_message',
+  'assistant_thinking_token',
+  'assistant_thinking_done',
+  'assistant_token',
+  'assistant_done',
+  'assistant_citations',
+  'assistant.tool_prose',
+  'tool_call',
+  'tool.execution_start',
+  'tool_result',
+  'tool.execution_complete',
+  'subagent.started',
+  'subagent.completed',
+  'subagent.failed',
+  'task_graph.task_ready',
+  'task_graph.task_started',
+  'task_graph.task_completed',
+  'task_graph.task_failed',
+  'task_graph.task_cancelled',
+  'task_graph.graph_completed',
+  'warning',
+  'error',
+  'status',
+  'tool.call_malformed',
+  'run_complete',
+  'approval_required',
+  'approval_received',
+  ...TRANSCRIPT_MUTATION_EVENT_TYPES,
+]);
+
+export type SilveryEventLane = 'inline' | 'daemon';
+
+/** True once per unknown type and lane registry. Known global no-ops remain
+ * silent through the surviving ANSI-TUI helper. */
+export function shouldWarnAboutUnknownSilveryEvent(
+  registry: Set<string>,
+  eventType: string,
+  lane: SilveryEventLane,
+): boolean {
+  const handled =
+    lane === 'inline' ? SILVERY_INLINE_HANDLED_EVENT_TYPES : SILVERY_DAEMON_HANDLED_EVENT_TYPES;
+  return !handled.has(eventType) && shouldWarnAboutUnknownEvent(registry, eventType);
+}
 
 /**
  * Event types that put a visible row in the transcript. A run that emits NONE
@@ -33,6 +99,9 @@ import { safeCitations, sanitizeCitationText } from '../citation-format.js';
  * empty-run accounting.
  */
 export const VISIBLE_EMISSION_TYPES: ReadonlySet<string> = new Set([
+  // Reasoning is visible through the Ctrl+G live-tail modal. A reasoning-only
+  // run therefore is not empty even if it never produces final-answer text.
+  'assistant_thinking_token',
   'assistant_token',
   'assistant.tool_prose',
   'tool_call',

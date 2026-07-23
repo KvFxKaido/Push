@@ -61,6 +61,7 @@ import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
 import { isReducedMotion, type StatusActivity } from '../tui-verbs.js';
 import { detectThemeName, isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
 import { ESC } from '../tui-renderer.js';
+import { formatUnknownEventWarning } from '../tui-daemon-handshake.js';
 import { formatWorktreeStatus } from '../worktree.js';
 import {
   applyDaemonTranscriptEvent,
@@ -77,6 +78,7 @@ import {
   formatCitationsRow,
   formatEmptyRunWarning,
   isVisibleEmission,
+  shouldWarnAboutUnknownSilveryEvent,
 } from './event-diagnostics.js';
 
 export type SilveryTranscriptItem = DaemonTranscriptRow;
@@ -103,6 +105,13 @@ export interface SilverySnapshot {
   picker: SilveryPicker | null;
   /** Config editor; credential values are masked and raw drafts never enter this snapshot. */
   configEditor: SilveryConfigEditor | null;
+  /** Ctrl+G reasoning live-tail. Text is limited to this TUI process: thinking
+   * events are intentionally not persisted into transcript rows. */
+  reasoning: {
+    open: boolean;
+    text: string;
+    live: boolean;
+  };
   /** Live theme preference — drives silvery `ThemeProvider` accent hue (v2 law 2). */
   theme: string;
   /** CLI exec mode (`auto` / `strict` / `yolo`) for the composer mode label. */
@@ -230,6 +239,10 @@ export interface SilveryController {
   openConfigEditor(targetId?: string): void;
   /** Dismiss the config editor and discard its surface-owned secret draft. */
   closeConfigEditor(): void;
+  /** Toggle the reasoning live-tail, including while a turn is running. */
+  toggleReasoning(): void;
+  /** Dismiss the reasoning live-tail. */
+  closeReasoning(): void;
   /** Persist a secret submitted by the masked field. Raw text is never snapshotted. */
   saveConfigSecret(targetId: string, secret: string): Promise<boolean>;
   /** Persist a non-secret preference selected in the config editor. */
@@ -405,6 +418,11 @@ export async function createSilveryController(
   let pickerToken = 0;
   let configEditor: SilveryConfigEditor | null = null;
   let configEditorToken = 0;
+  let reasoningModalOpen = false;
+  let reasoningBuffer = '';
+  let lastReasoning = '';
+  let reasoningStreaming = false;
+  const inlineUnknownEventTypes = new Set<string>();
   let sessionPickerRows: SessionListEntry[] = [];
   let sessionPreviewRequest = 0;
   // Visible-output count for the current run, for the empty-run diagnostic. Both
@@ -550,6 +568,11 @@ export async function createSilveryController(
     interaction,
     picker,
     configEditor,
+    reasoning: {
+      open: reasoningModalOpen,
+      text: reasoningBuffer || lastReasoning,
+      live: reasoningStreaming,
+    },
     theme: resolveThemeName(),
     execMode,
   });
@@ -706,6 +729,29 @@ export async function createSilveryController(
     } else if (isVisibleEmission(event.type)) runVisibleEmissionCount += 1;
   }
 
+  /** Capture live provider reasoning without promoting it into transcript or
+   * durable session state. `lastReasoning` keeps the completed turn available
+   * until the next turn begins, matching the deleted ANSI TUI contract. */
+  function observeReasoningEvent(event: EngineEvent): void {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    if (event.type === 'assistant_thinking_token') {
+      const text = typeof payload.text === 'string' ? payload.text : '';
+      if (text) {
+        reasoningBuffer += text;
+        reasoningStreaming = true;
+      }
+      return;
+    }
+    if (
+      event.type === 'assistant_thinking_done' ||
+      event.type === 'assistant_done' ||
+      event.type === 'run_complete'
+    ) {
+      reasoningStreaming = false;
+      if (reasoningBuffer.trim()) lastReasoning = reasoningBuffer;
+    }
+  }
+
   /**
    * On run completion, warn if the turn produced no visible output at all — the
    * Tool-Call Parser Convergence Gap symptom, otherwise an unexplained blank
@@ -717,9 +763,14 @@ export async function createSilveryController(
   }
 
   const onEvent = (event: EngineEvent) => {
+    observeReasoningEvent(event);
     observeInlineEventDiagnostics(event);
     const payload = (event.payload ?? {}) as Record<string, unknown>;
     switch (event.type) {
+      case 'assistant_thinking_token':
+      case 'assistant_thinking_done':
+        // Captured by observeReasoningEvent before the transcript switch.
+        break;
       case 'assistant_token':
         liveText += String(payload.text ?? '');
         break;
@@ -818,11 +869,17 @@ export async function createSilveryController(
         resolveDaemonTurn?.();
         resolveDaemonTurn = null;
         break;
+      default:
+        if (shouldWarnAboutUnknownSilveryEvent(inlineUnknownEventTypes, event.type, 'inline')) {
+          runVisibleEmissionCount += 1;
+          appendStatus(formatUnknownEventWarning(event.type));
+        }
     }
     notify();
   };
 
   const onDaemonEvent = (event: EngineEvent & { seq?: number }) => {
+    observeReasoningEvent(event);
     applyDaemonTranscriptEvent(daemonMirror, {
       seq: typeof event.seq === 'number' ? event.seq : 0,
       type: event.type,
@@ -850,6 +907,7 @@ export async function createSilveryController(
       const payload = (event.payload ?? {}) as Record<string, unknown>;
       const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
       if (approvalId) {
+        reasoningModalOpen = false;
         interaction = {
           id: approvalId,
           kind: 'approval',
@@ -1164,6 +1222,10 @@ export async function createSilveryController(
       daemonStateStale = false;
       activityRows = [];
       liveText = '';
+      reasoningModalOpen = false;
+      reasoningBuffer = '';
+      lastReasoning = '';
+      reasoningStreaming = false;
       hiddenBefore = 0;
       gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
       appendStatus(
@@ -1290,6 +1352,7 @@ export async function createSilveryController(
       return;
     }
     picker = null;
+    reasoningModalOpen = false;
     configEditor = buildConfigEditor(targetId);
     notify();
   }
@@ -1297,6 +1360,21 @@ export async function createSilveryController(
   function closeConfigEditor(): void {
     if (!configEditor) return;
     configEditor = null;
+    notify();
+  }
+
+  function toggleReasoning(): void {
+    reasoningModalOpen = !reasoningModalOpen;
+    if (reasoningModalOpen) {
+      picker = null;
+      configEditor = null;
+    }
+    notify();
+  }
+
+  function closeReasoning(): void {
+    if (!reasoningModalOpen) return;
+    reasoningModalOpen = false;
     notify();
   }
 
@@ -1610,6 +1688,7 @@ export async function createSilveryController(
       return;
     }
     configEditor = null;
+    reasoningModalOpen = false;
     if (kind === 'session') {
       void openSessionPicker();
       return;
@@ -1711,6 +1790,7 @@ export async function createSilveryController(
           '  Ctrl+R                 Open the session picker',
           '  Ctrl+L                 Clear the transcript display',
           '  Ctrl+O                 Copy the last response to the clipboard',
+          '  Ctrl+G                 Toggle the reasoning live-tail',
           '  Ctrl+C                 Cancel the active turn or exit while idle',
           '  Shift/Alt+Enter        Insert a newline',
           '  Ctrl+A/E · Alt+B/F     Line start/end · word backward/forward',
@@ -1737,6 +1817,8 @@ export async function createSilveryController(
       }
       activityRows = [];
       liveText = '';
+      reasoningBuffer = '';
+      reasoningStreaming = false;
       notify();
       return true;
     }
@@ -2293,6 +2375,8 @@ export async function createSilveryController(
       error = null;
       activityRows = [];
       liveText = '';
+      reasoningBuffer = '';
+      reasoningStreaming = false;
       // Fresh run: reset the visible-output counter so a prior turn's output
       // can't suppress this turn's empty-run diagnostic (defensive — a completed
       // run already reset it in finishRunDiagnostics).
@@ -2389,6 +2473,7 @@ export async function createSilveryController(
               new Promise<boolean>((resolve) => {
                 const id = nextId('approval');
                 resolveApproval = resolve;
+                reasoningModalOpen = false;
                 interaction = {
                   id,
                   kind: 'approval',
@@ -2401,6 +2486,7 @@ export async function createSilveryController(
               new Promise<string>((resolve) => {
                 const id = nextId('question');
                 resolveQuestion = resolve;
+                reasoningModalOpen = false;
                 interaction = {
                   id,
                   kind: 'question',
@@ -2422,6 +2508,8 @@ export async function createSilveryController(
         running = false;
         startedAt = null;
         liveText = '';
+        reasoningStreaming = false;
+        if (reasoningBuffer.trim()) lastReasoning = reasoningBuffer;
         abortController = null;
         interaction = null;
         resolveApproval = null;
@@ -2505,6 +2593,8 @@ export async function createSilveryController(
     toggleSessionPickerScope,
     openConfigEditor,
     closeConfigEditor,
+    toggleReasoning,
+    closeReasoning,
     saveConfigSecret,
     saveConfigPreference,
     selectPickerOption(id) {

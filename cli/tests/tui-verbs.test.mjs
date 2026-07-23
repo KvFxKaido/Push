@@ -44,10 +44,10 @@ describe('verbForActivity', () => {
   });
 
   it('renders the quiet state as a seeded mood verb, not the literal "thinking"', () => {
-    // The pre-Silvery TUI drove `thinking` off reasoning-token events, so the
-    // word was a fact there. Silvery's lane emits no reasoning event: this
-    // state only means "running, nothing observable yet", and a mood verb is
-    // the honest label for that much.
+    // The reasoning modal now consumes reasoning-token events, but this header
+    // state remains deliberately broader: it also covers "running, nothing
+    // observable yet" for non-reasoning models. A mood verb is the honest
+    // label for that shared state; Ctrl+G carries the precise reasoning fact.
     const verb = verbForActivity({ kind: 'thinking' }, 'sess_abc123');
     assert.ok(MOOD_VERBS.includes(verb), `expected a mood verb, got: ${verb}`);
     assert.notEqual(verb, 'thinking');
