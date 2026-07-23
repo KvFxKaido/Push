@@ -399,6 +399,7 @@ const HEADING = /^(#{1,6})\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
+const TASK = /^\[([ xX])\]\s+(.*)$/;
 const TABLE_DELIMITER = /^:?-{3,}:?$/;
 
 function isEscaped(text: string, index: number): boolean {
@@ -680,13 +681,16 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     }
     const bullet = BULLET.exec(raw);
     if (bullet) {
-      const task = /^\[([ xX])\]\s+(.*)$/.exec(bullet[2]);
+      const streamingTail = index === streamingTailIndex;
+      const task = TASK.exec(bullet[2]);
       out.push({
         kind: 'bullet',
         marker: bullet[1],
         ...(task ? { task: true, checked: task[1].toLowerCase() === 'x' } : {}),
+        // The whitespace after `]` is the disambiguation boundary: without it,
+        // `[x]` may still grow into an inline link such as `[x](url)`.
         spans: parseInline(task?.[2] ?? bullet[2], {
-          streamingTail: index === streamingTailIndex,
+          streamingTail,
         }),
       });
       continue;
