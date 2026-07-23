@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { fetchOpenRouterWithStructuredOutputFallback } from './openrouter-parameters.js';
 import type { PushStreamEvent } from './provider-contract.js';
 import {
   OPENROUTER_FALLBACK_EVENTS,
   isCommittedResponsesEvent,
   isOpenRouterRoutingConstraintBody,
-  isOpenRouterRoutingConstraintError,
   streamResponsesWithChatFallback,
 } from './responses-chat-fallback.js';
 
@@ -141,37 +141,125 @@ describe('streamResponsesWithChatFallback', () => {
     expect(chat).not.toHaveBeenCalled();
   });
 
-  it('declines the fallback on a flagged routing-constraint error', async () => {
-    const chat = vi.fn(() => from([{ type: 'text_delta', text: 'CHAT' }]));
-    const flagged = Object.assign(new Error(WEB_LANE_ERROR), {
-      openRouterRoutingConstraint: true,
-    });
-    const stream = streamResponsesWithChatFallback({
-      responses: () => throwsAfter([], flagged),
-      chat,
-      shouldFallback: (error) => !isOpenRouterRoutingConstraintError(error),
-    });
-    await expect(collect(stream)).rejects.toThrow('No endpoints found');
-    // The producer already exhausted schema relaxation; Chat would recompute the
-    // identical remaining constraint, so it is never built.
-    expect(chat).not.toHaveBeenCalled();
-  });
-
-  it('STILL falls back when the same message arrives unflagged', async () => {
-    // The regression this predicate must not cause: without `require_parameters`,
-    // "no endpoints found" means the model has no /responses endpoint — exactly the
-    // beta gap chat is meant to rescue. The Worker lane only ever produces this shape.
+  it('falls back when OpenRouter returns its ambiguous routing message', async () => {
     const chat = vi.fn(() => from([{ type: 'text_delta', text: 'from chat' }, DONE]));
     const out = await collect(
       streamResponsesWithChatFallback({
         responses: () => throwsAfter([], new Error(WORKER_LANE_ERROR)),
         chat,
-        shouldFallback: (error) => !isOpenRouterRoutingConstraintError(error),
       }),
     );
     expect(out).toEqual([{ type: 'text_delta', text: 'from chat' }, DONE]);
     expect(chat).toHaveBeenCalledOnce();
   });
+});
+
+describe('OpenRouter transport matrix', () => {
+  const scenarios = [
+    { hasResponsesEndpoint: true, toolsRoutableOnChat: true, schemaPresent: true },
+    { hasResponsesEndpoint: true, toolsRoutableOnChat: true, schemaPresent: false },
+    { hasResponsesEndpoint: true, toolsRoutableOnChat: false, schemaPresent: true },
+    { hasResponsesEndpoint: true, toolsRoutableOnChat: false, schemaPresent: false },
+    { hasResponsesEndpoint: false, toolsRoutableOnChat: true, schemaPresent: true },
+    { hasResponsesEndpoint: false, toolsRoutableOnChat: true, schemaPresent: false },
+    { hasResponsesEndpoint: false, toolsRoutableOnChat: false, schemaPresent: true },
+    { hasResponsesEndpoint: false, toolsRoutableOnChat: false, schemaPresent: false },
+  ];
+
+  function routingConstraintResponse() {
+    return {
+      ok: false,
+      status: 404,
+      text: async () => OPENROUTER_404_BODY,
+    };
+  }
+
+  function successfulResponse() {
+    return { ok: true, status: 200, text: async () => '' };
+  }
+
+  for (const { hasResponsesEndpoint, toolsRoutableOnChat, schemaPresent } of scenarios) {
+    it(`responses endpoint=${hasResponsesEndpoint}, chat tools=${toolsRoutableOnChat}, schema=${schemaPresent}`, async () => {
+      const responsesBodies: Record<string, unknown>[] = [];
+      const chatBodies: Record<string, unknown>[] = [];
+      let responsesRelaxations = 0;
+      let chatRelaxations = 0;
+      let chatLegs = 0;
+
+      const responses = async function* (): AsyncIterable<PushStreamEvent> {
+        const result = await fetchOpenRouterWithStructuredOutputFallback({
+          body: {
+            tools: [{ type: 'function', name: 'read_file' }],
+            ...(schemaPresent ? { text: { format: { type: 'json_schema' } } } : {}),
+            provider: { require_parameters: true },
+          },
+          transport: 'responses',
+          requireParameters: true,
+          requireParametersAfterRelaxation: true,
+          attempt: async (body) => {
+            responsesBodies.push(body);
+            return routingConstraintResponse();
+          },
+          onRelaxed: () => {
+            responsesRelaxations += 1;
+          },
+        });
+
+        // The scenario's `hasResponsesEndpoint` truth is deliberately hidden from
+        // the fallback policy: OpenRouter exposes this same response for a missing
+        // transport and an existing transport whose pinned parameters cannot route.
+        throw new Error(result.errorBody ?? OPENROUTER_404_BODY);
+      };
+
+      const chat = async function* (): AsyncIterable<PushStreamEvent> {
+        chatLegs += 1;
+        const result = await fetchOpenRouterWithStructuredOutputFallback({
+          body: {
+            tools: [{ type: 'function', function: { name: 'read_file' } }],
+            ...(schemaPresent ? { response_format: { type: 'json_schema' } } : {}),
+            provider: { require_parameters: true },
+          },
+          transport: 'chat',
+          requireParameters: true,
+          requireParametersAfterRelaxation: true,
+          attempt: async (body) => {
+            chatBodies.push(body);
+            if (schemaPresent && chatBodies.length === 1) return routingConstraintResponse();
+            return toolsRoutableOnChat ? successfulResponse() : routingConstraintResponse();
+          },
+          onRelaxed: () => {
+            chatRelaxations += 1;
+          },
+        });
+
+        if (!result.response.ok) throw new Error(result.errorBody ?? OPENROUTER_404_BODY);
+        yield { type: 'text_delta', text: 'chat recovered' };
+        yield DONE;
+      };
+
+      const stream = streamResponsesWithChatFallback({ responses, chat });
+      if (toolsRoutableOnChat) {
+        await expect(collect(stream)).resolves.toEqual([
+          { type: 'text_delta', text: 'chat recovered' },
+          DONE,
+        ]);
+      } else {
+        await expect(collect(stream)).rejects.toThrow('No endpoints found');
+      }
+
+      expect(chatLegs).toBe(1);
+      expect(responsesBodies).toHaveLength(schemaPresent ? 2 : 1);
+      expect(chatBodies).toHaveLength(schemaPresent ? 2 : 1);
+      expect(responsesRelaxations).toBe(schemaPresent ? 1 : 0);
+      expect(chatRelaxations).toBe(schemaPresent ? 1 : 0);
+      if (schemaPresent) {
+        expect(responsesBodies[0]).toHaveProperty('text.format');
+        expect(responsesBodies[1]).not.toHaveProperty('text');
+        expect(chatBodies[0]).toHaveProperty('response_format');
+        expect(chatBodies[1]).not.toHaveProperty('response_format');
+      }
+    });
+  }
 });
 
 describe('isOpenRouterRoutingConstraintBody', () => {
@@ -200,46 +288,12 @@ describe('isOpenRouterRoutingConstraintBody', () => {
   });
 });
 
-describe('isOpenRouterRoutingConstraintError', () => {
-  it('reads the producer flag structurally, never the message', () => {
-    expect(
-      isOpenRouterRoutingConstraintError(
-        Object.assign(new Error('anything at all'), { openRouterRoutingConstraint: true }),
-      ),
-    ).toBe(true);
-    // Duck-typed: `lib/` must not need each lane's error class.
-    expect(isOpenRouterRoutingConstraintError({ openRouterRoutingConstraint: true })).toBe(true);
-  });
-
-  it('does NOT decline on a matching message without the flag', () => {
-    // The core regression guard. Every lane string below contains the marker phrase;
-    // none carries the flag, because the request never pinned `require_parameters`.
-    // Message-matching alone would strand recoverable turns.
-    expect(isOpenRouterRoutingConstraintError(new Error(WEB_LANE_ERROR))).toBe(false);
-    expect(isOpenRouterRoutingConstraintError(new Error(WORKER_LANE_ERROR))).toBe(false);
-    expect(isOpenRouterRoutingConstraintError(new Error(CLI_LANE_ERROR))).toBe(false);
-    expect(isOpenRouterRoutingConstraintError(OPENROUTER_404_BODY)).toBe(false);
-  });
-
-  it('treats an explicit false and a missing flag alike', () => {
-    expect(
-      isOpenRouterRoutingConstraintError(
-        Object.assign(new Error(WEB_LANE_ERROR), { openRouterRoutingConstraint: false }),
-      ),
-    ).toBe(false);
-    expect(isOpenRouterRoutingConstraintError(undefined)).toBe(false);
-    expect(isOpenRouterRoutingConstraintError(null)).toBe(false);
-    expect(isOpenRouterRoutingConstraintError('a bare string')).toBe(false);
-  });
-});
-
 describe('OPENROUTER_FALLBACK_EVENTS', () => {
   it('pins the cross-surface event vocabulary', () => {
     // One canonical definition for web, Worker and CLI. Renaming a literal in a single
     // emitter can no longer leave that surface silently unmatched by log consumers.
     expect(OPENROUTER_FALLBACK_EVENTS).toEqual({
       fellBackToChat: 'openrouter_responses_fallback_to_chat',
-      declined: 'openrouter_responses_fallback_declined',
     });
   });
 });

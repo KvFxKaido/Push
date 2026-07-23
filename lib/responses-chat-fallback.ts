@@ -40,62 +40,23 @@ export function isCommittedResponsesEvent(event: PushStreamEvent): boolean {
   }
 }
 
-/**
- * Structured-log event names for the two fallback outcomes. Declared here so the
- * three emitters (web, Worker, CLI) share one definition and a rename can't leave
- * a surface behind — the cross-surface vocabulary rule in AGENTS.md. They pair
- * semantically: exactly one fires per pre-output responses failure.
- */
+/** Shared structured-log vocabulary for the web, Worker, and CLI emitters. */
 export const OPENROUTER_FALLBACK_EVENTS = {
   /** Fell back: the responses leg failed and chat was run instead. */
   fellBackToChat: 'openrouter_responses_fallback_to_chat',
-  /** Declined: the failure was one chat provably cannot improve on. */
-  declined: 'openrouter_responses_fallback_declined',
 } as const;
 
 /**
- * OpenRouter's routing filter found no provider endpoint honoring every parameter
- * the request sent. PRODUCER-side classifier: call it only where the upstream body
- * is already being parsed, and only when the request actually set
- * `provider.require_parameters`.
- *
- * That second condition is load-bearing. Without the flag, this same message means
- * something quite different — "no endpoint serves this model on /responses" — which
- * is precisely the beta incompatibility the fallback exists to rescue, and chat
- * will often succeed. Producers first relax an unsatisfiable native structured-
- * output constraint and retry in-place. They set this carrier only when the final
- * adjusted request still pins `require_parameters` (for example, native tools), so
- * the chat leg would recompute the identical remaining constraint.
+ * OpenRouter uses this body for both an unroutable parameter set and a missing
+ * `/responses` transport. It is therefore safe for the narrow, in-transport
+ * structured-output relaxation, but it is not evidence that Chat Completions
+ * cannot serve the turn. Never use this matcher to decline the transport fallback.
  */
 const OPENROUTER_ROUTING_CONSTRAINT_MARKER =
   'no endpoints found that can handle the requested parameters';
 
 export function isOpenRouterRoutingConstraintBody(bodyOrDetail: string): boolean {
   return bodyOrDetail.toLowerCase().includes(OPENROUTER_ROUTING_CONSTRAINT_MARKER);
-}
-
-/**
- * Carrier for the producer's verdict. Duck-typed so `lib/` needn't import each
- * lane's error class (`ProviderStreamError`, `CliProviderError`, or a plain Error).
- */
-export interface OpenRouterRoutingConstraintCarrier {
-  openRouterRoutingConstraint?: boolean;
-}
-
-/**
- * CONSUMER-side read: purely structural, never string-matching. `ProviderStreamError`'s
- * own docstring calls message-matching "the fragile HTTP-status-classification
- * anti-pattern"; classification happens once at the boundary that parsed the body,
- * and every consumer reads the resulting field.
- *
- * Absent flag → false. So a lane that never sets it (the Worker adapter, whose
- * payloads carry no tools, no `response_format`, and no `provider.require_parameters`)
- * keeps the fallback unconditionally — the safe default, and correct by construction
- * rather than by comment.
- */
-export function isOpenRouterRoutingConstraintError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  return (error as OpenRouterRoutingConstraintCarrier).openRouterRoutingConstraint === true;
 }
 
 export interface ResponsesChatFallbackOptions {

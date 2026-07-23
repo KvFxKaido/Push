@@ -25,7 +25,6 @@ import {
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
 import { parseResponsesReasoningItem } from '../lib/responses-reasoning-item.ts';
-import { isOpenRouterRoutingConstraintBody } from '../lib/responses-chat-fallback.ts';
 import type { ProviderConfig } from './provider.ts';
 import { CliProviderError, type CliProviderStreamOptions } from './openai-stream.ts';
 
@@ -102,7 +101,6 @@ async function* cliOpenAIResponsesStream(
 
   let response: Response;
   let errorBody: string | null = null;
-  let finalRequireParameters = false;
   if (config.id === 'openrouter') {
     const result = await fetchOpenRouterWithStructuredOutputFallback({
       body,
@@ -133,7 +131,6 @@ async function* cliOpenAIResponsesStream(
     });
     response = result.response;
     errorBody = result.errorBody;
-    finalRequireParameters = result.requireParameters;
   } else {
     response = await fetch(config.url, {
       method: 'POST',
@@ -148,12 +145,6 @@ async function* cliOpenAIResponsesStream(
     throw new CliProviderError(
       `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${errBody.slice(0, 400)}`,
       response.status,
-      {
-        // Only a rejection of a constraint WE pinned is deterministic; otherwise this
-        // message means the model has no /responses endpoint and chat is the recovery.
-        openRouterRoutingConstraint:
-          finalRequireParameters && isOpenRouterRoutingConstraintBody(errBody),
-      },
     );
   }
 

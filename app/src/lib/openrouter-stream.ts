@@ -28,8 +28,6 @@ import {
 } from '@push/lib/openrouter-parameters';
 import {
   OPENROUTER_FALLBACK_EVENTS,
-  isOpenRouterRoutingConstraintBody,
-  isOpenRouterRoutingConstraintError,
   streamResponsesWithChatFallback,
 } from '@push/lib/responses-chat-fallback';
 import {
@@ -143,26 +141,7 @@ export async function* openrouterStream(
   yield* streamResponsesWithChatFallback({
     responses: () => openrouterResponsesStream(req),
     chat: () => openrouterChatCompletionsStream(req),
-    shouldFallback: (error) => {
-      if (req.signal?.aborted) return false;
-      // Declines only when the producer has already exhausted structured-output
-      // relaxation and the final request still pinned a constraint (native tools).
-      // Chat recomputes that same remaining filter, so it cannot route any better.
-      // Every other failure keeps the safety net.
-      if (isOpenRouterRoutingConstraintError(error)) {
-        console.warn(
-          JSON.stringify({
-            level: 'warn',
-            event: OPENROUTER_FALLBACK_EVENTS.declined,
-            reason: 'routing_constraint',
-            model: req.model,
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        );
-        return false;
-      }
-      return true;
-    },
+    shouldFallback: () => !req.signal?.aborted,
     onFallback: (error) => {
       console.warn(
         JSON.stringify({
@@ -303,11 +282,7 @@ async function* openrouterResponsesStream(
   injectTraceHeaders(headers);
 
   // 4. POST + stream response.
-  const {
-    response,
-    errorBody,
-    requireParameters: finalRequireParameters,
-  } = await fetchOpenRouterWithStructuredOutputFallback({
+  const { response, errorBody } = await fetchOpenRouterWithStructuredOutputFallback({
     body,
     transport: 'responses',
     requireParameters,
@@ -345,12 +320,6 @@ async function* openrouterResponsesStream(
     }
     throw new ProviderStreamError(`OpenRouter ${response.status}: ${detail}`, {
       status: response.status,
-      // Only a rejection of a constraint WE pinned is deterministic. Without
-      // `require_parameters` this same message means "no endpoint serves this model
-      // on /responses" — the beta gap the chat fallback exists to rescue — so it
-      // stays unset and the fallback runs.
-      openRouterRoutingConstraint:
-        finalRequireParameters && isOpenRouterRoutingConstraintBody(`${errBody} ${detail}`),
     });
   }
 

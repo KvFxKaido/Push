@@ -293,10 +293,8 @@ describe('openrouterStream', () => {
     await expect(collect(openrouterStream(baseRequest))).rejects.toThrow(/429.*rate limited/);
   });
 
-  // Wiring tests for the routing-constraint decline. These drive `openrouterStream`
-  // — the production entry — rather than the combinator, so they fail if the call
-  // site stops passing the predicate. Asserting the fetch COUNT is the point: the
-  // bug being fixed is a second upstream round trip that cannot succeed.
+  // Wiring tests for the ambiguous OpenRouter routing response. These drive
+  // `openrouterStream` — the production entry — rather than only the combinator.
   const ROUTING_CONSTRAINT_404 = () =>
     new Response(
       JSON.stringify({
@@ -350,7 +348,7 @@ describe('openrouterStream', () => {
     warn.mockRestore();
   });
 
-  it('still declines chat fallback when native tools remain unsatisfiable after schema relaxation', async () => {
+  it('attempts chat when native tools remain after Responses schema relaxation', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fetchMock.mockImplementation(async () => ROUTING_CONSTRAINT_404());
     const { openrouterStream } = await import('./openrouter-stream');
@@ -366,24 +364,32 @@ describe('openrouterStream', () => {
       ),
     ).rejects.toThrow(/No endpoints found/);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Responses tries schema + relaxed tools, then Chat does the same. The shared
+    // OpenRouter body cannot prove whether the Responses transport or its parameter
+    // set was missing, so the Chat leg must run before the turn is failed.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     const secondBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    const thirdBody = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+    const fourthBody = JSON.parse((fetchMock.mock.calls[3][1] as RequestInit).body as string);
     expect(secondBody.text).toBeUndefined();
     expect(secondBody.tools).toEqual([responsesTool]);
     expect(secondBody.provider).toEqual({ require_parameters: true });
-    const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('declined'));
+    expect(thirdBody.response_format).toBeDefined();
+    expect(fourthBody.response_format).toBeUndefined();
+    expect(fourthBody.provider).toEqual({ require_parameters: true });
+    const logged = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('fallback_to_chat'));
     expect(JSON.parse(logged as string)).toMatchObject({
-      event: 'openrouter_responses_fallback_declined',
-      reason: 'routing_constraint',
+      event: 'openrouter_responses_fallback_to_chat',
     });
     warn.mockRestore();
   });
 
   it('DOES retry on chat for the same 404 when no constraint was sent (two fetches)', async () => {
     // Without native tools or a `responseFormat`, Push never sends
-    // `provider.require_parameters` — so this message means the model has no
-    // /responses endpoint, which is precisely what the chat fallback exists to
-    // rescue. Declining here would strand a recoverable turn.
+    // `provider.require_parameters`; Chat remains the recovery for a pre-output
+    // Responses failure.
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let call = 0;
     fetchMock.mockImplementation(async () => {
