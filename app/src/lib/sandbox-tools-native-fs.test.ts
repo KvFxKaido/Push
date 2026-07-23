@@ -371,6 +371,16 @@ describe('sandbox-tools native FS routing', () => {
       await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(false);
       const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
       expect(logged).toContain('native_branch_exists_remote_check_degraded');
+
+      // A THROWN live read — an older APK without lsRemoteHead loading the
+      // hosted bundle rejects the bridge call — degrades the same way instead
+      // of marking every candidate occupied (Codex P2, #1579).
+      warnSpy.mockClear();
+      fakeNativeGit.lsRemoteHead.mockRejectedValue(new Error('lsRemoteHead not implemented'));
+      await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(false);
+      const thrownLogged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(thrownLogged).toContain('native_branch_exists_remote_check_degraded');
+      expect(thrownLogged).toContain('lsRemoteHead not implemented');
     } finally {
       warnSpy.mockRestore();
     }
@@ -383,12 +393,6 @@ describe('sandbox-tools native FS routing', () => {
       await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(true);
       const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
       expect(logged).toContain('native_branch_exists_failed');
-
-      // A THROWN live read (bridge failure — unlike the engine's ok:false) also
-      // fails closed through the same catch.
-      fakeNativeGit.revParse.mockResolvedValue({ sha: null });
-      fakeNativeGit.lsRemoteHead.mockRejectedValue(new Error('bridge down'));
-      await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(true);
     } finally {
       errSpy.mockRestore();
     }
