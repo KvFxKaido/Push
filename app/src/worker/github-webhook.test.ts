@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DurableObjectId, DurableObjectNamespace } from '@cloudflare/workers-types';
 import {
+  COMMENT_RETRY_DELAY_MS,
   type GitHubWebhookDeps,
   handleGitHubWebhook,
   isAuthorizedTriggerAssociation,
@@ -564,8 +565,16 @@ describe('handleGitHubWebhook — comment trigger', () => {
       })),
       mintInstallationToken: vi.fn(async () => 'install-tok'),
       addCommentReaction: vi.fn(async () => true),
+      postPullRequestComment: vi.fn(async () => true),
+      // Instant so retry tests don't wait out the real 20s delay.
+      delay: vi.fn(async () => {}),
       ...overrides,
     };
+  }
+
+  /** An enqueue failure result with the given code. */
+  function enqueueFailure(code: string, httpStatus = 502) {
+    return { ok: false as const, code, message: `boom: ${code}`, httpStatus };
   }
 
   async function postComment(
@@ -772,10 +781,244 @@ describe('handleGitHubWebhook — comment trigger', () => {
     });
   });
 
-  it('returns 502 when token minting fails (and does not enqueue)', async () => {
-    const deps = makeDeps({ mintInstallationToken: vi.fn(async () => null) });
+  it('acks 204 without retry, delay, or notice when not reviewable', async () => {
+    const deps = makeDeps({
+      enqueueReviewForExistingPr: vi.fn(async () => enqueueFailure('NOT_REVIEWABLE', 409)),
+    });
     const res = await postComment('issue_comment', issueCommentPayload(), deps, commentEnv());
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(204);
+    expect(deps.enqueueReviewForExistingPr).toHaveBeenCalledTimes(1);
+    expect(deps.delay).not.toHaveBeenCalled();
+    expect(deps.postPullRequestComment).not.toHaveBeenCalled();
+  });
+
+  it('schedules one delayed retry on PR_LOOKUP_FAILED and posts 👀 when it succeeds', async () => {
+    const enqueue = vi
+      .fn()
+      .mockResolvedValueOnce(enqueueFailure('PR_LOOKUP_FAILED'))
+      .mockResolvedValueOnce({ ok: true as const, status: 'queued', headSha: 'sha-2' });
+    const deps = makeDeps({ enqueueReviewForExistingPr: enqueue });
+    // No ctx → the retry is awaited inline, so assertions see its outcome.
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-retry-ok',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ status: 'retry_scheduled', code: 'PR_LOOKUP_FAILED' });
+    expect(deps.delay).toHaveBeenCalledExactlyOnceWith(COMMENT_RETRY_DELAY_MS);
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    expect(deps.addCommentReaction).toHaveBeenCalledExactlyOnceWith(
+      'octo/repo',
+      'issue',
+      555,
+      'eyes',
+      { token: 'install-tok' },
+    );
+    expect(deps.postPullRequestComment).not.toHaveBeenCalled();
+  });
+
+  it('defers the retry via ctx.waitUntil — 202 returns before the second attempt', async () => {
+    const enqueue = vi
+      .fn()
+      .mockResolvedValueOnce(enqueueFailure('PR_LOOKUP_FAILED'))
+      .mockResolvedValueOnce({ ok: true as const, status: 'queued', headSha: 'sha-2' });
+    // The delay is a gate this test releases — an instant mock would let the
+    // retry finish before the response resolves, making the ordering racy.
+    let releaseDelay!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseDelay = resolve;
+    });
+    const deps = makeDeps({ enqueueReviewForExistingPr: enqueue, delay: vi.fn(() => gate) });
+    const deferred: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => {
+        deferred.push(p);
+      },
+    };
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-retry-deferred',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      ctx,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(enqueue).toHaveBeenCalledTimes(1); // second attempt is behind the gated delay
+    releaseDelay();
+    await Promise.all(deferred);
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
+      token: 'install-tok',
+    });
+  });
+
+  it('posts 😕 and a failure notice when the retry also fails', async () => {
+    const deps = makeDeps({
+      enqueueReviewForExistingPr: vi.fn(async () => enqueueFailure('PR_LOOKUP_FAILED')),
+    });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-retry-dead',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(deps.enqueueReviewForExistingPr).toHaveBeenCalledTimes(2);
+    expect(deps.addCommentReaction).toHaveBeenCalledExactlyOnceWith(
+      'octo/repo',
+      'issue',
+      555,
+      'confused',
+      { token: 'install-tok' },
+    );
+    expect(deps.postPullRequestComment).toHaveBeenCalledExactlyOnceWith(
+      'octo/repo',
+      7,
+      expect.stringContaining('PR_LOOKUP_FAILED'),
+      { token: 'install-tok' },
+    );
+  });
+
+  it('retries a token-mint failure by re-minting', async () => {
+    const mint = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce('tok-2');
+    const deps = makeDeps({ mintInstallationToken: mint });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-remint',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      status: 'retry_scheduled',
+      code: 'TOKEN_MINT_FAILED',
+    });
+    // First attempt short-circuits before the enqueue; the retry re-mints.
+    expect(deps.enqueueReviewForExistingPr).toHaveBeenCalledTimes(1);
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
+      token: 'tok-2',
+    });
+  });
+
+  it('stays log-only when the retry cannot mint a token either', async () => {
+    const deps = makeDeps({ mintInstallationToken: vi.fn(async () => null) });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-no-token',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    // Without credentials nothing can reach GitHub — no reaction, no notice.
+    expect(res.status).toBe(202);
     expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
+    expect(deps.addCommentReaction).not.toHaveBeenCalled();
+    expect(deps.postPullRequestComment).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a deterministic DO rejection but surfaces 😕 + notice', async () => {
+    const deps = makeDeps({
+      enqueueReviewForExistingPr: vi.fn(async () => enqueueFailure('ENQUEUE_FAILED')),
+    });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-do-reject',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(502);
+    expect(deps.enqueueReviewForExistingPr).toHaveBeenCalledTimes(1);
+    expect(deps.delay).not.toHaveBeenCalled();
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'confused', {
+      token: 'install-tok',
+    });
+    expect(deps.postPullRequestComment).toHaveBeenCalledWith(
+      'octo/repo',
+      7,
+      expect.stringContaining('ENQUEUE_FAILED'),
+      { token: 'install-tok' },
+    );
+  });
+
+  it('contains a thrown enqueue as a retryable ENQUEUE_UNREACHABLE', async () => {
+    const enqueue = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('durable object reset'))
+      .mockResolvedValueOnce({ ok: true as const, status: 'queued', headSha: 'sha-3' });
+    const deps = makeDeps({ enqueueReviewForExistingPr: enqueue });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-threw',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      status: 'retry_scheduled',
+      code: 'ENQUEUE_UNREACHABLE',
+    });
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
+      token: 'install-tok',
+    });
+  });
+
+  it('treats NOT_REVIEWABLE on the retry as received-but-skipped, not failure', async () => {
+    const enqueue = vi
+      .fn()
+      .mockResolvedValueOnce(enqueueFailure('PR_LOOKUP_FAILED'))
+      .mockResolvedValueOnce(enqueueFailure('NOT_REVIEWABLE', 409));
+    const deps = makeDeps({ enqueueReviewForExistingPr: enqueue });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-closed-between',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'confused', {
+      token: 'install-tok',
+    });
+    // The PR closing between attempts isn't a failure — no notice comment.
+    expect(deps.postPullRequestComment).not.toHaveBeenCalled();
   });
 });

@@ -1376,6 +1376,35 @@ export async function addCommentReaction(
 }
 
 /**
+ * Post a plain conversation comment on a PR. Best-effort like
+ * {@link addCommentReaction} — returns false rather than throwing — because its
+ * caller is the comment-trigger failure path, where a notice that can't post
+ * must degrade to the structured log, not break the webhook ack. PRs are issues
+ * for commenting purposes, so this rides the issues endpoint.
+ */
+export async function postPullRequestComment(
+  repo: string,
+  prNumber: number,
+  body: string,
+  auth?: GitHubAuth,
+): Promise<boolean> {
+  try {
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/issues/${prNumber}/comments`,
+      {
+        method: 'POST',
+        headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      },
+      { retry: false },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Start an `in_progress` "Push review" check-run on the head commit and return
  * its id, so a later {@link finalizeReviewCheckRun} can update the same run in
  * place. Gives every reviewed PR a visible "Reviewing…" status while the model
