@@ -56,7 +56,7 @@ import {
   type TrialResult,
 } from './eval-lib';
 import { EVAL_TASKS } from './tasks';
-import { applyConfigToEnv, loadConfig } from '../../cli/config-store.js';
+import { applyConfigToEnv, loadRuntimeConfig } from '../../cli/config-store.js';
 import { PROVIDER_CONFIGS, redirectDeprecatedProvider, resolveApiKey } from '../../cli/provider.js';
 import { runCommandInResolvedShellSync } from '../../cli/shell.js';
 
@@ -383,9 +383,20 @@ async function preflight(): Promise<boolean> {
  */
 async function cacheBypassPreflight(): Promise<boolean> {
   try {
-    applyConfigToEnv(await loadConfig());
-  } catch {
-    // No config file — env-only setups are valid; the getters read env.
+    // Full runtime resolution (user < profile < env), NOT the raw config
+    // file: a profile can repoint a provider at the gateway, and the spawned
+    // CLI resolves the same chain (no --profile is passed, so both fall back
+    // to PUSH_PROFILE → activeProfile). Probing the unprofiled URL would
+    // assert the wrong route entirely (Codex P2, #1581).
+    applyConfigToEnv((await loadRuntimeConfig()).config);
+  } catch (err) {
+    // Config-less setups don't land here (ENOENT resolves to {}); this is an
+    // unknown profile or unreadable config — the spawned CLI resolves the
+    // same chain, so the sanity run already surfaced anything fatal. Probe on
+    // env-only resolution, but say so.
+    log(
+      `cache preflight: runtime config resolution failed (${err instanceof Error ? err.message : String(err)}) — probing with env-only resolution.`,
+    );
   }
   const providerId = redirectDeprecatedProvider(PROVIDER) ?? PROVIDER;
   const providerConfig = PROVIDER_CONFIGS[providerId];
@@ -430,17 +441,29 @@ async function cacheBypassPreflight(): Promise<boolean> {
     // transport passes preflight and still replays mid-suite.
     await new Promise((resolve) => setTimeout(resolve, 5_000));
     const second = await call();
-    const verdict = evaluateCacheProbe(second.cacheStatus);
+    const verdict = evaluateCacheProbe({
+      gatewayRoute: plan.request.gatewayRoute,
+      first,
+      second,
+    });
     log(
       `cache preflight: first=${first.status}/${first.cacheStatus ?? 'no-cache-header'} ` +
         `second=${second.status}/${second.cacheStatus ?? 'no-cache-header'} — ${verdict.reason}`,
     );
     return verdict.ok;
   } catch (err) {
-    // The sanity run already proved the provider reachable; a probe-only
-    // failure (dialect quirk, timeout) is inconclusive, not a cache verdict.
+    // On a detected gateway route the bypass MUST be verified — a thrown
+    // probe (timeout, TLS, body read) leaves it unproven, and unproven is
+    // failure where verification was possible (fugu review, #1581). On other
+    // routes the sanity run already vouched for the provider; a probe-only
+    // failure is inconclusive, not a cache verdict.
+    const message = err instanceof Error ? err.message : String(err);
+    if (plan.request.gatewayRoute) {
+      log(`cache preflight: probe error on a gateway route (${message}) — bypass unverified.`);
+      return false;
+    }
     log(
-      `cache preflight: probe error (${err instanceof Error ? err.message : String(err)}) — inconclusive, continuing.`,
+      `cache preflight: probe error (${message}) — inconclusive on a non-gateway route, continuing.`,
     );
     return true;
   }

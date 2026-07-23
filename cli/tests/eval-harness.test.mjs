@@ -406,12 +406,82 @@ test('buildCacheProbePlan skips openrouter with a stated reason', () => {
   assert.match(plan.skip, /openrouter/);
 });
 
-test('evaluateCacheProbe fails only on a verified replay', () => {
-  assert.equal(evaluateCacheProbe('HIT').ok, false);
-  assert.equal(evaluateCacheProbe('hit').ok, false);
-  assert.equal(evaluateCacheProbe('MISS').ok, true);
-  assert.equal(evaluateCacheProbe('BYPASS').ok, true);
-  assert.equal(evaluateCacheProbe(null).ok, true);
-  assert.equal(evaluateCacheProbe('').ok, true);
-  assert.match(evaluateCacheProbe('HIT').reason, /1554/);
+function probePair(secondCacheStatus, { gatewayRoute = false, first = 200, second = 200 } = {}) {
+  return {
+    gatewayRoute,
+    first: { status: first, cacheStatus: null },
+    second: { status: second, cacheStatus: secondCacheStatus },
+  };
+}
+
+test('evaluateCacheProbe fails on a verified replay on any route', () => {
+  assert.equal(evaluateCacheProbe(probePair('HIT')).ok, false);
+  assert.equal(evaluateCacheProbe(probePair('hit')).ok, false);
+  assert.equal(evaluateCacheProbe(probePair('HIT', { gatewayRoute: true })).ok, false);
+  // A HIT outranks the status gate — even an error pair with a HIT fails as
+  // a replay, not as an unclean probe.
+  assert.equal(evaluateCacheProbe(probePair('HIT', { first: 500, second: 500 })).ok, false);
+  assert.match(evaluateCacheProbe(probePair('HIT')).reason, /1554/);
+});
+
+test('evaluateCacheProbe is strict on detected gateway routes', () => {
+  const gw = { gatewayRoute: true };
+  assert.equal(evaluateCacheProbe(probePair('MISS', gw)).ok, true);
+  assert.equal(evaluateCacheProbe(probePair('BYPASS', gw)).ok, true);
+  // Unverified is failure where verification was possible: a missing header
+  // or an unclean status pair aborts instead of passing as inconclusive.
+  assert.equal(evaluateCacheProbe(probePair(null, gw)).ok, false);
+  assert.match(evaluateCacheProbe(probePair(null, gw)).reason, /unverified/);
+  assert.equal(
+    evaluateCacheProbe(probePair('MISS', { gatewayRoute: true, second: 429 })).ok,
+    false,
+  );
+  assert.equal(
+    evaluateCacheProbe(probePair(null, { gatewayRoute: true, first: 401, second: 401 })).ok,
+    false,
+  );
+});
+
+test('evaluateCacheProbe stays lenient off gateway routes', () => {
+  assert.equal(evaluateCacheProbe(probePair('MISS')).ok, true);
+  assert.equal(evaluateCacheProbe(probePair(null)).ok, true);
+  assert.equal(evaluateCacheProbe(probePair('')).ok, true);
+  // Direct providers carry no gateway header and may 4xx on the hand-built
+  // probe; neither is replay evidence, so the suite proceeds (with a caveat
+  // in the reason, not a silent pass).
+  const errPair = evaluateCacheProbe(probePair(null, { first: 404, second: 404 }));
+  assert.equal(errPair.ok, true);
+  assert.match(errPair.reason, /404/);
+});
+
+test('buildCacheProbePlan stamps gatewayRoute from the final probe URL', () => {
+  const gateway = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/zen/v1/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in gateway);
+  assert.equal(gateway.request.gatewayRoute, true);
+
+  const direct = buildCacheProbePlan({
+    id: 'zen',
+    url: 'https://api.z.ai/api/paas/v4/chat/completions',
+    apiKey: 'k',
+    model: 'glm-5.1',
+  });
+  assert.ok('request' in direct);
+  assert.equal(direct.request.gatewayRoute, false);
+
+  // Gemini's model rides the URL — the stamp comes off the FINAL upstream
+  // URL, same as its header check.
+  const gemini = buildCacheProbePlan({
+    id: 'google',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/google-ai-studio/v1beta',
+    streamShape: 'gemini',
+    apiKey: 'AIza',
+    model: 'gemini-3.1-pro-preview',
+  });
+  assert.ok('request' in gemini);
+  assert.equal(gemini.request.gatewayRoute, true);
 });

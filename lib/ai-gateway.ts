@@ -15,8 +15,10 @@
  * The CLI's provider URL is user-supplied config, so its transports detect
  * the gateway host here instead. A gateway fronted by a custom domain
  * evades host detection by construction; the eval harness preflight
- * (scripts/eval/run-evals.ts) is the backstop that turns that silent gap
- * into a hard error at eval start.
+ * (scripts/eval/run-evals.ts) backstops that gap — but only while the
+ * front forwards the standard `cf-aig-cache-status` header. A front that
+ * strips it is beyond header-based detection entirely: point evals at the
+ * canonical host to get the preflight's strict verification tier.
  */
 
 /** Host serving Cloudflare AI Gateway provider-native routes. */

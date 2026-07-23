@@ -10,7 +10,7 @@
  */
 
 import { buildGeminiUpstreamUrl } from '../../cli/gemini-stream.js';
-import { aiGatewaySkipCacheHeaders } from '../../lib/ai-gateway.js';
+import { aiGatewaySkipCacheHeaders, isAiGatewayUrl } from '../../lib/ai-gateway.js';
 import { evaluateRuntimeEvents, type RuntimeEvalRunSelector } from '../../lib/runtime-eval.js';
 
 // ---------------------------------------------------------------------------
@@ -331,12 +331,21 @@ function path_isAbsoluteOrEscaping(p: string): boolean {
 // ---------------------------------------------------------------------------
 //
 // The gateway posture (lib/ai-gateway.ts) is bypass-per-request, but evals
-// must not TRUST it: a gateway fronted by a custom domain evades the CLI's
-// host detection, and a dashboard cache toggle is exactly the kind of state
+// must not TRUST it: a dashboard cache toggle is exactly the kind of state
 // that drifts. So the harness sends two identical tiny calls through the
 // same URL/auth/header construction the CLI transports use and hard-fails
 // the suite if the second comes back as a cache replay — a silent
 // data-quality bug becomes a loud error at eval start.
+//
+// Verdict strictness is route-dependent (fugu review, #1581): on a DETECTED
+// gateway route the probe must complete cleanly (2xx + a cf-aig-cache-status
+// present and not HIT) or the suite aborts — inconclusive is failure where
+// verification was possible. On any other route, a HIT still aborts, but
+// missing headers / probe errors only log: requiring gateway evidence from a
+// direct provider would fail every non-gateway eval. Consequently a
+// custom-domain gateway is caught only while it forwards the standard
+// cf-aig-cache-status header; a front that strips it is out of this probe's
+// reach — point evals at the canonical gateway host to get the strict tier.
 
 const CACHE_PROBE_PROMPT = 'Reply with the single word: ok.';
 
@@ -352,6 +361,9 @@ export interface CacheProbeRequest {
   url: string;
   headers: Record<string, string>;
   body: string;
+  /** True when the final probe URL is a detected AI Gateway route — selects
+   *  the strict verdict tier in {@link evaluateCacheProbe}. */
+  gatewayRoute: boolean;
 }
 
 export type CacheProbePlan = { request: CacheProbeRequest } | { skip: string };
@@ -382,6 +394,7 @@ export function buildCacheProbePlan(provider: CacheProbeProvider): CacheProbePla
             ...aiGatewaySkipCacheHeaders(url),
           },
           body: JSON.stringify({ model, max_tokens: 16, messages: [message], stream: false }),
+          gatewayRoute: isAiGatewayUrl(url),
         },
       };
     case 'gemini': {
@@ -398,6 +411,7 @@ export function buildCacheProbePlan(provider: CacheProbeProvider): CacheProbePla
             contents: [{ role: 'user', parts: [{ text: CACHE_PROBE_PROMPT }] }],
             generationConfig: { maxOutputTokens: 16 },
           }),
+          gatewayRoute: isAiGatewayUrl(upstreamUrl),
         },
       };
     }
@@ -416,6 +430,7 @@ export function buildCacheProbePlan(provider: CacheProbeProvider): CacheProbePla
             max_output_tokens: 16,
             stream: false,
           }),
+          gatewayRoute: isAiGatewayUrl(url),
         },
       };
     case 'openai-compat':
@@ -429,21 +444,33 @@ export function buildCacheProbePlan(provider: CacheProbeProvider): CacheProbePla
             ...aiGatewaySkipCacheHeaders(url),
           },
           body: JSON.stringify({ model, messages: [message], max_tokens: 16, stream: false }),
+          gatewayRoute: isAiGatewayUrl(url),
         },
       };
   }
 }
 
+export interface CacheProbeCallResult {
+  status: number;
+  cacheStatus: string | null;
+}
+
 /**
- * Verdict on the SECOND identical call's `cf-aig-cache-status` header.
- * Only a verified replay fails the suite; absence of the header means the
- * route isn't a (detectable) response-caching gateway.
+ * Verdict on the probe pair. A HIT on the repeat fails on ANY route. On a
+ * detected gateway route the bar is higher: both calls must be 2xx and the
+ * repeat must carry a non-HIT `cf-aig-cache-status` — the header is
+ * guaranteed there, so its absence (or an error pair) means the bypass went
+ * unverified and the suite must not proceed on trust. Elsewhere those same
+ * outcomes only earn a caveat in the reason (see the module note on the
+ * custom-domain limitation).
  */
-export function evaluateCacheProbe(secondCallCacheStatus: string | null): {
-  ok: boolean;
-  reason: string;
-} {
-  const status = secondCallCacheStatus?.trim().toUpperCase() || null;
+export function evaluateCacheProbe(input: {
+  gatewayRoute: boolean;
+  first: CacheProbeCallResult;
+  second: CacheProbeCallResult;
+}): { ok: boolean; reason: string } {
+  const { gatewayRoute, first, second } = input;
+  const status = second.cacheStatus?.trim().toUpperCase() || null;
   if (status === 'HIT') {
     return {
       ok: false,
@@ -451,8 +478,35 @@ export function evaluateCacheProbe(secondCallCacheStatus: string | null): {
         'identical repeat was served from the gateway response cache (cf-aig-cache-status: HIT) — eval outputs would be replays, not model output (#1554)',
     };
   }
+  const cleanStatuses =
+    first.status >= 200 && first.status < 300 && second.status >= 200 && second.status < 300;
+  if (gatewayRoute) {
+    if (!cleanStatuses) {
+      return {
+        ok: false,
+        reason: `gateway probe did not complete cleanly (HTTP ${first.status}/${second.status}) — cache bypass unverified on a gateway route`,
+      };
+    }
+    if (status === null) {
+      return {
+        ok: false,
+        reason:
+          'gateway route returned no cf-aig-cache-status on the repeat — cache bypass unverified',
+      };
+    }
+    return { ok: true, reason: `gateway verified not replaying (cf-aig-cache-status: ${status})` };
+  }
+  if (!cleanStatuses) {
+    return {
+      ok: true,
+      reason: `probe returned HTTP ${first.status}/${second.status} on a non-gateway route — no replay evidence (a HIT would still have failed)`,
+    };
+  }
   if (status === null) {
     return { ok: true, reason: 'no gateway cache header on this route' };
   }
-  return { ok: true, reason: `gateway present and not replaying (cf-aig-cache-status: ${status})` };
+  return {
+    ok: true,
+    reason: `caching proxy present and not replaying (cf-aig-cache-status: ${status})`,
+  };
 }
