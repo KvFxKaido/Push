@@ -7,6 +7,7 @@ vi.mock('./github-tool-executor', async (importActual) => {
 });
 
 import {
+  addCommentReaction,
   createReviewCheckRun,
   decodeGitHubBase64Utf8,
   detectStrandedMergedPR,
@@ -15,6 +16,9 @@ import {
   findMergedPRForBranch,
   fetchCheckRunsForSha,
   fetchReviewGuidance,
+  postPullRequestComment,
+  removeCommentReaction,
+  updatePullRequestComment,
 } from './github-tools';
 import type { ReviewResult } from '@/types';
 
@@ -84,6 +88,62 @@ describe('injected GitHub auth', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('token install-token-xyz');
     expect(headers['User-Agent']).toBeTruthy();
+  });
+});
+
+describe('comment-trigger feedback artifacts', () => {
+  it('returns reaction and notice ids and threads the feedback deadline', async () => {
+    githubFetchMock
+      .mockReset()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 101 }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 202 }), { status: 201 }));
+
+    await expect(
+      addCommentReaction(
+        'octo/repo',
+        'issue',
+        555,
+        'confused',
+        { token: 'tok' },
+        { timeoutMs: 4_000 },
+      ),
+    ).resolves.toEqual({ ok: true, id: 101 });
+    await expect(
+      postPullRequestComment('octo/repo', 7, 'failure', { token: 'tok' }, { timeoutMs: 4_000 }),
+    ).resolves.toEqual({ ok: true, id: 202 });
+
+    expect(githubFetchMock.mock.calls[0]?.[2]).toEqual({ retry: false, timeoutMs: 4_000 });
+    expect(githubFetchMock.mock.calls[1]?.[2]).toEqual({ retry: false, timeoutMs: 4_000 });
+  });
+
+  it('removes the exact reaction and rewrites the exact notice', async () => {
+    githubFetchMock
+      .mockReset()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+
+    await expect(
+      removeCommentReaction('octo/repo', 'issue', 555, 101, { token: 'tok' }, { timeoutMs: 4_000 }),
+    ).resolves.toBe(true);
+    await expect(
+      updatePullRequestComment(
+        'octo/repo',
+        202,
+        'corrected',
+        { token: 'tok' },
+        { timeoutMs: 4_000 },
+      ),
+    ).resolves.toBe(true);
+
+    expect(githubFetchMock.mock.calls[0]?.[0]).toContain('/issues/comments/555/reactions/101');
+    expect(githubFetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'DELETE' });
+    expect(githubFetchMock.mock.calls[0]?.[2]).toEqual({ retry: false, timeoutMs: 4_000 });
+    expect(githubFetchMock.mock.calls[1]?.[0]).toContain('/issues/comments/202');
+    expect(githubFetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: 'PATCH',
+      body: JSON.stringify({ body: 'corrected' }),
+    });
+    expect(githubFetchMock.mock.calls[1]?.[2]).toEqual({ retry: false, timeoutMs: 4_000 });
   });
 });
 

@@ -108,7 +108,9 @@ export type EnqueueReviewResult =
  * trigger can't review a PR the autonomous path intentionally ignores. Returns a
  * discriminated result the caller maps to its own response/log shape — this
  * helper never throws into the request path (lookup failures become a
- * `PR_LOOKUP_FAILED` result).
+ * `PR_LOOKUP_FAILED` result; a rejected DO forward becomes
+ * `ENQUEUE_UNREACHABLE`, the transient sibling of the DO answering
+ * `ENQUEUE_FAILED`).
  *
  * The caller is responsible for the boundary gates (origin/rate-limit for the
  * HTTP route, signature/allowlist/author for the webhook) and for resolving +
@@ -190,16 +192,32 @@ export async function enqueueReviewForExistingPr(
     origin: opts.origin,
     ...(opts.supersedeSameHead ? { supersedeSameHead: true } : null),
   });
-  const doResponse = await forwardToDo(
-    env,
-    opts.repo,
-    opts.prNumber,
-    new Request('https://do/start', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: startBody,
-    }),
-  );
+  let doResponse: Response;
+  try {
+    doResponse = await forwardToDo(
+      env,
+      opts.repo,
+      opts.prNumber,
+      new Request('https://do/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: startBody,
+      }),
+    );
+  } catch (err) {
+    // A DO stub fetch can reject (object reset, transport failure) — distinct
+    // from the DO *answering* with a rejection below. Without this catch the
+    // helper's never-throws contract was a lie on exactly this seam, and the
+    // comment-trigger path 500'd the webhook. Transient by nature, so callers
+    // may retry this code where ENQUEUE_FAILED is deterministic.
+    const message = err instanceof Error ? err.message : String(err);
+    log('error', 'pr_review_trigger_do_unreachable', {
+      repo: opts.repo,
+      pr: opts.prNumber,
+      message,
+    });
+    return { ok: false, code: 'ENQUEUE_UNREACHABLE', message, httpStatus: 502 };
+  }
   const outcome = (await doResponse.json().catch(() => ({}))) as { status?: string };
   if (!doResponse.ok) {
     log('error', 'pr_review_trigger_enqueue_failed', {

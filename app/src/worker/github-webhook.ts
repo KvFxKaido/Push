@@ -26,11 +26,19 @@ import { timingSafeEqual, type Env } from './worker-middleware';
 import { isPrReviewEnabled } from './pr-review-config';
 import {
   enqueueReviewForExistingPr,
+  type EnqueueReviewResult,
   mintInstallationToken,
   prReviewJobName,
 } from './pr-review-trigger';
 import { GITHUB_APP_SLUG } from './worker-infra';
-import { addCommentReaction, type CommentReactionKind } from '@/lib/github-tools';
+import {
+  addCommentReaction,
+  type CommentReactionKind,
+  type GitHubCreatedArtifact,
+  postPullRequestComment,
+  removeCommentReaction,
+  updatePullRequestComment,
+} from '@/lib/github-tools';
 import {
   classifyPullRequestAction,
   classifyWebhookEvent,
@@ -342,12 +350,21 @@ export interface GitHubWebhookDeps {
   enqueueReviewForExistingPr: typeof enqueueReviewForExistingPr;
   mintInstallationToken: typeof mintInstallationToken;
   addCommentReaction: typeof addCommentReaction;
+  postPullRequestComment: typeof postPullRequestComment;
+  removeCommentReaction: typeof removeCommentReaction;
+  updatePullRequestComment: typeof updatePullRequestComment;
+  /** Injectable timer so tests can run the transient-failure retry instantly. */
+  delay: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_DEPS: GitHubWebhookDeps = {
   enqueueReviewForExistingPr,
   mintInstallationToken,
   addCommentReaction,
+  postPullRequestComment,
+  removeCommentReaction,
+  updatePullRequestComment,
+  delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
 /**
@@ -621,12 +638,60 @@ async function handlePullRequestReviewRoutine(c: WebhookRoutineContext): Promise
 }
 
 /**
+ * Delay before the single transient-failure retry. `waitUntil` gives the whole
+ * request 30 seconds after the response, shared across every deferred task, so
+ * the arithmetic must close: 8s delay + a 10s-bounded attempt leaves ~12s for
+ * the feedback POSTs, which register as parallel sibling `waitUntil` tasks
+ * (the reaction/notice helpers return at registration when a ctx exists) and
+ * have an explicit 4s deadline and no retries. That leaves room for a second
+ * 4s reconciliation wave if the attempt succeeds late, instead of relying on
+ * the shared 15s GitHub timeout fitting into a 12s window (fugu WARNING on
+ * #1585). GitHub's
+ * secondary-limit guidance prefers a 60s wait, which doesn't fit the runtime at
+ * all; one delayed attempt plus bounded visible feedback is the tradeoff
+ * (#1584).
+ */
+export const COMMENT_RETRY_DELAY_MS = 8_000;
+
+/**
+ * Hard bound on the retry attempt itself. An unbounded attempt can outspend
+ * the whole budget on its own — `githubFetch` allows 15s per call with up to 3
+ * retries — and a `waitUntil` cancellation at the budget edge would kill the
+ * task *before the feedback posts*, recreating the silent failure this path
+ * exists to eliminate. Feedback wins over completion.
+ */
+export const COMMENT_RETRY_ATTEMPT_BUDGET_MS = 10_000;
+
+/** Two feedback/reconciliation waves must fit the ~12s post-attempt window. */
+export const COMMENT_FEEDBACK_TIMEOUT_MS = 4_000;
+
+/**
+ * Failure codes worth one retry: a failed refs lookup (the #1584 incident was
+ * a secondary-rate-limit 403 there) and a rejected DO transport — both
+ * GitHub/infra-transient shapes reached *with a minted token in hand*, so the
+ * retry can always post feedback about its own outcome. `TOKEN_MINT_FAILED`
+ * is deliberately terminal: `mintInstallationToken` collapses deterministic
+ * failures (missing or unusable credentials, a rejected exchange) and
+ * transient ones into the same `null`, and with no token the retry could
+ * never surface its result on the PR — a doomed retry's 202 would just be a
+ * slower, more misleading version of the honest 502 (Codex P2 ×2 on #1585).
+ * `ENQUEUE_FAILED` (the DO *answered* with a rejection) and `NOT_CONFIGURED`
+ * are deterministic — a retry replays the same answer.
+ */
+const RETRYABLE_COMMENT_FAILURE_CODES = new Set(['PR_LOOKUP_FAILED', 'ENQUEUE_UNREACHABLE']);
+
+/**
  * Comment-trigger path: a collaborator @-mentioned the bot with `review`. Gates
  * (select → installation allowlist → kill-switch), then enqueues a review for the
  * PR's *current* head (refs are fetched fresh in the enqueue helper) and leaves a
  * 👀 reaction so the commenter sees it landed. `deliveryId: comment-<id>` dedupes
  * a re-delivered comment in the DO while letting a genuinely new comment request
  * another review.
+ *
+ * A matched trigger never fails invisibly (#1584): transient failures get one
+ * deferred retry, and every terminal failure posts a 😕 plus a notice comment
+ * naming the code — except when no installation token could be minted at all,
+ * where nothing can reach GitHub and the structured log is the whole story.
  */
 async function handleCommentReviewTrigger(
   env: Env,
@@ -673,27 +738,25 @@ async function handleCommentReviewTrigger(
     kind: req.commentKind,
   });
 
-  // One installation token, reused for the refs lookup AND the 👀 ack.
-  const token = await deps.mintInstallationToken(env, req.installationId);
-  if (!token) {
-    log('error', 'webhook_comment_enqueue_failed', {
-      deliveryId,
-      repo: req.repoFullName,
-      pr: req.prNumber,
-      code: 'TOKEN_MINT_FAILED',
-    });
-    return json({ error: 'TOKEN_MINT_FAILED' }, 502);
-  }
-
   // Best-effort comment reaction, deferred via waitUntil so it never blocks the
   // 202 (it's a second sequential GitHub call after the enqueue). With no
   // ExecutionContext (defensive / unit tests) it's awaited inline instead.
-  // addCommentReaction returns false rather than throwing, so a failure only logs.
-  const ackReaction = async (content: 'eyes' | 'confused'): Promise<void> => {
+  // addCommentReaction returns a failed result rather than throwing, so a failure only logs.
+  const postReaction = (
+    content: 'eyes' | 'confused',
+    token: string,
+  ): Promise<GitHubCreatedArtifact> => {
     const posted = deps
-      .addCommentReaction(req.repoFullName, req.commentKind, req.commentId, content, { token })
-      .then((reacted) => {
-        if (!reacted) {
+      .addCommentReaction(
+        req.repoFullName,
+        req.commentKind,
+        req.commentId,
+        content,
+        { token },
+        { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+      )
+      .then((reaction) => {
+        if (!reaction.ok) {
           log('warn', 'webhook_comment_reaction_failed', {
             deliveryId,
             repo: req.repoFullName,
@@ -701,6 +764,7 @@ async function handleCommentReviewTrigger(
             content,
           });
         }
+        return reaction;
       })
       .catch((err) => {
         // addCommentReaction is contracted not to throw, but harden regardless:
@@ -714,57 +778,320 @@ async function handleCommentReviewTrigger(
           content,
           error: err instanceof Error ? err.message : String(err),
         });
+        return { ok: false, id: null };
       });
+    return posted;
+  };
+
+  const ackReaction = async (content: 'eyes' | 'confused', token: string): Promise<void> => {
+    const posted = postReaction(content, token).then(() => undefined);
     if (ctx) ctx.waitUntil(posted);
     else await posted;
   };
 
-  const result = await deps.enqueueReviewForExistingPr(env, {
-    repo: req.repoFullName,
-    prNumber: req.prNumber,
-    installationId: req.installationId,
-    origin,
-    deliveryId: `comment-${req.commentId}`,
-    token,
-    // An explicit "review again" cancels any in-flight pass on this PR — even on
-    // the same commit — so the latest request wins.
-    supersedeSameHead: true,
-  });
-
-  if (!result.ok) {
-    if (result.code === 'NOT_REVIEWABLE') {
-      // The PR is closed/draft — a valid trigger but nothing to review. Leave a
-      // 😕 so the commenter sees it was received-but-skipped (a silent 204 is
-      // indistinguishable from the bot ignoring them), then ack 204.
-      log('info', 'webhook_comment_not_reviewable', {
-        deliveryId,
-        repo: req.repoFullName,
-        pr: req.prNumber,
-        message: result.message,
+  // Terminal-failure notice: the reaction says "something went wrong", the
+  // comment says *what* — without it a 😕 is indistinguishable from
+  // not-reviewable, and the commenter can't know a re-request would help. Same
+  // best-effort containment as the reaction. The text deliberately avoids the
+  // literal trigger phrase (`bot_sender` already blocks self-triggering, but
+  // the notice shouldn't read like a command either).
+  const createFailureNotice = (
+    code: string,
+    retried: boolean,
+    token: string,
+  ): Promise<GitHubCreatedArtifact> => {
+    const body = `⚠️ Push review couldn't start: \`${code}\`${
+      retried ? ' (a retry also failed)' : ''
+    }. Comment the review command again to retry.`;
+    const posted = deps
+      .postPullRequestComment(
+        req.repoFullName,
+        req.prNumber,
+        body,
+        { token },
+        { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+      )
+      .then((notice) => {
+        if (!notice.ok) {
+          log('warn', 'webhook_comment_notice_failed', {
+            deliveryId,
+            repo: req.repoFullName,
+            pr: req.prNumber,
+            code,
+          });
+        }
+        return notice;
+      })
+      .catch((err) => {
+        log('warn', 'webhook_comment_notice_failed', {
+          deliveryId,
+          repo: req.repoFullName,
+          pr: req.prNumber,
+          code,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return { ok: false, id: null };
       });
-      await ackReaction('confused');
-      return new Response(null, { status: 204 });
+    return posted;
+  };
+
+  const postFailureNotice = async (
+    code: string,
+    retried: boolean,
+    token: string,
+  ): Promise<void> => {
+    const posted = createFailureNotice(code, retried, token).then(() => undefined);
+    if (ctx) ctx.waitUntil(posted);
+    else await posted;
+  };
+
+  // One installation token per attempt, reused for the refs lookup AND the
+  // reactions. The enqueue helper is contracted never to throw, but this seam is
+  // injectable — contain a rejection as the transient `ENQUEUE_UNREACHABLE`
+  // rather than letting it 500 the webhook.
+  const attempt = async (): Promise<{
+    token: string | null;
+    result: EnqueueReviewResult;
+  }> => {
+    const token = await deps.mintInstallationToken(env, req.installationId);
+    if (!token) {
+      return {
+        token: null,
+        result: {
+          ok: false,
+          code: 'TOKEN_MINT_FAILED',
+          message: 'Could not mint a GitHub installation token.',
+          httpStatus: 502,
+        },
+      };
     }
-    log('error', 'webhook_comment_enqueue_failed', {
+    try {
+      const result = await deps.enqueueReviewForExistingPr(env, {
+        repo: req.repoFullName,
+        prNumber: req.prNumber,
+        installationId: req.installationId,
+        origin,
+        deliveryId: `comment-${req.commentId}`,
+        token,
+        // An explicit "review again" cancels any in-flight pass on this PR —
+        // even on the same commit — so the latest request wins.
+        supersedeSameHead: true,
+      });
+      return { token, result };
+    } catch (err) {
+      return {
+        token,
+        result: {
+          ok: false,
+          code: 'ENQUEUE_UNREACHABLE',
+          message: err instanceof Error ? err.message : String(err),
+          httpStatus: 502,
+        },
+      };
+    }
+  };
+
+  const first = await attempt();
+
+  if (first.result.ok) {
+    // 👀 to confirm the request landed — deferred so it doesn't delay the 202.
+    await ackReaction('eyes', first.token as string);
+    log('info', 'webhook_comment_enqueued', {
       deliveryId,
       repo: req.repoFullName,
       pr: req.prNumber,
-      code: result.code,
+      headSha: first.result.headSha,
+      status: first.result.status,
     });
-    return json({ error: result.code }, result.httpStatus);
+    return json({ ok: true, status: first.result.status }, 202);
   }
 
-  // 👀 to confirm the request landed — deferred so it doesn't delay the 202.
-  await ackReaction('eyes');
+  if (first.result.code === 'NOT_REVIEWABLE') {
+    // The PR is closed/draft — a valid trigger but nothing to review. Leave a
+    // 😕 so the commenter sees it was received-but-skipped (a silent 204 is
+    // indistinguishable from the bot ignoring them), then ack 204. No notice:
+    // the PR's own state explains itself.
+    log('info', 'webhook_comment_not_reviewable', {
+      deliveryId,
+      repo: req.repoFullName,
+      pr: req.prNumber,
+      message: first.result.message,
+    });
+    await ackReaction('confused', first.token as string);
+    return new Response(null, { status: 204 });
+  }
 
-  log('info', 'webhook_comment_enqueued', {
+  if (RETRYABLE_COMMENT_FAILURE_CODES.has(first.result.code)) {
+    log('info', 'webhook_comment_retry_scheduled', {
+      deliveryId,
+      repo: req.repoFullName,
+      pr: req.prNumber,
+      code: first.result.code,
+      delayMs: COMMENT_RETRY_DELAY_MS,
+    });
+    const retryTask = (async () => {
+      await deps.delay(COMMENT_RETRY_DELAY_MS);
+      // Bounded attempt: on timeout the feedback posts now instead of dying in
+      // a waitUntil cancellation at the budget edge. The losing attempt is not
+      // cancelled (no abort seam through the enqueue helper) but it stays
+      // OBSERVED: a late success logs and posts the 👀 so the state
+      // self-corrects rather than leaving contradictory 😕-plus-review
+      // feedback (fugu WARNING on #1585).
+      const attemptPromise = attempt();
+      const second = await Promise.race([
+        attemptPromise,
+        deps.delay(COMMENT_RETRY_ATTEMPT_BUDGET_MS).then(() => 'timeout' as const),
+      ]);
+      if (second === 'timeout') {
+        log('error', 'webhook_comment_retry_failed', {
+          deliveryId,
+          repo: req.repoFullName,
+          pr: req.prNumber,
+          code: 'RETRY_TIMED_OUT',
+        });
+        // Start both bounded feedback calls together and retain their REST ids.
+        // A late enqueue success can then remove/update these exact artifacts
+        // rather than leaving the PR in a contradictory 😕 + 👀 state.
+        if (!first.token) return;
+        const timeoutFeedback = Promise.all([
+          postReaction('confused', first.token),
+          createFailureNotice('RETRY_TIMED_OUT', true, first.token),
+        ]);
+        if (ctx) ctx.waitUntil(timeoutFeedback.then(() => undefined));
+        else await timeoutFeedback;
+
+        const lateObserver = attemptPromise
+          .then(async (late) => {
+            if (!late.result.ok) return;
+            log('info', 'webhook_comment_late_success', {
+              deliveryId,
+              repo: req.repoFullName,
+              pr: req.prNumber,
+              headSha: late.result.headSha,
+              status: late.result.status,
+            });
+            const [failureReaction, failureNotice] = await timeoutFeedback;
+            const correctionBody =
+              '✅ Push review started after the delayed retry completed. The earlier `RETRY_TIMED_OUT` status is no longer current.';
+            const reconciled = await Promise.all([
+              failureReaction.id !== null
+                ? deps.removeCommentReaction(
+                    req.repoFullName,
+                    req.commentKind,
+                    req.commentId,
+                    failureReaction.id,
+                    { token: late.token as string },
+                    { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+                  )
+                : Promise.resolve(!failureReaction.ok),
+              failureNotice.id !== null
+                ? deps.updatePullRequestComment(
+                    req.repoFullName,
+                    failureNotice.id,
+                    correctionBody,
+                    { token: late.token as string },
+                    { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+                  )
+                : Promise.resolve(!failureNotice.ok),
+              postReaction('eyes', late.token as string).then((reaction) => reaction.ok),
+            ]);
+            if (reconciled.every(Boolean)) {
+              log('info', 'webhook_comment_late_feedback_reconciled', {
+                deliveryId,
+                repo: req.repoFullName,
+                pr: req.prNumber,
+              });
+            } else {
+              log('warn', 'webhook_comment_late_feedback_reconcile_failed', {
+                deliveryId,
+                repo: req.repoFullName,
+                pr: req.prNumber,
+                reactionRemoved: reconciled[0],
+                noticeUpdated: reconciled[1],
+                eyesPosted: reconciled[2],
+              });
+            }
+          })
+          .catch((err) => {
+            log('warn', 'webhook_comment_late_observer_failed', {
+              deliveryId,
+              repo: req.repoFullName,
+              pr: req.prNumber,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        // Registered separately so the retry task itself can finish now; with
+        // no ctx (unit tests / defensive) the observer floats, contained by
+        // the catch above — awaiting it would hang on a truly stuck attempt.
+        if (ctx) ctx.waitUntil(lateObserver);
+        return;
+      }
+      if (second.result.ok) {
+        log('info', 'webhook_comment_retry_succeeded', {
+          deliveryId,
+          repo: req.repoFullName,
+          pr: req.prNumber,
+          headSha: second.result.headSha,
+          status: second.result.status,
+        });
+        await ackReaction('eyes', second.token as string);
+        return;
+      }
+      if (second.token && second.result.code === 'NOT_REVIEWABLE') {
+        // The PR closed between attempts — received-but-skipped, not a failure.
+        log('info', 'webhook_comment_not_reviewable', {
+          deliveryId,
+          repo: req.repoFullName,
+          pr: req.prNumber,
+          message: second.result.message,
+          retried: true,
+        });
+        await ackReaction('confused', second.token);
+        return;
+      }
+      log('error', 'webhook_comment_retry_failed', {
+        deliveryId,
+        repo: req.repoFullName,
+        pr: req.prNumber,
+        code: second.result.code,
+      });
+      // The retry's mint failing doesn't invalidate a first-attempt token —
+      // installation tokens live an hour, this one is seconds old. Retryable
+      // codes imply the first mint succeeded, so the null check is type
+      // narrowing, not a reachable branch.
+      const feedbackToken = second.token ?? first.token;
+      if (!feedbackToken) return;
+      await ackReaction('confused', feedbackToken);
+      await postFailureNotice(second.result.code, true, feedbackToken);
+    })().catch((err) => {
+      // The retry runs past the response; an escaped rejection here would be an
+      // unhandled rejection in waitUntil, invisible to ops.
+      log('error', 'webhook_comment_retry_failed', {
+        deliveryId,
+        repo: req.repoFullName,
+        pr: req.prNumber,
+        code: 'RETRY_TASK_THREW',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    if (ctx) ctx.waitUntil(retryTask);
+    else await retryTask;
+    return json({ ok: true, status: 'retry_scheduled', code: first.result.code }, 202);
+  }
+
+  // Deterministic terminal failure (NOT_CONFIGURED, ENQUEUE_FAILED) — surface
+  // it on the PR; a token exists on every code that can reach this branch.
+  log('error', 'webhook_comment_enqueue_failed', {
     deliveryId,
     repo: req.repoFullName,
     pr: req.prNumber,
-    headSha: result.headSha,
-    status: result.status,
+    code: first.result.code,
   });
-  return json({ ok: true, status: result.status }, 202);
+  if (first.token) {
+    await ackReaction('confused', first.token);
+    await postFailureNotice(first.result.code, false, first.token);
+  }
+  return json({ error: first.result.code }, first.result.httpStatus);
 }
 
 function json(body: unknown, status = 200): Response {

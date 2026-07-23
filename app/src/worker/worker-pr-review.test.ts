@@ -36,8 +36,12 @@ const { fetchRefsMock } = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/github-tools', () => ({
   fetchPullRequestRefs: (...args: unknown[]) => fetchRefsMock(...args),
-  // Pulled in transitively by github-webhook.ts (comment-trigger 👀 ack).
-  addCommentReaction: vi.fn(async () => true),
+  // Pulled in transitively by github-webhook.ts (comment-trigger 👀 ack and
+  // terminal-failure notice).
+  addCommentReaction: vi.fn(async () => ({ ok: true, id: 1 })),
+  postPullRequestComment: vi.fn(async () => ({ ok: true, id: 2 })),
+  removeCommentReaction: vi.fn(async () => true),
+  updatePullRequestComment: vi.fn(async () => true),
 }));
 
 import type { ExecutionContext } from '@cloudflare/workers-types';
@@ -328,6 +332,24 @@ describe('handlePrReviewRoute — run', () => {
       'run',
     );
     expect(res.status).toBe(503);
+  });
+
+  it('maps a rejected DO forward to 502 ENQUEUE_UNREACHABLE instead of throwing', async () => {
+    // Exercises the production catch in enqueueReviewForExistingPr (this suite
+    // runs the real helper): a DO stub fetch can reject on transport failure,
+    // which must become a result, not an escaped rejection that 500s the route.
+    const stub: FakeStub = {
+      fetch: vi.fn(async () => {
+        throw new Error('durable object reset');
+      }),
+    };
+    const res = await handlePrReviewRoute(
+      makePost('/api/pr-reviews/run', { repo: 'octo/repo', pr: 7 }),
+      runEnv({ PrReviewJob: makePrReviewNamespace(stub) }),
+      'run',
+    );
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: 'ENQUEUE_UNREACHABLE' });
   });
 
   it('rejects a draft or closed PR (409) without enqueueing', async () => {
