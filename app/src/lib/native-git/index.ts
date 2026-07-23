@@ -60,13 +60,40 @@ export function computeNativePushPlan(
   });
 }
 
-export async function nativeBranchExists(dir: string, branch: string): Promise<boolean> {
+/**
+ * Auto-branch collision check. Local heads + the fetched remote-tracking ref
+ * short-circuit; when both miss, a live `lsRemoteHead` covers branches created
+ * on origin since the last fetch — parity with the cloud path's
+ * `ls-remote --heads` (`ensure-commit-target-branch.ts`). A failed live read
+ * (`ok: false` — offline, bad token) degrades to the local-only answer so
+ * offline auto-branch keeps working; a thrown bridge failure fails closed
+ * (occupied).
+ */
+export async function nativeBranchExists(
+  dir: string,
+  branch: string,
+  getToken?: () => string | undefined,
+): Promise<boolean> {
   try {
     const [local, remote] = await Promise.all([
       NativeGit.revParse({ dir, ref: `refs/heads/${branch}` }),
       NativeGit.revParse({ dir, ref: `refs/remotes/origin/${branch}` }),
     ]);
-    return Boolean(local.sha || remote.sha);
+    if (local.sha || remote.sha) return true;
+    const live = await NativeGit.lsRemoteHead({ dir, branch, token: getToken?.() });
+    if (!live.ok) {
+      // The engine already logged the read error (native_push_plan_remote_read_failed);
+      // this records the decision to answer from fetched refs only.
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'native_branch_exists_remote_check_degraded',
+          branch,
+        }),
+      );
+      return false;
+    }
+    return Boolean(live.sha);
   } catch (err) {
     console.error(
       JSON.stringify({

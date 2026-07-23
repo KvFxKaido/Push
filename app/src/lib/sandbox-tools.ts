@@ -310,7 +310,8 @@ function buildGitReleaseContext(
           },
           collectUntrackedDiff: async () => '',
           onBranchChanged: (branch: string) => rekeyNativeWorkingCopyScope(nativeFsScope, branch),
-          branchExists: (branch: string) => nativeBranchExists(nativeFs.dir, branch),
+          branchExists: (branch: string) =>
+            nativeBranchExists(nativeFs.dir, branch, () => getActiveGitHubToken() || undefined),
           forkCommitTargetBranch: async (branch: string) => {
             const result = await createToolPushGit(sandboxId, nativeFs).createBranch(branch);
             if (result.ok) rekeyNativeWorkingCopyScope(nativeFsScope, branch);
