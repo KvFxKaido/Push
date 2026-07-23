@@ -60,13 +60,50 @@ export function computeNativePushPlan(
   });
 }
 
-export async function nativeBranchExists(dir: string, branch: string): Promise<boolean> {
+/**
+ * Auto-branch collision check. Local heads + the fetched remote-tracking ref
+ * short-circuit; when both miss, a live `lsRemoteHead` covers branches created
+ * on origin since the last fetch — parity with the cloud path's
+ * `ls-remote --heads` (`ensure-commit-target-branch.ts`). Any failed live read
+ * — the engine's `ok: false` (offline, bad token) or a thrown bridge rejection
+ * (an older APK without `lsRemoteHead` loading the hosted bundle) — degrades to
+ * the local-only answer, which the just-completed local reads make trustworthy;
+ * only a thrown local read fails closed (occupied).
+ */
+export async function nativeBranchExists(
+  dir: string,
+  branch: string,
+  getToken?: () => string | undefined,
+): Promise<boolean> {
   try {
     const [local, remote] = await Promise.all([
       NativeGit.revParse({ dir, ref: `refs/heads/${branch}` }),
       NativeGit.revParse({ dir, ref: `refs/remotes/origin/${branch}` }),
     ]);
-    return Boolean(local.sha || remote.sha);
+    if (local.sha || remote.sha) return true;
+    let live: { ok: boolean; sha: string | null };
+    let liveError: string | undefined;
+    try {
+      live = await NativeGit.lsRemoteHead({ dir, branch, token: getToken?.() });
+    } catch (err) {
+      live = { ok: false, sha: null };
+      liveError = err instanceof Error ? err.message : String(err);
+    }
+    if (!live.ok) {
+      // ok:false read errors are already logged engine-side
+      // (native_push_plan_remote_read_failed); a bridge rejection carries its
+      // message here. Either way this records the fetched-refs-only decision.
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'native_branch_exists_remote_check_degraded',
+          branch,
+          ...(liveError ? { error: liveError } : {}),
+        }),
+      );
+      return false;
+    }
+    return Boolean(live.sha);
   } catch (err) {
     console.error(
       JSON.stringify({

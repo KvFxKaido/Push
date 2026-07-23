@@ -114,7 +114,14 @@ beforeEach(() => {
             : null,
   }));
   fakeNativeGit.mergeBase.mockReset().mockResolvedValue({ sha: 'mergebase123' });
-  fakeNativeGit.lsRemoteHead.mockReset().mockResolvedValue({ ok: true, sha: 'remotesha' });
+  // Branch-aware: the session branch has a live remote tip (push-plan lease);
+  // any other name — auto-branch candidates probing for a free slot — is absent.
+  fakeNativeGit.lsRemoteHead
+    .mockReset()
+    .mockImplementation(async ({ branch }: { branch: string }) => ({
+      ok: true,
+      sha: branch === 'feature/native' ? 'remotesha' : null,
+    }));
   fakeNativeGit.logPatch
     .mockReset()
     .mockResolvedValue({ patch: 'diff --git a/a.ts b/a.ts\n+++ b/a.ts\n@@ -0,0 +1 @@\n+safe\n' });
@@ -315,6 +322,68 @@ describe('sandbox-tools native FS routing', () => {
       expect.objectContaining({ name: 'feature/native-auto' }),
     );
     expect(result.branchSwitch?.name).not.toBe('feature/native-auto');
+    // The fetched-ref hit short-circuits — no live round-trip for that name.
+    expect(fakeNativeGit.lsRemoteHead).not.toHaveBeenCalledWith(
+      expect.objectContaining({ branch: 'feature/native-auto' }),
+    );
+  });
+
+  it('consults the live remote when fetched refs miss the collision', async () => {
+    fakeNativeGit.revParse.mockImplementation(async ({ ref }: { ref: string }) => ({
+      sha: ref === 'HEAD' ? 'abc123' : null,
+    }));
+    fakeNativeGit.lsRemoteHead.mockImplementation(async ({ branch }: { branch: string }) => ({
+      ok: true,
+      sha: branch === 'feature/native-auto' ? 'just-pushed-elsewhere' : null,
+    }));
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_commit', args: { message: 'feat: native auto' } },
+      '',
+      { nativeFsScope: scope, currentBranch: 'main', defaultBranch: 'main' },
+    );
+    expect(fakeNativeGit.lsRemoteHead).toHaveBeenCalledWith(
+      expect.objectContaining({ dir: '/data/clone', branch: 'feature/native-auto' }),
+    );
+    expect(fakeNativeGit.createBranch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'feature/native-auto' }),
+    );
+    expect(result.branchSwitch?.name).not.toBe('feature/native-auto');
+  });
+
+  it('threads the token into the live branch-exists check', async () => {
+    fakeNativeGit.revParse.mockResolvedValue({ sha: null });
+    fakeNativeGit.lsRemoteHead.mockResolvedValue({ ok: true, sha: 'occupied' });
+    await expect(nativeBranchExists('/data/clone', 'feature/probe', () => 'tok-123')).resolves.toBe(
+      true,
+    );
+    expect(fakeNativeGit.lsRemoteHead).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      branch: 'feature/probe',
+      token: 'tok-123',
+    });
+  });
+
+  it('degrades to fetched refs when the live remote read fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      fakeNativeGit.revParse.mockResolvedValue({ sha: null });
+      fakeNativeGit.lsRemoteHead.mockResolvedValue({ ok: false, sha: null });
+      await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(false);
+      const logged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('native_branch_exists_remote_check_degraded');
+
+      // A THROWN live read — an older APK without lsRemoteHead loading the
+      // hosted bundle rejects the bridge call — degrades the same way instead
+      // of marking every candidate occupied (Codex P2, #1579).
+      warnSpy.mockClear();
+      fakeNativeGit.lsRemoteHead.mockRejectedValue(new Error('lsRemoteHead not implemented'));
+      await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(false);
+      const thrownLogged = warnSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(thrownLogged).toContain('native_branch_exists_remote_check_degraded');
+      expect(thrownLogged).toContain('lsRemoteHead not implemented');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('treats native branch-exists probe failures as occupied', async () => {
