@@ -124,6 +124,18 @@ describe('parseInline (law 2 span budget)', () => {
     ]);
   });
 
+  it('keeps balanced and escaped parentheses in link and image destinations', () => {
+    assert.deepEqual(parseInline('[wiki](https://x/Function_(mathematics))'), [
+      { text: 'wiki', link: true, url: 'https://x/Function_(mathematics)' },
+    ]);
+    assert.deepEqual(parseInline('[wiki](https://x/Function_\\(mathematics\\))'), [
+      { text: 'wiki', link: true, url: 'https://x/Function_(mathematics)' },
+    ]);
+    assert.deepEqual(parseInline('![](https://x/Figure_(one).png)'), [
+      { text: '', image: true, url: 'https://x/Figure_(one).png' },
+    ]);
+  });
+
   it('does not treat snake_case or bare underscores as emphasis', () => {
     assert.deepEqual(parseInline('call foo_bar_baz and __init__'), [
       { text: 'call foo_bar_baz and __init__' },
@@ -218,6 +230,16 @@ describe('MarkdownBody — terminal links', () => {
     assert.equal(stripAnsi(raw).trimEnd(), 'Push https://push.local/docs');
   });
 
+  it('links the complete destination when its path contains balanced parentheses', async () => {
+    const url = 'https://en.wikipedia.org/wiki/Function_(mathematics)';
+    const raw = await renderMarkdownBodyRaw(`[wiki](${url})`, 80);
+    const linked = parseAnsiText(raw).filter((segment) => segment.hyperlink);
+    assert.ok(linked.some((segment) => segment.text.includes('wiki')));
+    assert.ok(linked.some((segment) => segment.text.includes(url)));
+    assert.ok(linked.every((segment) => segment.hyperlink === url));
+    assert.equal(stripAnsi(raw).trimEnd(), `wiki ${url}`);
+  });
+
   it('renders rejected destinations as inert but readable text', async () => {
     const raw = await renderMarkdownBodyRaw('[unsafe](javascript:alert)', 80);
     assert.equal(parseAnsiText(raw).filter((segment) => segment.hyperlink).length, 0);
@@ -229,6 +251,15 @@ describe('MarkdownBody — terminal links', () => {
       await renderMarkdownBody('![diagram](https://push.local/diagram.png)', 80),
       'diagram https://push.local/diagram.png',
     );
+  });
+
+  it('renders an empty-alt image as only its linked destination', async () => {
+    const url = 'https://push.local/diagram.png';
+    const raw = await renderMarkdownBodyRaw(`![](${url})`, 80);
+    const linked = parseAnsiText(raw).filter((segment) => segment.hyperlink);
+    assert.ok(linked.some((segment) => segment.text.includes(url)));
+    assert.ok(linked.every((segment) => segment.hyperlink === url));
+    assert.equal(stripAnsi(raw).trimEnd(), url);
   });
 });
 
