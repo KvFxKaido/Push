@@ -4438,6 +4438,193 @@ describe('silvery transcript render contracts', () => {
     }
   });
 
+  it('reproduces expanded review and tool state in the assertion render', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { renderTranscriptRowForAssertion } = await import('../silvery/surface.tsx');
+    const { assertTranscriptRenderContract, inspectTranscriptRenderContract } = await import(
+      '../silvery/render-contract.ts'
+    );
+    await Silvery.renderString(React.createElement(Silvery.Text, null, 'init'));
+
+    const preview = Array.from({ length: 6 }, (_, i) => `detail line ${i}`).join('\n');
+    const fixtures = [
+      {
+        item: {
+          id: 'exp-tool',
+          kind: 'tool',
+          toolName: 'run_command',
+          text: 'run_command',
+          resultPreview: preview,
+        },
+        key: 'tool:exp-tool',
+        expandedEvidence: 'detail line 5',
+      },
+      {
+        item: {
+          id: 'exp-review',
+          kind: 'review',
+          role: 'reviewer',
+          text: 'verdict line\nsecond finding\nthird finding',
+        },
+        key: 'review:exp-review',
+        expandedEvidence: 'third finding',
+      },
+    ];
+
+    for (const fixture of fixtures) {
+      const collapsed = renderTranscriptRowForAssertion({ item: fixture.item, layoutWidth: 40 });
+      const expanded = renderTranscriptRowForAssertion({
+        item: fixture.item,
+        layoutWidth: 40,
+        expansion: new Map([[fixture.key, true]]),
+      });
+      assert.ok(
+        expanded.contentHeight > collapsed.contentHeight,
+        `${fixture.key}: expanding should grow the row`,
+      );
+      assert.ok(
+        expanded.ansi.includes(fixture.expandedEvidence),
+        `${fixture.key}: expanded render must show the tail`,
+      );
+      assert.ok(
+        !collapsed.ansi.includes(fixture.expandedEvidence),
+        `${fixture.key}: collapsed render must fold the tail`,
+      );
+      // An expanded live row verifies clean against an equally-expanded
+      // duplicate tree...
+      assert.deepEqual(
+        assertTranscriptRenderContract(
+          {
+            rowId: fixture.item.id,
+            rowKind: fixture.item.kind,
+            width: 40,
+            measuredHeight: expanded.contentHeight,
+            rendered: expanded,
+          },
+          { enabled: true, throwOnFailure: true, writeDiagnostic: () => undefined },
+        ),
+        [],
+        fixture.key,
+      );
+      // ...where a collapsed duplicate would have reported exactly the
+      // spurious measured_height violation the snapshot plumbing prevents.
+      assert.deepEqual(
+        inspectTranscriptRenderContract({
+          rowId: fixture.item.id,
+          rowKind: fixture.item.kind,
+          width: 40,
+          measuredHeight: expanded.contentHeight,
+          rendered: collapsed,
+        }).map((violation) => violation.invariant),
+        ['measured_height'],
+        `${fixture.key}: state desync must be visible to the contract`,
+      );
+    }
+  });
+
+  it('shares one live expansion store between committed rows and the observer', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { TranscriptRow } = await import('../silvery/surface.tsx');
+    const { transcriptExpansion } = await import('../silvery/transcript-expansion.ts');
+    assert.ok(transcriptExpansion, 'PUSH_TUI_ASSERT=1 must provision the shared expansion store');
+
+    const item = {
+      id: 'live-exp',
+      kind: 'tool',
+      toolName: 'run_command',
+      text: 'run_command',
+      resultPreview: 'first detail\nsecond detail',
+    };
+    const render = () =>
+      Silvery.renderString(
+        React.createElement(
+          Silvery.Box,
+          { flexDirection: 'column', width: 40 },
+          React.createElement(TranscriptRow, { item, width: 40 }),
+        ),
+        { width: 40, height: 12, plain: true },
+      );
+    const before = await render();
+    transcriptExpansion.toggle('tool:live-exp');
+    try {
+      const after = await render();
+      assert.ok(!before.includes('second detail'), 'collapsed row must fold the preview tail');
+      assert.ok(after.includes('second detail'), 'committed rows must read the shared store');
+    } finally {
+      transcriptExpansion.toggle('tool:live-exp');
+    }
+  });
+
+  it('keeps unclipped evidence when the render outgrows the raw-text estimate', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { renderTranscriptRowForAssertion } = await import('../silvery/surface.tsx');
+    const { inspectTranscriptRenderContract, transcriptRenderLines } = await import(
+      '../silvery/render-contract.ts'
+    );
+    await Silvery.renderString(React.createElement(Silvery.Text, null, 'init'));
+
+    // Message renders Markdown at width - 4, so raw text counted at the full
+    // layout width (~100 lines here) undershoots the real render (~150) — the
+    // drift that would defeat any fixed buffer margin. The contract instead
+    // relies on renderStringSync growing its cell buffer to the laid-out
+    // content; this pins that invariant so a silvery that starts clamping to
+    // the layout viewport fails loudly here instead of silently hiding the
+    // very overflow evidence the checker exists to surface.
+    const words = Array.from({ length: 300 }, () => 'abc').join(' ');
+    const item = { id: 'long-narrow', kind: 'message', role: 'assistant', text: words };
+    const layoutWidth = 12;
+    const rawEstimate = Silvery.countVisualLines(words, layoutWidth);
+
+    const rendered = renderTranscriptRowForAssertion({ item, layoutWidth });
+    const lines = transcriptRenderLines(rendered);
+    assert.ok(
+      rendered.contentHeight > rawEstimate,
+      `render (${rendered.contentHeight}) must outgrow the raw estimate (${rawEstimate})`,
+    );
+    assert.equal(lines.length, rendered.contentHeight);
+    assert.ok(lines.at(-1).includes('abc'), 'tail of the row is missing from the buffer');
+    assert.deepEqual(
+      inspectTranscriptRenderContract({
+        rowId: item.id,
+        rowKind: item.kind,
+        width: layoutWidth,
+        measuredHeight: rendered.contentHeight,
+        rendered,
+      }),
+      [],
+      'an honest tall row must verify clean',
+    );
+    // An under-measured row reports the full unclipped height as evidence.
+    assert.deepEqual(
+      inspectTranscriptRenderContract({
+        rowId: item.id,
+        rowKind: item.kind,
+        width: layoutWidth,
+        measuredHeight: rawEstimate,
+        rendered,
+      }),
+      [
+        {
+          invariant: 'measured_height',
+          rowId: 'long-narrow',
+          rowKind: 'message',
+          lineIndex: null,
+          expected: rendered.contentHeight,
+          actual: rawEstimate,
+        },
+      ],
+    );
+  });
+
   it('fails a lying row with structured row identity and stays inert when disabled', async () => {
     const { assertTranscriptRenderContract } = await import('../silvery/render-contract.ts');
     const diagnostics = [];

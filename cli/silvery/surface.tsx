@@ -46,6 +46,12 @@ import {
 } from './render-contract.js';
 import { PushThemeProvider } from './theme.js';
 import {
+  TranscriptExpansionOverrideContext,
+  transcriptExpansion,
+  useTranscriptExpansion,
+  type TranscriptExpansionSnapshot,
+} from './transcript-expansion.js';
+import {
   groupSilveryTranscriptRows,
   type SilveryTranscriptDisplayItem,
   type SilveryTranscriptToolGroup,
@@ -287,11 +293,11 @@ function useModalMotion(
 }
 
 function DiffCard({ item }: { item: SilveryTranscriptItem }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, toggleExpanded] = useTranscriptExpansion(`diff:${item.id}`);
   const diff = item.diff!;
   const lines = expanded ? diff.lines : diff.lines.slice(0, 8);
   return (
-    <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
+    <Box flexDirection="column" onClick={toggleExpanded}>
       <Text bold>
         {diff.path} · +{diff.adds} -{diff.dels}
       </Text>
@@ -319,7 +325,7 @@ function toolMarkKind(item: SilveryTranscriptItem): StreamMarkKind {
 }
 
 function ToolCard({ item }: { item: SilveryTranscriptItem }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, toggleExpanded] = useTranscriptExpansion(`tool:${item.id}`);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const mark = streamMark(toolMarkKind(item), glyphs);
   // Semantic compact title ("Read README.md" / "Ran a command") from the shared
@@ -353,7 +359,7 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   const previewLines = item.resultPreview ? item.resultPreview.split('\n') : [];
   const previewHasMore = previewOnly && previewLines.length > 1;
   return (
-    <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
+    <Box flexDirection="column" onClick={toggleExpanded}>
       <Text bold={mark.bold} color={mark.color}>
         {mark.glyph} {title}
         {typeof item.durationMs === 'number' ? ` · ${item.durationMs}ms` : ''}
@@ -402,12 +408,12 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
 }
 
 function ToolGroup({ group }: { group: SilveryTranscriptToolGroup }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, toggleExpanded] = useTranscriptExpansion(`group:${group.id}`);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const mark = streamMark('tool_ok', glyphs);
   return (
     <Box flexDirection="column">
-      <Box onClick={() => setExpanded((value) => !value)}>
+      <Box onClick={toggleExpanded}>
         <Text bold={mark.bold} color={mark.color}>
           {mark.glyph} {group.summary}
           {expanded ? '' : ' …'}
@@ -447,7 +453,7 @@ function Message({
   tinted?: boolean;
   width: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, toggleExpanded] = useTranscriptExpansion(`review:${item.id}`);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   if (item.kind === 'tool') return <ToolCard item={item} />;
   const label = getTranscriptRoleLabel(item.role);
@@ -482,7 +488,7 @@ function Message({
       width="100%"
       paddingX={1}
       backgroundColor={tinted ? '$bg-surface-subtle' : undefined}
-      onClick={item.kind === 'review' ? () => setExpanded((value) => !value) : undefined}
+      onClick={item.kind === 'review' ? toggleExpanded : undefined}
     >
       <Box flexShrink={0}>
         <Text bold={mark.bold} color={mark.color}>
@@ -550,45 +556,38 @@ function AssertedTranscriptRow({
   );
 }
 
-function transcriptItemSourceText(item: SilveryTranscriptDisplayItem): string {
-  if (item.kind === 'tool_group') {
-    return item.items.map((entry) => transcriptItemSourceText(entry)).join('\n');
-  }
-  return [
-    item.text,
-    item.resultPreview,
-    item.card ? JSON.stringify(item.card) : '',
-    item.diff ? item.diff.lines.map((line) => line.text).join('\n') : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
+const EMPTY_EXPANSION: TranscriptExpansionSnapshot = new Map();
 
 /**
- * Render the same row tree into an independent buffer. The generous height is
- * derived from source content rather than the committed measurement, so an
- * under-measured row cannot clip the evidence used to diagnose itself.
+ * Render the same row tree into an independent buffer. `renderStringSync`'s
+ * cell buffer grows to the laid-out content — its `height` option is only the
+ * initial layout viewport, and nothing in the row tree sizes against the
+ * viewport — so an under-measured row cannot clip the evidence used to
+ * diagnose itself (pinned by the long-narrow markdown contract test).
+ * Expansion state is injected as a frozen snapshot because this fresh
+ * reconciler cannot see the live rows' component state.
  */
 export function renderTranscriptRowForAssertion({
   item,
   layoutWidth,
   componentWidth = layoutWidth,
+  expansion = EMPTY_EXPANSION,
 }: {
   item: SilveryTranscriptDisplayItem;
   layoutWidth: number;
   componentWidth?: number;
+  expansion?: TranscriptExpansionSnapshot;
 }): TranscriptRenderSnapshot {
   const width = Math.max(1, Math.floor(layoutWidth));
-  const sourceHeight = countVisualLines(transcriptItemSourceText(item), width);
-  const bufferHeight = Math.max(8, sourceHeight + 16);
   let contentHeight = 0;
   const ansi = renderStringSync(
-    <Box flexDirection="column" width={width}>
-      {renderTranscriptRowContent(item, componentWidth)}
-    </Box>,
+    <TranscriptExpansionOverrideContext.Provider value={expansion}>
+      <Box flexDirection="column" width={width}>
+        {renderTranscriptRowContent(item, componentWidth)}
+      </Box>
+    </TranscriptExpansionOverrideContext.Provider>,
     {
       width,
-      height: bufferHeight,
       plain: false,
       trimTrailingWhitespace: false,
       trimEmptyLines: false,
@@ -627,11 +626,16 @@ function TranscriptRenderObserver({
         return;
       }
       lastAssertion.current = { item, width: layoutWidth, height: measuredHeight };
+      // Snapshot expansion at commit time: this rect belongs to the render the
+      // live store state produced, and a toggle landing before the microtask
+      // must not desync the duplicate tree from the measured frame.
+      const expansion = transcriptExpansion?.snapshot();
       queueMicrotask(() => {
         const rendered = renderTranscriptRowForAssertion({
           item,
           layoutWidth,
           componentWidth,
+          expansion,
         });
         assertTranscriptRenderContract({
           rowId: item.id,
