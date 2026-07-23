@@ -57,6 +57,18 @@ import {
 } from '../lib/coder-policy.ts';
 import { classifyTurnIntent } from '../lib/turn-intent.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
+import {
+  normalizeTaskLedgerScope,
+  taskLikelyRequiresMutation,
+  type TaskLedgerScope,
+  type TaskLedgerStep,
+} from '../lib/task-ledger.ts';
+import {
+  TODO_TOOL_PROTOCOL,
+  buildTodoContext,
+  detectTodoToolCall,
+  executeTodoToolCall,
+} from '../lib/todo-tools.ts';
 import { cliProviderModelSupportsNativeToolCalling } from './native-tool-gate.js';
 import {
   createProviderStream,
@@ -115,6 +127,7 @@ import { recordMalformedToolCall, resetToolCallMetrics } from './tool-call-metri
 import { recordWriteFile, resetWriteFileMetrics } from './edit-metrics.js';
 import { resetContextMetrics } from './context-metrics.js';
 import { loadUserGoalFile } from './user-goal-file.js';
+import { loadTaskLedger, saveTaskLedger } from './task-ledger-store.js';
 import {
   deriveUserGoalAnchor,
   formatUserGoalBlock,
@@ -579,6 +592,30 @@ export async function runLeadKernelTurn(
     getGitHubToolProtocolAsync().catch((): string => ''),
     resolveWorkspaceIdentity(state.cwd),
   ]);
+  let taskLedgerScope: TaskLedgerScope = normalizeTaskLedgerScope(workspaceIdentity);
+  let taskLedgerSteps: TaskLedgerStep[] = [];
+  try {
+    taskLedgerSteps = (await loadTaskLedger(taskLedgerScope)).steps;
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'task_ledger_load_failed',
+        scope: taskLedgerScope,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+
+  const emitTaskLedgerSnapshot = (
+    cause: 'loaded' | 'updated' | 'cleared',
+    steps = taskLedgerSteps,
+  ): void => {
+    const payload = { scope: taskLedgerScope, steps, cause };
+    void persistEvent('task.ledger_snapshot', payload);
+    dispatchEvent('task.ledger_snapshot', payload);
+  };
+  if (taskLedgerSteps.length > 0) emitTaskLedgerSnapshot('loaded');
 
   // Pre-turn LLM compaction (§14, CLI parity): when the durable history has
   // grown past the budget, collapse the older span into a model-written
@@ -648,6 +685,7 @@ export async function runLeadKernelTurn(
     userGoalAnchor,
     { includePriorConversation: !reasoningReplayRouteEligible },
   );
+  taskPreamble = `${taskPreamble}\n\n${buildTodoContext(taskLedgerSteps)}`;
   const initialMessages = reasoningReplayRouteEligible
     ? buildLeadReasoningReplaySeed(userText, state.messages as Message[], taskPreamble, {
         maxTokens: getContextBudget(providerConfig.id, leadModelId).targetTokens,
@@ -661,6 +699,7 @@ export async function runLeadKernelTurn(
       memory,
       userGoalAnchor,
     );
+    taskPreamble = `${taskPreamble}\n\n${buildTodoContext(taskLedgerSteps)}`;
   }
   const coderPolicy = createCoderPolicy({
     // CLI stdout is user/JSONL protocol output. Structured runtime diagnostics
@@ -694,7 +733,10 @@ export async function runLeadKernelTurn(
         // protocol block advertised below, so prompt text and native schema
         // can't drift. The daemon's delegated nodes don't thread this — a
         // delegated sub-Coder neither advertises nor executes delegation.
-        extraProtocolBlocks: explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : [],
+        extraProtocolBlocks: [
+          TODO_TOOL_PROTOCOL,
+          ...(explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : []),
+        ],
       })
     : undefined;
 
@@ -950,6 +992,48 @@ export async function runLeadKernelTurn(
     void persistEvent('tool.execution_start', startPayload);
     dispatchEvent('tool.execution_start', startPayload);
     try {
+      const todoCall = detectTodoToolCall(JSON.stringify(rawCall));
+      if (todoCall) {
+        if (isCliToolDisabled(rawCall.tool, disabledTools)) {
+          return { kind: 'denied', reason: `Tool "${rawCall.tool}" is disabled by user config.` };
+        }
+        let nextSteps: TaskLedgerStep[] | undefined;
+        const result = executeTodoToolCall(todoCall, taskLedgerSteps, {
+          replace: (steps) => {
+            nextSteps = steps;
+          },
+          clear: () => {
+            nextSteps = [];
+          },
+        });
+        if (result.ok && nextSteps) {
+          try {
+            // Re-resolve before a write so a typed branch switch earlier in the
+            // same run cannot persist the next position under the old branch.
+            taskLedgerScope = normalizeTaskLedgerScope(await resolveWorkspaceIdentity(state.cwd));
+            const saved = await saveTaskLedger(taskLedgerScope, nextSteps);
+            taskLedgerSteps = saved.steps;
+            emitTaskLedgerSnapshot(todoCall.tool === 'todo_clear' ? 'cleared' : 'updated');
+          } catch (error) {
+            return applyAfterToolPolicy(
+              {
+                kind: 'executed',
+                resultText: `[Task ledger error: ${error instanceof Error ? error.message : String(error)}]`,
+                errorType: 'TASK_LEDGER_PERSIST_FAILED',
+              },
+              rawCall,
+            );
+          }
+        }
+        return applyAfterToolPolicy(
+          {
+            kind: 'executed',
+            resultText: result.text,
+            ...(result.ok ? {} : { errorType: 'TASK_LEDGER_UPDATE_INVALID' }),
+          },
+          rawCall,
+        );
+      }
       const result = await executeToolCall(rawCall, state.cwd, {
         role: 'coder',
         approvalFn,
@@ -1127,6 +1211,7 @@ export async function runLeadKernelTurn(
         // by policy, so advertising stays aligned with executor support.
         extraToolProtocols: [
           ...(githubProtocol ? [githubProtocol] : []),
+          TODO_TOOL_PROTOCOL,
           ...(explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : []),
         ],
         nativeToolSchemas,
@@ -1186,6 +1271,8 @@ export async function runLeadKernelTurn(
         harnessTokenBudget:
           resolveRunTokenBudget({ env: process.env[RUN_TOKEN_BUDGET_ENV_VAR] }) ?? undefined,
         persona: 'lead',
+        taskExpectedToMutate: taskInFlight && taskLikelyRequiresMutation(userText),
+        getTaskLedger: () => taskLedgerSteps,
         // Exempt poll-by-repeat tools (`exec_poll`) from the lead exact-repeat
         // breaker — a quiet long-running command is polled with identical args.
         repeatExemptTools: REPEAT_EXEMPT_TOOLS,

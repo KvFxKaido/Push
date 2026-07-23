@@ -206,6 +206,9 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         // undefined` (the inline lane sets it; the delegated Coder keeps its
         // narrow sandbox/web/memory surface — no extra tools advertised).
         'extraToolProtocols',
+        // Task drift monitoring is lead-only. The delegated arc keeps both
+        // shell-owned position slots present but dormant.
+        'getTaskLedger',
         'harnessContextResetsEnabled',
         'harnessMaxRounds',
         // Per-run token budget — null here (delegated arc inherits the
@@ -251,6 +254,7 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'sandboxId',
         'stream',
         'symbolSummary',
+        'taskExpectedToMutate',
         'taskPreamble',
         'toolExec',
         'userProfile',
@@ -289,6 +293,8 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
     // Lead tool surface is inline-only: the delegated Coder advertises no
     // GitHub/ask_user/artifact protocols (narrow sandbox/web/memory surface).
     expect(options.extraToolProtocols).toBeUndefined();
+    expect(options.taskExpectedToMutate).toBe(false);
+    expect(options.getTaskLedger).toBeUndefined();
   });
 
   it('builds the brief preamble and threads the delegated option values', async () => {
@@ -397,6 +403,7 @@ describe('runInPageCoderKernel inline knobs', () => {
       branchSwitch: payload,
     });
     const onBranchSwitchPayload = vi.fn();
+    const replaceScoped = vi.fn();
 
     await runInPageCoderKernel(
       {
@@ -404,6 +411,14 @@ describe('runInPageCoderKernel inline knobs', () => {
         modelId: 'm',
         sandboxId: 'sb-2',
         taskPreamble: 'RAW-USER-TURN-PREAMBLE',
+        branchContext: {
+          activeBranch: 'feat/x',
+          defaultBranch: 'main',
+          protectMain: false,
+        },
+        memoryScope: { repoFullName: 'KvFxKaido/Push', branch: 'feat/x', chatId: 'chat-1' },
+        todo: { todos: [], replace: vi.fn(), replaceScoped, clear: vi.fn() },
+        leadToolSurface: true,
       },
       { onStatus: () => {}, onBranchSwitchPayload },
     );
@@ -422,6 +437,28 @@ describe('runInPageCoderKernel inline knobs', () => {
       kind: 'executed',
       resultText: '[Tool Result — sandbox_switch_branch]',
     });
+
+    await options.toolExec(
+      {
+        source: 'todo',
+        call: {
+          tool: 'todo_write',
+          todos: [
+            {
+              id: 'verify',
+              content: 'Verify the branch',
+              activeForm: 'Verifying the branch',
+              status: 'in_progress',
+            },
+          ],
+        },
+      } as AnyToolCall,
+      { round: 2, executionId: 'exec-update-ledger' },
+    );
+    expect(replaceScoped).toHaveBeenCalledWith(
+      { repoFullName: 'kvfxkaido/push', branch: 'main' },
+      expect.any(Array),
+    );
   });
 
   it('leaves branchSwitch payloads as a no-op when the delegated arc omits the callback', async () => {
@@ -709,6 +746,7 @@ describe('lead tool surface (inline foreground lane)', () => {
   });
 
   it('executes scratchpad and todo calls through inline chat-state handlers', async () => {
+    const replaceScoped = vi.fn();
     await runInPageCoderKernel(
       {
         provider: 'openrouter',
@@ -724,6 +762,7 @@ describe('lead tool surface (inline foreground lane)', () => {
         todo: {
           todos: [],
           replace: vi.fn(),
+          replaceScoped,
           clear: vi.fn(),
         },
         leadToolSurface: true,
@@ -763,6 +802,14 @@ describe('lead tool surface (inline foreground lane)', () => {
     expect(todoResult.kind).toBe('executed');
     if (todoResult.kind !== 'executed') throw new Error('todo should execute');
     expect(todoResult.resultText).toContain('Todo updated');
+    expect(replaceScoped).toHaveBeenCalledWith({ repoFullName: 'kvfxkaido/push', branch: 'main' }, [
+      {
+        id: 'a',
+        content: 'Do A',
+        activeForm: 'Doing A',
+        status: 'in_progress',
+      },
+    ]);
   });
 
   it('fans out up to two Explorer delegations into the parallel bucket, rejecting a third', async () => {

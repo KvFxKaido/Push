@@ -1203,6 +1203,167 @@
         }
       }
     },
+    "TaskLedgerSnapshot": {
+      "type": "object",
+      "required": [
+        "scope",
+        "steps",
+        "cause"
+      ],
+      "properties": {
+        "scope": {
+          "type": "object",
+          "required": [
+            "repoFullName",
+            "branch"
+          ],
+          "properties": {
+            "repoFullName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "branch": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "content",
+              "activeForm",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "activeForm": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed"
+                ]
+              }
+            }
+          }
+        },
+        "cause": {
+          "type": "string",
+          "enum": [
+            "loaded",
+            "updated",
+            "cleared"
+          ]
+        }
+      }
+    },
+    "TaskDriftChanged": {
+      "type": "object",
+      "required": [
+        "round",
+        "health",
+        "fired",
+        "cleared",
+        "active"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "health": {
+          "type": "string",
+          "enum": [
+            "working",
+            "possibly_stalled"
+          ]
+        },
+        "fired": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "count",
+              "detail"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "repeated_tool_call",
+                  "no_novel_reads",
+                  "no_mutation"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "cleared": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "repeated_tool_call",
+              "no_novel_reads",
+              "no_mutation"
+            ]
+          }
+        },
+        "active": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "count",
+              "detail"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "repeated_tool_call",
+                  "no_novel_reads",
+                  "no_mutation"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
     "JobStarted": {
       "type": "object",
       "required": [
@@ -2357,6 +2518,44 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/HarnessAdaptation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task.ledger_snapshot"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskLedgerSnapshot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task.drift_changed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TaskDriftChanged"
           }
         }
       }

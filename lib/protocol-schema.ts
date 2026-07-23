@@ -1643,6 +1643,14 @@ function validateDelegationInterrupted(payload: unknown, basePath: string): Vali
 
 export const TURN_END_OUTCOMES = ['completed', 'continued', 'error', 'aborted', 'steered'] as const;
 export const TURN_QUIESCED_OUTCOMES = ['completed', 'aborted', 'failed'] as const;
+export const TASK_LEDGER_CAUSES = ['loaded', 'updated', 'cleared'] as const;
+export const TASK_LEDGER_STEP_STATUSES = ['pending', 'in_progress', 'completed'] as const;
+export const TASK_PROGRESS_HEALTH = ['working', 'possibly_stalled'] as const;
+export const TASK_DRIFT_SIGNAL_KINDS = [
+  'repeated_tool_call',
+  'no_novel_reads',
+  'no_mutation',
+] as const;
 
 function validateAssistantTurnStart(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
@@ -1698,6 +1706,98 @@ function validateHarnessAdaptation(payload: unknown, basePath: string): Validati
     if (issue) issues.push(issue);
   }
   issues.push(...expectNonEmptyStringArray(payload, 'reasons', basePath));
+  return issues;
+}
+
+function validateTaskLedgerSnapshot(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  if (!isPlainObject(payload.scope)) {
+    issues.push({
+      path: `${basePath}.scope`,
+      message: `expected plain object, got ${typeof payload.scope}`,
+    });
+  } else {
+    for (const field of ['repoFullName', 'branch']) {
+      const issue = expectNonEmptyString(payload.scope, field, `${basePath}.scope`);
+      if (issue) issues.push(issue);
+    }
+  }
+  const cause = expectAgentValue(payload, 'cause', basePath, TASK_LEDGER_CAUSES);
+  if (cause) issues.push(cause);
+  issues.push(...expectObjectArray(payload, 'steps', basePath, ['id', 'content', 'activeForm']));
+  if (Array.isArray(payload.steps)) {
+    payload.steps.forEach((step, index) => {
+      if (!isPlainObject(step)) return;
+      const status = expectAgentValue(
+        step,
+        'status',
+        `${basePath}.steps[${index}]`,
+        TASK_LEDGER_STEP_STATUSES,
+      );
+      if (status) issues.push(status);
+    });
+  }
+  return issues;
+}
+
+function validateTaskDriftSignalArray(
+  payload: Record<string, unknown>,
+  field: 'fired' | 'active',
+  basePath: string,
+): ValidationIssue[] {
+  const value = payload[field];
+  if (!Array.isArray(value)) {
+    return [{ path: `${basePath}.${field}`, message: `expected array, got ${typeof value}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  value.forEach((signal, index) => {
+    const signalPath = `${basePath}.${field}[${index}]`;
+    if (!isPlainObject(signal)) {
+      issues.push({ path: signalPath, message: `expected plain object, got ${typeof signal}` });
+      return;
+    }
+    const kind = expectAgentValue(signal, 'kind', signalPath, TASK_DRIFT_SIGNAL_KINDS);
+    if (kind) issues.push(kind);
+    const count = expectNonNegativeInteger(signal, 'count', signalPath);
+    if (count) issues.push(count);
+    const detail = expectNonEmptyString(signal, 'detail', signalPath);
+    if (detail) issues.push(detail);
+  });
+  return issues;
+}
+
+function validateTaskDriftChanged(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const round = expectNonNegativeInteger(payload, 'round', basePath);
+  if (round) issues.push(round);
+  const health = expectAgentValue(payload, 'health', basePath, TASK_PROGRESS_HEALTH);
+  if (health) issues.push(health);
+  issues.push(...validateTaskDriftSignalArray(payload, 'fired', basePath));
+  issues.push(...validateTaskDriftSignalArray(payload, 'active', basePath));
+  if (!Array.isArray(payload.cleared)) {
+    issues.push({
+      path: `${basePath}.cleared`,
+      message: `expected array, got ${typeof payload.cleared}`,
+    });
+  } else {
+    payload.cleared.forEach((kind, index) => {
+      if (
+        typeof kind !== 'string' ||
+        !TASK_DRIFT_SIGNAL_KINDS.some((candidate) => candidate === kind)
+      ) {
+        issues.push({
+          path: `${basePath}.cleared[${index}]`,
+          message: `expected one of ${JSON.stringify(TASK_DRIFT_SIGNAL_KINDS)}, got ${JSON.stringify(kind)}`,
+        });
+      }
+    });
+  }
   return issues;
 }
 
@@ -1872,6 +1972,8 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'assistant.tool_prose': validateAssistantToolProse,
   'turn.quiesced': validateTurnQuiesced,
   'harness.adaptation': validateHarnessAdaptation,
+  'task.ledger_snapshot': validateTaskLedgerSnapshot,
+  'task.drift_changed': validateTaskDriftChanged,
   'job.started': validateJobStarted,
   'job.completed': validateJobCompleted,
   'job.failed': validateJobFailed,

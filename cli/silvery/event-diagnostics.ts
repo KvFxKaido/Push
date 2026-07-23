@@ -38,6 +38,8 @@ export const SILVERY_INLINE_HANDLED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'warning',
   'error',
   'status',
+  'task.ledger_snapshot',
+  'task.drift_changed',
   'run_complete',
 ]);
 
@@ -68,6 +70,8 @@ export const SILVERY_DAEMON_HANDLED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'error',
   'status',
   'tool.call_malformed',
+  'task.ledger_snapshot',
+  'task.drift_changed',
   'run_complete',
   'approval_required',
   'approval_received',
@@ -122,6 +126,8 @@ export const VISIBLE_EMISSION_TYPES: ReadonlySet<string> = new Set([
   'task_graph.task_failed',
   'task_graph.task_cancelled',
   'task_graph.graph_completed',
+  'task.ledger_snapshot',
+  'task.drift_changed',
 ]);
 
 /** Whether an event type counts toward a run having produced visible output. */

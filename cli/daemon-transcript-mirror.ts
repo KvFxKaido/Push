@@ -12,6 +12,7 @@ import {
 } from './silvery/event-diagnostics.js';
 import { formatUnknownEventWarning } from './tui-daemon-handshake.js';
 import { sessionMessagesToTranscriptRows } from './tui-history.ts';
+import { taskProgressEventToTranscript } from './tui-task-progress.js';
 
 export type DaemonTranscriptRole =
   | 'user'
@@ -382,6 +383,20 @@ export function applyDaemonTranscriptEvent(
         isError: event.type.endsWith('failed'),
       });
       break;
+    case 'task.ledger_snapshot':
+    case 'task.drift_changed': {
+      const entry = taskProgressEventToTranscript(event);
+      if (entry) {
+        mirror.rows.push({
+          id: eventId(mirror, event, 'task-progress'),
+          kind: 'status',
+          role: 'status',
+          text: entry.text,
+          isError: entry.role === 'warning',
+        });
+      }
+      break;
+    }
     case 'warning':
     case 'error':
     case 'status':

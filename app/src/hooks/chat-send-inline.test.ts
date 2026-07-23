@@ -597,14 +597,43 @@ describe('startInlineCoderTurn', () => {
       activeBranch: 'feat/x',
       defaultBranch: 'main',
       protectMain: true,
+      repoFullName: 'owner/repo',
     });
     expect(spec.projectInstructions).toBe('AGENTS-MD');
     // Raw turn + history — no delegation brief vocabulary.
     expect(spec.taskPreamble).toContain('Task: do the thing');
     expect(spec.taskPreamble).toContain('[assistant] earlier answer');
+    expect(spec.taskExpectedToMutate).toBe(false);
     expect(callbacks.onCheckpoint).toBeInstanceOf(Function);
     expect(callbacks.onCheckpointRequest).toBeInstanceOf(Function);
     expect(callbacks.onBranchSwitchPayload).toBeInstanceOf(Function);
+  });
+
+  it('derives mutation intent from the current turn, not prior-history verbs', async () => {
+    const { ctx } = makeHarness();
+    await startInlineCoderTurn(
+      ctx,
+      laneArgs({
+        trimmedText: 'Investigate the current behavior',
+        apiMessages: [
+          msg('user', 'Please fix and update the auth flow'),
+          msg('assistant', 'I fixed the earlier issue'),
+          msg('user', 'Investigate the current behavior'),
+        ],
+      }),
+    );
+    const readSpec = mockRunInPageCoderKernel.mock.calls.at(-1)?.[0];
+    expect(readSpec?.taskExpectedToMutate).toBe(false);
+
+    await startInlineCoderTurn(
+      ctx,
+      laneArgs({
+        trimmedText: 'Fix the current behavior',
+        apiMessages: [msg('user', 'Fix the current behavior')],
+      }),
+    );
+    const mutationSpec = mockRunInPageCoderKernel.mock.calls.at(-1)?.[0];
+    expect(mutationSpec?.taskExpectedToMutate).toBe(true);
   });
 
   it('signals a workspace mutation at completion when the run changed the workspace (device finding 2026-06-22)', async () => {

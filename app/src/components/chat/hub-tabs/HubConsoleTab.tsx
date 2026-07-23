@@ -3,6 +3,7 @@ import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { getRoleDisplay, getSourceLabel, getSubagentLabel } from '@push/lib/role-display';
+import { taskLedgerCounts } from '@push/lib/task-ledger';
 import { resolveToolName } from '@/lib/tool-registry';
 import { cn } from '@/lib/utils';
 import {
@@ -34,7 +35,7 @@ interface ConsoleSandboxPayload {
 }
 
 interface ConsoleLogItem {
-  type: 'call' | 'result' | 'status' | 'malformed' | 'lifecycle' | 'sandbox';
+  type: 'call' | 'result' | 'status' | 'warning' | 'malformed' | 'lifecycle' | 'sandbox';
   content: string;
   timestamp: number;
   source?: AgentStatusSource;
@@ -307,6 +308,30 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
             timestamp: event.timestamp,
           });
           break;
+        case 'task.ledger_snapshot': {
+          const counts = taskLedgerCounts(event.steps);
+          const current = event.steps.find((step) => step.status === 'in_progress');
+          items.push({
+            type: 'lifecycle',
+            content: `Task ledger · ${counts.completed}/${event.steps.length} done`,
+            detail: current?.activeForm || `${event.scope.repoFullName} @ ${event.scope.branch}`,
+            timestamp: event.timestamp,
+          });
+          break;
+        }
+        case 'task.drift_changed':
+          items.push({
+            type: event.health === 'possibly_stalled' ? 'warning' : 'lifecycle',
+            content:
+              event.health === 'possibly_stalled'
+                ? 'Task possibly stalled'
+                : 'Task progress resumed',
+            detail:
+              event.active.map((signal) => signal.detail).join('; ') ||
+              (event.cleared.length > 0 ? `cleared: ${event.cleared.join(', ')}` : undefined),
+            timestamp: event.timestamp,
+          });
+          break;
         case 'user.follow_up_queued':
           items.push({
             type: 'lifecycle',
@@ -363,6 +388,10 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
         if (log.type === 'malformed') {
           const detail = log.detail ? ` — ${log.detail}` : '';
           return `[${date}] [MALFORMED] ${log.content}${detail}`;
+        }
+        if (log.type === 'warning') {
+          const detail = log.detail ? ` — ${log.detail}` : '';
+          return `[${date}] [Warning] ${log.content}${detail}`;
         }
         return `[${date}] ${log.type === 'call' ? '' : '  '}${log.content}`;
       })
@@ -438,7 +467,7 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
                 className={
                   log.type === 'call'
                     ? 'text-push-fg-secondary'
-                    : log.type === 'malformed'
+                    : log.type === 'malformed' || log.type === 'warning'
                       ? 'text-amber-400'
                       : log.type === 'result'
                         ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
@@ -449,8 +478,12 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
               >
                 {log.type === 'status' && log.source ? `[${getSourceLabel(log.source)}] ` : ''}
                 {log.type === 'lifecycle' ? '[Lifecycle] ' : ''}
+                {log.type === 'warning' ? '[Warning] ' : ''}
                 {log.content}
-                {(log.type === 'status' || log.type === 'lifecycle' || log.type === 'malformed') &&
+                {(log.type === 'status' ||
+                  log.type === 'warning' ||
+                  log.type === 'lifecycle' ||
+                  log.type === 'malformed') &&
                 log.detail
                   ? ` — ${log.detail}`
                   : ''}

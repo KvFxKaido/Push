@@ -1,16 +1,14 @@
 /**
- * useTodo — manages the model's structured todo list for the current repo.
+ * useTodo — manages the model's structured task ledger for the current branch.
  *
  * Sibling to useScratchpad, but scoped differently: the scratchpad is user-
  * facing narrative memory (notes, decisions, context); the todo list is
- * model-facing step tracking for the current effort. Both persist per-repo
- * so state survives an app reload, but the todo list is effort-scoped in
- * practice: chat-management wipes it whenever a fresh chat is minted (new
- * chat = new effort), so a previous session's steps never leak into a new
- * chat's [TODO] prompt block and masquerade as shared history.
+ * model-facing step tracking for the current effort. The ledger persists by
+ * repo + branch so it survives app reloads, new chats, and branch-local run
+ * resumption without leaking position into another branch.
  *
  * Storage:
- *   - List: localStorage key `push-todo:<repoFullName>` (JSON array).
+ *   - List: localStorage key `push-task-ledger:v1:<repo>:<branch>` (JSON array).
  *   - No memories/snapshots (YAGNI — different use case than scratchpad).
  *
  * Security notes:
@@ -18,15 +16,45 @@
  *   - List size is capped in the tool executor (MAX_TODO_ITEMS).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { MAX_TODO_CONTENT_LENGTH, MAX_TODO_ITEMS, type TodoItem } from '@/lib/todo-tools';
+import type { TodoItem } from '@/lib/todo-tools';
+import {
+  normalizeTaskLedgerScope,
+  normalizeTaskLedgerSteps,
+  type TaskLedgerScope,
+} from '@push/lib/task-ledger';
 
-const GLOBAL_STORAGE_KEY = 'push-todo';
+const GLOBAL_STORAGE_KEY = 'push-task-ledger:v1:global';
+const LEGACY_GLOBAL_STORAGE_KEY = 'push-todo';
 const MAX_STORAGE_SIZE = 200_000; // 200KB soft cap
 
-function getStorageKey(repoFullName: string | null): string {
-  return repoFullName ? `push-todo:${repoFullName}` : GLOBAL_STORAGE_KEY;
+function getStorageKey(repoFullName: string | null, branch: string | null): string {
+  if (!repoFullName) return GLOBAL_STORAGE_KEY;
+  const scope = normalizeTaskLedgerScope({ repoFullName, branch });
+  return `push-task-ledger:v1:${encodeURIComponent(scope.repoFullName)}:${encodeURIComponent(scope.branch)}`;
+}
+
+function getLegacyStorageKey(repoFullName: string | null): string {
+  return repoFullName ? `push-todo:${repoFullName}` : LEGACY_GLOBAL_STORAGE_KEY;
+}
+
+function persistTodos(storageKey: string, todos: readonly TodoItem[]): void {
+  try {
+    const serialized = JSON.stringify(todos);
+    if (serialized.length > MAX_STORAGE_SIZE) {
+      toast.warning('Todo list is very large — consider clearing completed items');
+    }
+    localStorage.setItem(storageKey, serialized);
+  } catch (e) {
+    if (e instanceof Error) {
+      if (e.name === 'QuotaExceededError') {
+        toast.error('Todo list too large to save — clear some items');
+      } else {
+        console.error('[useTodo] localStorage error:', e.message);
+      }
+    }
+  }
 }
 
 /**
@@ -42,51 +70,7 @@ function getStorageKey(repoFullName: string | null): string {
  * render the hook.
  */
 export function validateTodos(data: unknown): TodoItem[] {
-  if (!Array.isArray(data)) return [];
-  const cleaned: TodoItem[] = [];
-  const seenIds = new Set<string>();
-  let inProgressKept = false;
-  for (const item of data) {
-    if (typeof item !== 'object' || item === null) continue;
-    const record = item as Record<string, unknown>;
-    if (
-      typeof record.id !== 'string' ||
-      typeof record.content !== 'string' ||
-      typeof record.activeForm !== 'string'
-    ) {
-      continue;
-    }
-    let status: TodoItem['status'];
-    if (record.status === 'in_progress' || record.status === 'completed') {
-      status = record.status;
-    } else {
-      status = 'pending';
-    }
-    // Demote subsequent in_progress items — the invariant is one active step
-    // at a time, so first wins and the rest fall back to pending.
-    if (status === 'in_progress') {
-      if (inProgressKept) status = 'pending';
-      else inProgressKept = true;
-    }
-    // Rename duplicate ids so the list keeps unique keys even if localStorage
-    // was hand-tampered or carries legacy entries. `id` + `id-1` + `id-2`…
-    // matches executeTodoToolCall's on-write dedupe so callers can safely use
-    // the id as a React key.
-    let uniqueId = record.id;
-    let suffix = 1;
-    while (seenIds.has(uniqueId)) {
-      uniqueId = `${record.id}-${suffix++}`;
-    }
-    seenIds.add(uniqueId);
-    cleaned.push({
-      id: uniqueId,
-      content: record.content.slice(0, MAX_TODO_CONTENT_LENGTH),
-      activeForm: record.activeForm.slice(0, MAX_TODO_CONTENT_LENGTH),
-      status,
-    });
-    if (cleaned.length >= MAX_TODO_ITEMS) break;
-  }
-  return cleaned;
+  return normalizeTaskLedgerSteps(data);
 }
 
 /**
@@ -115,9 +99,21 @@ export function toggleTodoStatus(prev: readonly TodoItem[], id: string): TodoIte
   });
 }
 
-function readStoredTodos(repoFullName: string | null): TodoItem[] {
+function readStoredTodos(repoFullName: string | null, branch: string | null): TodoItem[] {
   try {
-    const raw = localStorage.getItem(getStorageKey(repoFullName));
+    const key = getStorageKey(repoFullName, branch);
+    let raw = localStorage.getItem(key);
+    // One-time migration from the pre-#1547 repo-only todo list. Move it onto
+    // the branch that is active during the first post-upgrade load so it cannot
+    // subsequently bleed into every branch.
+    if (!raw) {
+      const legacyKey = getLegacyStorageKey(repoFullName);
+      raw = localStorage.getItem(legacyKey);
+      if (raw) {
+        localStorage.setItem(key, raw);
+        localStorage.removeItem(legacyKey);
+      }
+    }
     if (!raw) return [];
     return validateTodos(JSON.parse(raw));
   } catch {
@@ -125,38 +121,48 @@ function readStoredTodos(repoFullName: string | null): TodoItem[] {
   }
 }
 
-export function useTodo(repoFullName: string | null = null) {
-  const [todos, setTodosState] = useState<TodoItem[]>(() => readStoredTodos(repoFullName));
+export function useTodo(repoFullName: string | null = null, branch: string | null = null) {
+  const storageKey = getStorageKey(repoFullName, branch);
+  const loadedStorageKeyRef = useRef(storageKey);
+  const [todos, setTodosState] = useState<TodoItem[]>(() => readStoredTodos(repoFullName, branch));
 
-  // Load on repo change
+  // Load on durable scope change.
   useEffect(() => {
-    const id = setTimeout(() => setTodosState(readStoredTodos(repoFullName)), 0);
+    const id = setTimeout(() => {
+      const stored = readStoredTodos(repoFullName, branch);
+      loadedStorageKeyRef.current = storageKey;
+      setTodosState(stored);
+    }, 0);
     return () => clearTimeout(id);
-  }, [repoFullName]);
+  }, [repoFullName, branch, storageKey]);
 
   // Persist on change
   useEffect(() => {
-    const key = getStorageKey(repoFullName);
-    try {
-      const serialized = JSON.stringify(todos);
-      if (serialized.length > MAX_STORAGE_SIZE) {
-        toast.warning('Todo list is very large — consider clearing completed items');
-      }
-      localStorage.setItem(key, serialized);
-    } catch (e) {
-      if (e instanceof Error) {
-        if (e.name === 'QuotaExceededError') {
-          toast.error('Todo list too large to save — clear some items');
-        } else {
-          console.error('[useTodo] localStorage error:', e.message);
-        }
-      }
-    }
-  }, [todos, repoFullName]);
+    // A branch switch renders once with the prior branch's state. Wait for the
+    // scoped load effect instead of copying that state into the new branch.
+    if (loadedStorageKeyRef.current !== storageKey) return;
+    persistTodos(storageKey, todos);
+  }, [todos, storageKey]);
 
   const replace = useCallback((next: TodoItem[]) => {
     setTodosState(next);
   }, []);
+
+  const replaceScoped = useCallback(
+    (scope: TaskLedgerScope, next: TodoItem[]) => {
+      const targetKey = getStorageKey(scope.repoFullName, scope.branch);
+      const normalized = validateTodos(next);
+      persistTodos(targetKey, normalized);
+      // When the hosting surface has already adopted the switched branch,
+      // reflect the scoped write immediately. Otherwise its scope-load effect
+      // will adopt this snapshot when the branch state catches up.
+      if (targetKey === storageKey) {
+        loadedStorageKeyRef.current = storageKey;
+        setTodosState(normalized);
+      }
+    },
+    [storageKey],
+  );
 
   const clear = useCallback(() => {
     setTodosState([]);
@@ -176,6 +182,7 @@ export function useTodo(repoFullName: string | null = null) {
     todos,
     hasItems,
     replace,
+    replaceScoped,
     clear,
     toggleStatus,
     removeItem,

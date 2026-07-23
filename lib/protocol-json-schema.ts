@@ -43,7 +43,11 @@ import {
   PROTOCOL_VERSION,
   RUN_COMPLETE_OUTCOMES,
   SUBAGENT_AGENTS,
+  TASK_DRIFT_SIGNAL_KINDS,
   TASK_GRAPH_AGENTS,
+  TASK_LEDGER_CAUSES,
+  TASK_LEDGER_STEP_STATUSES,
+  TASK_PROGRESS_HEALTH,
   TURN_INTENTS,
   TURN_END_OUTCOMES,
   TURN_QUIESCED_OUTCOMES,
@@ -450,6 +454,45 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     },
   }),
 
+  TaskLedgerSnapshot: objectNode(['scope', 'steps', 'cause'], {
+    scope: objectNode(['repoFullName', 'branch'], {
+      repoFullName: nestr(),
+      branch: nestr(),
+    }),
+    steps: {
+      type: 'array',
+      items: objectNode(['id', 'content', 'activeForm', 'status'], {
+        id: nestr(),
+        content: nestr(),
+        activeForm: nestr(),
+        status: enumOf(TASK_LEDGER_STEP_STATUSES),
+      }),
+    },
+    cause: enumOf(TASK_LEDGER_CAUSES),
+  }),
+
+  TaskDriftChanged: objectNode(['round', 'health', 'fired', 'cleared', 'active'], {
+    round: uint(),
+    health: enumOf(TASK_PROGRESS_HEALTH),
+    fired: {
+      type: 'array',
+      items: objectNode(['kind', 'count', 'detail'], {
+        kind: enumOf(TASK_DRIFT_SIGNAL_KINDS),
+        count: uint(),
+        detail: nestr(),
+      }),
+    },
+    cleared: { type: 'array', items: enumOf(TASK_DRIFT_SIGNAL_KINDS) },
+    active: {
+      type: 'array',
+      items: objectNode(['kind', 'count', 'detail'], {
+        kind: enumOf(TASK_DRIFT_SIGNAL_KINDS),
+        count: uint(),
+        detail: nestr(),
+      }),
+    },
+  }),
+
   JobStarted: objectNode(['executionId', 'role'], {
     executionId: nestr(),
     role: enumOf(PROMPT_SNAPSHOT_ROLES),
@@ -603,6 +646,8 @@ export const TYPE_TO_DEF: Record<string, string> = {
   'assistant.turn_end': 'AssistantTurnEnd',
   'turn.quiesced': 'TurnQuiesced',
   'harness.adaptation': 'HarnessAdaptation',
+  'task.ledger_snapshot': 'TaskLedgerSnapshot',
+  'task.drift_changed': 'TaskDriftChanged',
   'job.started': 'JobStarted',
   'job.completed': 'JobCompleted',
   'job.failed': 'JobFailed',

@@ -9,7 +9,6 @@ import { useCallback } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { AgentStatusEvent, Conversation, WorkspaceMode } from '@/types';
 import { createId, saveActiveChatId } from '@/hooks/chat-persistence';
-import type { TodoHandlers } from '@/hooks/chat-send-types';
 import { replaceAllConversations as replaceAllConversationsInDB } from '@/lib/conversation-store';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 
@@ -33,14 +32,6 @@ export interface ChatManagementParams {
   abortStream: (options?: { clearQueuedFollowUps?: boolean }) => void;
   clearQueuedFollowUps: (chatId: string) => void;
   workspaceModeRef: MutableRefObject<WorkspaceMode | null>;
-  /**
-   * Todo-list handlers from the hosting surface. Minting a fresh chat wipes
-   * the (repo-scoped) todo list: the list is working state for the current
-   * effort, and a new chat starts a new effort. Without this, a stale [TODO]
-   * block leaks into the fresh chat's system prompt and the model treats the
-   * previous session's work as its own.
-   */
-  todoRef: MutableRefObject<TodoHandlers | undefined>;
 }
 
 function getWorkspaceScopedMode(
@@ -280,20 +271,7 @@ export function useChatManagement({
   abortStream,
   clearQueuedFollowUps,
   workspaceModeRef,
-  todoRef,
 }: ChatManagementParams) {
-  // Clear the todo list for a fresh-chat mint. `clear()` only schedules the
-  // useTodo state update, but sendMessage can mint a chat and build the next
-  // prompt in the same tick — chat-stream-round reads `todoRef.current.todos`
-  // before any re-render refreshes the mirror — so the ref is also reset
-  // synchronously (same pattern as chat-send-helpers' post-exec ref sync).
-  const clearTodosForFreshChat = useCallback(() => {
-    const handlers = todoRef.current;
-    if (!handlers) return;
-    handlers.clear();
-    todoRef.current = { ...handlers, todos: [] };
-  }, [todoRef]);
-
   const createNewChat = useCallback(
     (options?: { daemonSessionId?: string }): string => {
       const id = createId();
@@ -314,14 +292,12 @@ export function useChatManagement({
       activeChatIdRef.current = id;
       setActiveChatId(id);
       saveActiveChatId(id);
-      clearTodosForFreshChat();
       return id;
     },
     [
       activeRepoFullName,
       activeChatIdRef,
       branchInfoRef,
-      clearTodosForFreshChat,
       dirtyConversationIdsRef,
       setActiveChatId,
       setConversations,
@@ -405,17 +381,6 @@ export function useChatManagement({
   const deleteChat = useCallback(
     (id: string) => {
       clearQueuedFollowUps(id);
-      // Fresh-chat mint decision, computed outside the setConversations
-      // updater so the updater stays pure (StrictMode double-invokes it).
-      // Mirrors the `remaining` check inside the updater below.
-      const hasRemainingWorkspaceChat = Object.values(conversations).some(
-        (c) =>
-          c.id !== id &&
-          conversationBelongsToWorkspace(c, repoRef.current, workspaceModeRef.current),
-      );
-      if (id === activeChatId && !hasRemainingWorkspaceChat) {
-        clearTodosForFreshChat();
-      }
       setAgentEventsByChat((prev) => {
         if (!prev[id]) return prev;
         const updated = { ...prev };
@@ -464,7 +429,6 @@ export function useChatManagement({
       activeChatId,
       branchInfoRef,
       clearQueuedFollowUps,
-      clearTodosForFreshChat,
       conversations,
       deletedConversationIdsRef,
       dirtyConversationIdsRef,
@@ -489,10 +453,6 @@ export function useChatManagement({
     removedIds.forEach((removedId) => {
       clearQueuedFollowUps(removedId);
     });
-
-    // deleteAllChats always mints a fresh chat below — reset the todo list
-    // with it so the next effort starts clean.
-    clearTodosForFreshChat();
 
     setConversations((prev) => {
       const kept: Record<string, Conversation> = {};
@@ -528,7 +488,6 @@ export function useChatManagement({
   }, [
     branchInfoRef,
     clearQueuedFollowUps,
-    clearTodosForFreshChat,
     conversations,
     repoRef,
     setActiveChatId,
