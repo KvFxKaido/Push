@@ -128,6 +128,7 @@ const RE = {
 const STREAMING_RE = {
   code: /`([^`\n]+)$/y,
   link: /\[([^\]\n]+)\]\([^)\n]*$/y,
+  strike: /~~([^\s~\n][^~\n]*?)~?$/y,
   boldItalic: /\*\*\*([^\s*\n][^*\n]*?)(?:\*{1,2})?$/y,
   bold: /\*\*([^\s*\n][^*\n]*?)\*?$/y,
   italic: /\*([^\s*\n][^*\n]*)$/y,
@@ -269,6 +270,14 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
         // Keep only the label until the closing `)` makes this a real link.
         spans.push({ text: stripDecorativeEmoji(partialLink[1]) });
         i = STREAMING_RE.link.lastIndex;
+        continue;
+      }
+      STREAMING_RE.strike.lastIndex = i;
+      const partialStrike = STREAMING_RE.strike.exec(line);
+      if (partialStrike && partialStrike.index === i) {
+        flush();
+        spans.push({ text: stripDecorativeEmoji(partialStrike[1]), strike: true });
+        i = STREAMING_RE.strike.lastIndex;
         continue;
       }
       STREAMING_RE.boldItalic.lastIndex = i;

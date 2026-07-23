@@ -322,9 +322,9 @@ The TUI adopts the first behavior through its own grammar:
   This preserves the renderer's one-source-line/one-row height contract and deliberately
   avoids inventing cross-line emphasis semantics.
 - The repair vocabulary is exactly the syntax `markdown.tsx` can render: asterisk emphasis,
-  inline backticks, and a link whose label is complete but destination is still arriving.
-  An incomplete link renders as label text only; a partial URL is neither accented nor
-  echoed into the transcript.
+  GFM strikethrough, inline backticks, and a link whose label is complete but destination is
+  still arriving. An incomplete link renders as label text only; a partial URL is neither
+  accented nor echoed into the transcript.
 - Repair may only remove visible marker cells. It must not add a row or increase the
   displayed width of a source line. The table fit-or-raw rule remains unchanged.
 

@@ -206,9 +206,13 @@ describe('parseInline (law 2 span budget)', () => {
     assert.deepEqual(parseInline('*italic', { streamingTail: true }), [
       { text: 'italic', italic: true },
     ]);
+    assert.deepEqual(parseInline('Ship ~~later', { streamingTail: true }), [
+      { text: 'Ship ' },
+      { text: 'later', strike: true },
+    ]);
   });
 
-  it('preserves the opened emphasis kind while a closing delimiter arrives', () => {
+  it('preserves the opened style kind while a closing delimiter arrives', () => {
     assert.deepEqual(parseInline('**bold*', { streamingTail: true }), [
       { text: 'bold', bold: true },
     ]);
@@ -217,6 +221,9 @@ describe('parseInline (law 2 span budget)', () => {
     ]);
     assert.deepEqual(parseInline('*hello ', { streamingTail: true }), [
       { text: 'hello ', italic: true },
+    ]);
+    assert.deepEqual(parseInline('~~later~', { streamingTail: true }), [
+      { text: 'later', strike: true },
     ]);
   });
 
@@ -462,12 +469,15 @@ describe('MarkdownBody — streaming prefix contract', () => {
     assert.equal(await renderMarkdownBody('Use **bold', 80, true), 'Use bold');
     assert.equal(await renderMarkdownBody('Use **bold', 80), 'Use **bold');
     assert.equal(await renderMarkdownBody('See [Push](https://exam', 80, true), 'See Push');
+    assert.equal(await renderMarkdownBody('Ship ~~later', 80, true), 'Ship later');
+    assert.equal(await renderMarkdownBody('Ship ~~later', 80), 'Ship ~~later');
   });
 
-  it('keeps partial closing delimiters hidden without changing emphasis kind', async () => {
+  it('keeps partial closing delimiters hidden without changing style kind', async () => {
     assert.equal(await renderMarkdownBody('**bold*', 80, true), 'bold');
     assert.equal(await renderMarkdownBody('***both**', 80, true), 'both');
     assert.equal(await renderMarkdownBody('*hello ', 80, true), 'hello');
+    assert.equal(await renderMarkdownBody('~~later~', 80, true), 'later');
   });
 
   it('preserves streaming repair when a table falls back to raw rows', async () => {
@@ -477,7 +487,7 @@ describe('MarkdownBody — streaming prefix contract', () => {
   });
 
   it('preserves source line count and never expands ASCII width for every streamed prefix', async () => {
-    const final = 'Use **bold** with `code` and [docs](https://example.com).';
+    const final = 'Use **bold** with `code`, ~~old~~, and [docs](https://example.com).';
     for (let end = 1; end <= final.length; end += 1) {
       const prefix = final.slice(0, end);
       const parsed = parseMarkdown(prefix, { streaming: true });
