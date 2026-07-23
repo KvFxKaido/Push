@@ -89,6 +89,7 @@ import { SESSION_DIGEST_HEADER, type SessionDigest } from '@push/lib/session-dig
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
 import type { CoderWorkingMemory } from '@push/lib/working-memory';
 import type { RunEventInput } from '@push/lib/runtime-contract';
+import { taskLikelyRequiresMutation } from '@push/lib/task-ledger';
 import type {
   LlmContentPart,
   LlmMessage,
@@ -887,6 +888,7 @@ export async function startInlineCoderTurn(
           activeBranch,
           defaultBranch: branchInfo?.defaultBranch || 'main',
           protectMain: ctx.isMainProtectedRef.current,
+          repoFullName: memoryScope?.repoFullName,
         },
         projectInstructions: args.agentsMdRef.current || undefined,
         instructionFilename: args.instructionFilenameRef.current || undefined,
@@ -907,6 +909,10 @@ export async function startInlineCoderTurn(
         // turn ever reaches this lane the guard stays quiet. `task` by default;
         // attachment-only turns (no text) read as a task and stay guarded.
         taskInFlight,
+        // Resolve from this turn only. taskPreamble also carries prior
+        // conversation, whose old mutation verbs must not taint a read-shaped
+        // follow-up with a no-mutation expectation.
+        taskExpectedToMutate: taskInFlight && taskLikelyRequiresMutation(args.trimmedText),
         // Per-round capture: the foreground client mirror is the durable
         // copy adoption resumes from, so don't skip rounds.
         checkpointCadenceRounds: 1,
@@ -936,6 +942,20 @@ export async function startInlineCoderTurn(
         },
         onRunEvent: (event) => {
           ctx.appendRunEvent(chatId, event);
+          if (event.type === 'task.drift_changed') {
+            ctx.updateAgentStatus(
+              {
+                active: true,
+                phase: event.health === 'possibly_stalled' ? 'Possibly stalled' : 'Working',
+                detail:
+                  event.active.map((signal) => signal.detail).join('; ') ||
+                  (event.cleared.length > 0
+                    ? `Progress resumed (${event.cleared.join(', ')})`
+                    : undefined),
+              },
+              { chatId, source: 'coder' },
+            );
+          }
           if (event.type === 'assistant.tool_prose') {
             roundProse.pending = event.text;
             return;

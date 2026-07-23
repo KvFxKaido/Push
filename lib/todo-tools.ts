@@ -28,22 +28,22 @@
 
 import { detectToolFromText } from './tool-call-parsing.js';
 import { getToolArgHint, getToolPublicName, resolveToolName } from './tool-registry.js';
+import {
+  MAX_TASK_LEDGER_CONTENT_LENGTH,
+  MAX_TASK_LEDGER_ITEMS,
+  type TaskLedgerStep,
+  type TaskLedgerStepStatus,
+  taskLedgerCounts,
+} from './task-ledger.ts';
 
 // Caps — keep the list focused and bound context cost. A longer list is a
 // smell: either break the work down or ship what's done and reset.
-export const MAX_TODO_ITEMS = 30;
-export const MAX_TODO_CONTENT_LENGTH = 500;
+export const MAX_TODO_ITEMS = MAX_TASK_LEDGER_ITEMS;
+export const MAX_TODO_CONTENT_LENGTH = MAX_TASK_LEDGER_CONTENT_LENGTH;
 
-export type TodoStatus = 'pending' | 'in_progress' | 'completed';
-
-export interface TodoItem {
-  id: string;
-  /** Imperative form: "Fix the auth bug". */
-  content: string;
-  /** Present continuous form shown while the item is active: "Fixing the auth bug". */
-  activeForm: string;
-  status: TodoStatus;
-}
+/** Backward-compatible names for the now cross-surface task-ledger schema. */
+export type TodoStatus = TaskLedgerStepStatus;
+export type TodoItem = TaskLedgerStep;
 
 export interface TodoWriteArgs {
   todos: TodoItem[];
@@ -274,15 +274,8 @@ function dedupeTodoIds(todos: TodoItem[]): TodoItem[] {
 }
 
 function countByStatus(todos: readonly TodoItem[]): string {
-  let done = 0;
-  let active = 0;
-  let pending = 0;
-  for (const t of todos) {
-    if (t.status === 'completed') done++;
-    else if (t.status === 'in_progress') active++;
-    else pending++;
-  }
-  return `${done} done, ${active} in progress, ${pending} pending`;
+  const counts = taskLedgerCounts(todos);
+  return `${counts.completed} done, ${counts.inProgress} in progress, ${counts.pending} pending`;
 }
 
 function renderTodoList(todos: readonly TodoItem[]): string {

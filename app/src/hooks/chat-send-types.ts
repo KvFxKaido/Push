@@ -11,6 +11,7 @@ import type { ActiveProvider } from '@/lib/orchestrator';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import type { NativeToolCall, ResponsesReasoningItem } from '@push/lib/provider-contract';
 import type { TodoItem } from '@/lib/todo-tools';
+import type { TaskLedgerScope } from '@push/lib/task-ledger';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
@@ -39,6 +40,12 @@ export interface ScratchpadHandlers {
 export interface TodoHandlers {
   todos: readonly TodoItem[];
   replace: (todos: TodoItem[]) => void;
+  /** Read the durable snapshot for an in-run destination branch before any
+   * later todo call can write against it. */
+  loadScoped?: (scope: TaskLedgerScope) => TodoItem[];
+  /** Persist a runtime update under the branch that owns it. Used when a
+   * typed branch switch and a ledger update occur in the same model run. */
+  replaceScoped?: (scope: TaskLedgerScope, todos: TodoItem[]) => void;
   clear: () => void;
 }
 

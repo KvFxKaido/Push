@@ -57,6 +57,7 @@ import { osc52Copy } from '../tui-renderer.js';
 import { copyLastResponse } from '../transcript-copy.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { scopeSessionsToWorkspace } from '../tui-fuzzy.js';
+import { taskProgressEventToTranscript } from '../tui-task-progress.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
 import { isReducedMotion, type StatusActivity } from '../tui-verbs.js';
 import { detectThemeName, isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
@@ -862,6 +863,23 @@ export async function createSilveryController(
           },
         ];
         break;
+      case 'task.ledger_snapshot':
+      case 'task.drift_changed': {
+        const entry = taskProgressEventToTranscript(event);
+        if (entry) {
+          activityRows = [
+            ...activityRows,
+            {
+              id: nextId('task-progress'),
+              kind: 'status',
+              role: 'status',
+              text: entry.text,
+              isError: entry.role === 'warning',
+            },
+          ];
+        }
+        break;
+      }
       case 'run_complete':
         finishRunDiagnostics();
         running = false;

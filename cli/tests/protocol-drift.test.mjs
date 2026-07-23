@@ -109,6 +109,8 @@ describe('protocol drift characterization — schema surface', () => {
       'subagent.completed',
       'subagent.failed',
       'subagent.started',
+      'task.drift_changed',
+      'task.ledger_snapshot',
       'task_graph.graph_completed',
       'task_graph.task_cancelled',
       'task_graph.task_completed',
@@ -129,6 +131,52 @@ describe('protocol drift characterization — schema surface', () => {
       'workspace.state_delta',
       'workspace.state_snapshot',
     ]);
+  });
+
+  it('accepts task ledger snapshots and rejects malformed steps', () => {
+    const valid = {
+      scope: { repoFullName: 'kvfxkaido/push', branch: 'codex/task-ledger-1547' },
+      steps: [
+        {
+          id: 'implement',
+          content: 'Implement the runtime monitor',
+          activeForm: 'Implementing the runtime monitor',
+          status: 'in_progress',
+        },
+      ],
+      cause: 'updated',
+    };
+    assert.deepEqual(validateRunEventPayload('task.ledger_snapshot', valid), []);
+    assert.notDeepEqual(
+      validateRunEventPayload('task.ledger_snapshot', {
+        ...valid,
+        steps: [{ ...valid.steps[0], status: 'lost' }],
+      }),
+      [],
+    );
+  });
+
+  it('accepts task drift transitions and rejects unknown signal kinds', () => {
+    const signal = {
+      kind: 'repeated_tool_call',
+      count: 3,
+      detail: 'read_file repeated with identical arguments for 3 rounds',
+    };
+    const valid = {
+      round: 4,
+      health: 'possibly_stalled',
+      fired: [signal],
+      cleared: [],
+      active: [signal],
+    };
+    assert.deepEqual(validateRunEventPayload('task.drift_changed', valid), []);
+    assert.notDeepEqual(
+      validateRunEventPayload('task.drift_changed', {
+        ...valid,
+        fired: [{ ...signal, kind: 'model_feels_confused' }],
+      }),
+      [],
+    );
   });
 
   it('accepts turn.route and rejects an unknown route', () => {
@@ -1164,6 +1212,34 @@ describe('protocol drift characterization — v1 downgrade fidelity', () => {
     assert.equal(isV2DelegationEvent('assistant_done'), false);
     assert.equal(isV2DelegationEvent('approval_required'), false);
     assert.equal(isV2DelegationEvent('approval_received'), false);
+  });
+});
+
+describe('protocol drift characterization — task position family', () => {
+  installStrictModeHooks();
+
+  it('accepts task-position events and rejects malformed payloads in strict mode', () => {
+    const ledgerPayload = {
+      scope: { repoFullName: 'kvfxkaido/push', branch: 'main' },
+      steps: [],
+      cause: 'loaded',
+    };
+    assertStrictBroadcastPass(makeEnvelope('task.ledger_snapshot', ledgerPayload));
+    assertStrictBroadcastFail(
+      makeEnvelope('task.ledger_snapshot', { ...ledgerPayload, cause: 'guessed' }),
+    );
+
+    const driftPayload = {
+      round: 3,
+      health: 'working',
+      fired: [],
+      cleared: ['no_mutation'],
+      active: [],
+    };
+    assertStrictBroadcastPass(makeEnvelope('task.drift_changed', driftPayload));
+    assertStrictBroadcastFail(
+      makeEnvelope('task.drift_changed', { ...driftPayload, health: 'confused' }),
+    );
   });
 });
 

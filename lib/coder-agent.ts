@@ -98,6 +98,13 @@ import {
   type ToolLedgerSnapshot,
 } from './tool-ledger.js';
 import { recordLoopVerdict } from './loop-metrics.js';
+import {
+  createTaskDriftMonitor,
+  formatTaskDriftNudge,
+  MAX_TASK_DRIFT_NUDGES,
+  type TaskDriftToolActivity,
+} from './task-drift.ts';
+import type { TaskLedgerStep } from './task-ledger.ts';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import {
   SHARED_SAFETY_SECTION,
@@ -1238,6 +1245,13 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
    * Only consulted in lead mode. Defaults to empty.
    */
   repeatExemptTools?: ReadonlySet<string>;
+  /** Enable the no-mutation signal only for turns whose user intent clearly
+   * requires workspace changes. Exact-repeat and no-novel-read signals remain
+   * mechanical and do not depend on this hint. Lead runs only. */
+  taskExpectedToMutate?: boolean;
+  /** Read the shell-owned task ledger at intervention time. The callback keeps
+   * the kernel storage-agnostic while ensuring a nudge carries current position. */
+  getTaskLedger?: () => readonly TaskLedgerStep[];
 }
 
 /**
@@ -1318,6 +1332,8 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     leadToolScope = 'full',
     nativeToolSchemas,
     repeatExemptTools,
+    taskExpectedToMutate = false,
+    getTaskLedger,
   } = options;
 
   // Derive the legacy boolean once for the body's prompt-section + round-cap
@@ -1621,6 +1637,10 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   // the web orchestrator's signal collection (`getToolInvocationKey` +
   // `isRepeatedCall`) so both surfaces key the breaker identically.
   const leadCallTracker = createMutationFailureTracker();
+  const taskDriftMonitor = leadMode
+    ? createTaskDriftMonitor({ expectedToMutate: taskExpectedToMutate })
+    : null;
+  let taskDriftNudges = 0;
 
   // Wrap the host toolExec so a genuinely-gone sandbox — SANDBOX_UNREACHABLE
   // across SANDBOX_LOSS_THRESHOLD consecutive calls — throws
@@ -1837,9 +1857,60 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     callbacks.onAdvanceRound?.();
     callbacks.onStatus('Coder working...', `Round ${rounds}`, 'progress');
     let roundEnded = false;
+    let roundDriftActivity: TaskDriftToolActivity[] = [];
     const finishRound = (outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered') => {
       if (roundEnded) return;
       roundEnded = true;
+      if (outcome === 'continued' && taskDriftMonitor && roundDriftActivity.length > 0) {
+        const transition = taskDriftMonitor.observeRound(roundDriftActivity);
+        if (transition) {
+          const event: RunEventInput = {
+            type: 'task.drift_changed',
+            round,
+            ...transition,
+          };
+          callbacks.onRunEvent?.(event);
+          if (transition.fired.length > 0) {
+            console.log(
+              JSON.stringify({
+                level: 'warn',
+                event: 'task_drift_signal_fired',
+                round,
+                fired: transition.fired.map((signal) => signal.kind),
+                active: transition.active.map((signal) => signal.kind),
+              }),
+            );
+          }
+          if (transition.cleared.length > 0) {
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'task_drift_signal_cleared',
+                round,
+                cleared: transition.cleared,
+                active: transition.active.map((signal) => signal.kind),
+              }),
+            );
+          }
+          if (transition.fired.length > 0 && taskDriftNudges < MAX_TASK_DRIFT_NUDGES) {
+            taskDriftNudges += 1;
+            let steps: readonly TaskLedgerStep[] = [];
+            try {
+              steps = getTaskLedger?.() ?? [];
+            } catch {
+              // A shell-owned view is advisory. Drift detection and steering
+              // continue with an empty ledger if the reader fails.
+            }
+            messages.push({
+              id: `task-drift-nudge-${round}-${taskDriftNudges}`,
+              role: 'user',
+              content: formatToolResultEnvelope(formatTaskDriftNudge(transition.active, steps)),
+              timestamp: Date.now(),
+              isToolResult: true,
+            });
+          }
+        }
+      }
       // Emit the run-cost receipt BEFORE the host `onRunEvent` callback below: a
       // throwing host callback must not swallow the receipt (the "every terminal
       // path leaves a receipt" guarantee has to survive a misbehaving host).
@@ -2236,6 +2307,12 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       },
       round,
     );
+    roundDriftActivity = roundLedger.accepted.map((entry) => ({
+      toolName: entry.toolName,
+      ...(entry.argsKey ? { argsKey: entry.argsKey } : {}),
+      ...(entry.target ? { target: entry.target } : {}),
+      ...(entry.sideEffect ? { sideEffect: entry.sideEffect } : {}),
+    }));
     const toolBudgetIntervention = createToolBudgetBlockIntervention(roundLedger, {
       source: 'coder_tool_budget',
       reason: 'turn_tool_budget_exceeded',

@@ -73,6 +73,7 @@ import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
 import { ATTACH_CLIENT_CAPABILITIES } from '../lib/daemon-capabilities.js';
 import { isToolCardPayload } from '../lib/tool-cards.js';
 import { formatToolCard } from './tool-card-format.js';
+import { taskProgressEventToTranscript } from './tui-task-progress.js';
 import { createCompleter } from './completer.js';
 import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { formatWorkspaceStateView } from './tui-status.js';
@@ -408,6 +409,16 @@ export function makeCLIEventHandler() {
         }
         return;
       }
+    }
+
+    const taskProgress = taskProgressEventToTranscript(event);
+    if (taskProgress) {
+      flushInlineStreams();
+      spinner.stop();
+      const badge =
+        taskProgress.role === 'warning' ? fmt.warn('[progress]') : fmt.dim('[progress]');
+      process.stdout.write(`\n${badge} ${taskProgress.text}\n`);
+      return;
     }
 
     switch (event.type) {

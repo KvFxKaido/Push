@@ -15,6 +15,8 @@ import type { EditDiff } from './edit-diff.js';
 import type { ToolCard } from './tool-cards.js';
 import type { ReviewResult } from './provider-contract.js';
 import type { PromptSnapshot } from './system-prompt-builder.js';
+import type { TaskDriftSignal, TaskDriftSignalKind, TaskProgressHealth } from './task-drift.js';
+import type { TaskLedgerScope, TaskLedgerStep } from './task-ledger.js';
 
 // ---------------------------------------------------------------------------
 // Agent roles
@@ -465,6 +467,22 @@ export type RunEventInput =
       fromMaxRounds: number;
       toMaxRounds: number;
       reasons: string[];
+    }
+  | {
+      /** Authoritative branch-scoped task-position snapshot. */
+      type: 'task.ledger_snapshot';
+      scope: TaskLedgerScope;
+      steps: TaskLedgerStep[];
+      cause: 'loaded' | 'updated' | 'cleared';
+    }
+  | {
+      /** Mechanical progress-health transition derived from the tool stream. */
+      type: 'task.drift_changed';
+      round: number;
+      health: TaskProgressHealth;
+      fired: TaskDriftSignal[];
+      cleared: TaskDriftSignalKind[];
+      active: TaskDriftSignal[];
     }
   | {
       type: 'tool.execution_start';

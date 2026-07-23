@@ -88,6 +88,7 @@ import { getModelForRole } from './providers';
 import { resolvePushCapabilityProfile } from './model-catalog';
 import { getToolFunctionSchemasForSources } from '@push/lib/tool-function-schemas';
 import type { ToolRegistrySource } from '@push/lib/tool-registry';
+import { normalizeTaskLedgerScope, type TaskLedgerScope } from '@push/lib/task-ledger';
 import { getUserProfile } from '@/hooks/useUserProfile';
 import {
   detectSandboxToolCall,
@@ -245,7 +246,12 @@ Format:
 interface InlineExplorerRunContext {
   sandboxId: string;
   repoFullName: string;
-  branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
+  branchContext?: {
+    activeBranch: string;
+    defaultBranch: string;
+    protectMain: boolean;
+    repoFullName?: string;
+  };
   provider: ActiveProvider;
   modelId: string | undefined;
   projectInstructions?: string;
@@ -601,6 +607,8 @@ export interface InlineScratchpadHandlers {
 export interface InlineTodoHandlers {
   todos: readonly TodoItem[];
   replace: (todos: TodoItem[]) => void;
+  loadScoped?: (scope: TaskLedgerScope) => TodoItem[];
+  replaceScoped?: (scope: TaskLedgerScope, todos: TodoItem[]) => void;
   clear: () => void;
 }
 
@@ -715,7 +723,12 @@ export interface InPageCoderKernelSpec {
   priorSessionDigest?: SessionDigest;
   onSessionDigestEmitted?: (digest: SessionDigest | null) => void;
   declaredCapabilities?: Capability[];
-  branchContext?: { activeBranch: string; defaultBranch: string; protectMain: boolean };
+  branchContext?: {
+    activeBranch: string;
+    defaultBranch: string;
+    protectMain: boolean;
+    repoFullName?: string;
+  };
   projectInstructions?: string;
   instructionFilename?: string;
   verificationPolicy?: VerificationPolicy;
@@ -757,6 +770,9 @@ export interface InPageCoderKernelSpec {
    * and worker engine always run real tasks). See `turn-intent.ts`.
    */
   taskInFlight?: boolean;
+  /** Current-turn-only mutation intent, resolved before prior conversation is
+   * folded into taskPreamble. */
+  taskExpectedToMutate?: boolean;
 }
 
 export interface InPageCoderKernelCallbacks {
@@ -854,6 +870,40 @@ export async function runInPageCoderKernel(
     : undefined;
   let scratchpadContent = spec.scratchpad?.content ?? '';
   let todos = [...(spec.todo?.todos ?? [])];
+  let taskLedgerScope = normalizeTaskLedgerScope({
+    repoFullName: spec.branchContext?.repoFullName ?? spec.memoryScope?.repoFullName,
+    branch: spec.branchContext?.activeBranch ?? spec.memoryScope?.branch,
+  });
+  const adoptTaskLedgerBranch = (branch: string): string | null => {
+    // A caller without a scope loader cannot safely retarget the in-memory
+    // snapshot. Keep that run bound to its original scope instead of copying
+    // source-branch steps into the destination branch.
+    if (!spec.todo?.loadScoped) return null;
+    const nextScope = normalizeTaskLedgerScope({
+      repoFullName: taskLedgerScope.repoFullName,
+      branch,
+    });
+    todos = [...spec.todo.loadScoped(nextScope)];
+    taskLedgerScope = nextScope;
+    callbacks.onRunEvent?.({
+      type: 'task.ledger_snapshot',
+      scope: taskLedgerScope,
+      steps: todos,
+      cause: 'loaded',
+    });
+    // This block rides the branch tool result back to the model. Merely
+    // changing persistence scope would leave its context anchored to the
+    // source branch and invite a stale full-snapshot todo_write.
+    return buildTodoContext(todos);
+  };
+  if (leadRuntime && spec.todo && todos.length > 0) {
+    callbacks.onRunEvent?.({
+      type: 'task.ledger_snapshot',
+      scope: taskLedgerScope,
+      steps: todos,
+      cause: 'loaded',
+    });
+  }
 
   // --- Shared Coder policy ---
   const policy = createCoderPolicy({
@@ -946,6 +996,8 @@ export async function runInPageCoderKernel(
         callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });
       }
       if (result.branchSwitch) {
+        const ledgerContext = adoptTaskLedgerBranch(result.branchSwitch.name);
+        if (ledgerContext) result.text = `${result.text}\n\n${ledgerContext}`;
         callbacks.onBranchSwitchPayload?.(result.branchSwitch);
       }
       if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
@@ -1042,11 +1094,27 @@ export async function runInPageCoderKernel(
               };
             }
             const result = executeTodoToolCall(call.call, todos, {
-              replace: spec.todo.replace,
-              clear: spec.todo.clear,
+              // The scope-aware write below owns persistence. Capture the
+              // normalized snapshot here so an in-run branch switch cannot
+              // send it through a callback closed over the old branch.
+              replace: () => {},
+              clear: () => {},
             });
             if (result.ok && result.nextTodos) {
               todos = result.nextTodos;
+              if (spec.todo.replaceScoped) {
+                spec.todo.replaceScoped(taskLedgerScope, todos);
+              } else if (call.call.tool === 'todo_clear') {
+                spec.todo.clear();
+              } else {
+                spec.todo.replace(todos);
+              }
+              callbacks.onRunEvent?.({
+                type: 'task.ledger_snapshot',
+                scope: taskLedgerScope,
+                steps: todos,
+                cause: call.call.tool === 'todo_clear' ? 'cleared' : 'updated',
+              });
             }
             return { text: result.text };
           }
@@ -1068,6 +1136,11 @@ export async function runInPageCoderKernel(
               result.structuredError.message,
               classifySandboxUnreachableRecovery(call),
             );
+          }
+          if (result.branchSwitch) {
+            const ledgerContext = adoptTaskLedgerBranch(result.branchSwitch.name);
+            if (ledgerContext) result.text = `${result.text}\n\n${ledgerContext}`;
+            callbacks.onBranchSwitchPayload?.(result.branchSwitch);
           }
           return {
             text: result.text,
@@ -1231,6 +1304,8 @@ export async function runInPageCoderKernel(
     // unset.
     persona: leadRound.persona,
     leadToolScope: leadRound.leadToolScope,
+    taskExpectedToMutate: Boolean(spec.leadToolSurface && spec.taskExpectedToMutate),
+    getTaskLedger: spec.todo ? () => todos : undefined,
     // This is the web surface, whose sandbox/GitHub tools use the canonical
     // registry public names the lead tool-routing/error guidance references —
     // so opt into that guidance here. The CLI lead leaves it off (its

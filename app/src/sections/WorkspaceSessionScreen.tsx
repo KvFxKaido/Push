@@ -87,8 +87,9 @@ export function WorkspaceSessionScreen({
   const isScratch = workspaceSession.kind === 'scratch';
   const isChat = workspaceSession.kind === 'chat';
   const workspaceRepo = workspaceSession.kind === 'repo' ? workspaceSession.repo : null;
+  const repoBranch = workspaceRepo?.current_branch || workspaceRepo?.default_branch || null;
   const scratchpad = useScratchpad(workspaceRepo?.full_name ?? null);
-  const todo = useTodo(workspaceRepo?.full_name ?? null);
+  const todo = useTodo(workspaceRepo?.full_name ?? null, repoBranch);
   const sandbox = useSandbox(
     isChat ? null : isScratch ? '' : (workspaceRepo?.full_name ?? null),
     isChat
@@ -98,7 +99,6 @@ export function WorkspaceSessionScreen({
         : workspaceRepo?.current_branch || workspaceRepo?.default_branch || null,
     isChat || isScratch ? null : (workspaceRepo?.default_branch ?? null),
   );
-  const repoBranch = workspaceRepo?.current_branch || workspaceRepo?.default_branch || null;
 
   // B2 auto-back: while a real repo sandbox is live, continuously mirror the
   // working tree to its durable `draft/auto/<branch>` ref (debounce-after-edits
