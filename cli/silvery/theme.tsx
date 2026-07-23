@@ -1,30 +1,25 @@
 /**
  * Silvery theme bridge — maps Push theme variants onto silvery's ThemeProvider.
  *
- * Law 2: themes pick *which hue* the accent is; they may not raise the budget.
- * We provide a sparse flat-token override so `$fg-accent` / cursor / selection
- * share one primary, while Push's mono palette supplies the neutral canvas.
- * This keeps named themes inside the one-accent budget instead of inheriting
- * Silvery's chromatic Nord surface. Surfaces must still refuse `$fg-success` /
- * multi-color role chrome — that discipline lives in `visual-language.ts` +
- * `surface.tsx`.
+ * Law 2: the AMOLED/grayscale foundation stays fixed while themes choose a
+ * restrained semantic palette. We provide a sparse flat-token override so
+ * `$fg-accent` / cursor / selection share one focus color, and info/link,
+ * success, warning, error, and code roles keep stable meanings.
  *
  * ── Which silvery components we may use ──────────────────────────────
  *
  * The import line is not an accident, and it is not an under-adoption to be
  * cleaned up. Silvery's API splits cleanly in two, and only one half is
- * compatible with law 2:
+ * compatible with the Push surface:
  *
  *  - STRUCTURAL — `Box`, `Text`, `ListView`, `TextArea`, `ModalDialog`,
  *    `Screen`, `useInput`, … These carry no color semantics of their own; we
  *    supply the color. Use freely. This is what the TUI is built on.
  *
  *  - SEMANTIC / CHROMATIC — `Diff`, `Alert`, `Badge`, `Banner`, `InlineAlert`,
- *    variant-bearing toasts/progress. All of these render from silvery's
- *    six-variant palette (`accent | error | warning | success | info |
- *    destructive`), which is precisely the multi-color role chrome law 2
- *    refuses. DO NOT ADOPT THEM, and do not "fix" our hand-rolled equivalents
- *    by swapping them in.
+ *    variant-bearing toasts/progress. Their role colors now resolve correctly,
+ *    but adoption is still deliberate: Push's glyph, transcript geometry, and
+ *    fallback contracts are not automatically satisfied by a matching hue.
  *
  * A third category worth naming, because it is neither of the above:
  *
@@ -43,16 +38,10 @@
  *    Use `verbShimmerColors()` from `visual-language.ts`, which is pure, takes
  *    the shared tick, and returns one color per character.
  *
- * `Diff` is the trap, because our `EditDiff` fits its props almost exactly and
- * a swap looks like free line-numbers + side-by-side. It is not: `Diff`
- * hardcodes `{context: '$muted', add: '$success', remove: '$error'}` at module
- * scope with NO override on `DiffProps`. Under our tokens every deleted line
- * would render in `$fg-error` — the color reserved for the fault exception —
- * so a deletion would read as an error. The only lever is redefining `$error`
- * globally, but `VL_COLOR.fault` IS `$fg-error`, so that trades every real
- * error in the TUI for a diff. See `diffLineColor()` in `visual-language.ts`,
- * which states the rule directly: adds read primary, dels read muted, never
- * success-green / delete-red.
+ * `Diff` still is not a drop-in replacement for `EditDiff`: its geometry,
+ * wrapping, copy behavior, and no-color fallback differ from Push's transcript
+ * contract. See `diffLineColor()` in `visual-language.ts`; matching semantic
+ * colors is necessary, not sufficient.
  */
 
 import React, { useMemo, type ReactNode } from 'react';
@@ -68,19 +57,25 @@ export function resolvePushThemeName(name?: string | null): ThemeName {
 
 export function createPushSilveryTokens(name?: string | null): ThemeTokens {
   const resolved = resolvePushThemeName(name);
-  const accent = accentHexForTheme(VARIANTS[resolved].tokens['accent.primary']);
+  const semantic = VARIANTS[resolved].tokens;
+  const accent = accentHexForTheme(semantic['accent.primary']);
+  const info = semantic['accent.secondary'];
+  const link = semantic['accent.link'];
+  const success = semantic['state.success'];
+  const warning = semantic['state.warn'];
+  const fault = semantic['state.error'];
+  const code = semantic['accent.secondary'];
   const neutral = VARIANTS.mono.tokens;
   const background = neutral['bg.base'];
   const panel = neutral['bg.panel'];
   const foreground = neutral['fg.primary'];
   const muted = neutral['fg.muted'];
   const border = neutral['border.default'];
-  const fault = neutral['state.error'];
   return {
     name: `push-${resolved}`,
     // Push's severe near-black canvas is identity, not terminal decoration.
-    // Theme selection changes the live accent; it does not replace the
-    // grayscale posture with Silvery's stock Nord surfaces.
+    // Theme selection changes semantic hues; it does not replace the
+    // AMOLED/grayscale foundation with Silvery's stock Nord surfaces.
     bg: background,
     fg: foreground,
     'fg-default': foreground,
@@ -106,7 +101,11 @@ export function createPushSilveryTokens(name?: string | null): ThemeTokens {
     'fg-on-accent': background,
     'fg-accent-hover': accent,
     'fg-accent-active': accent,
-    'fg-link': accent,
+    'fg-link': link,
+    'fg-info': info,
+    'fg-code': code,
+    'fg-success': success,
+    'fg-warning': warning,
     'fg-cursor': background,
     'bg-cursor': accent,
     'bg-selected': accent,
@@ -114,9 +113,17 @@ export function createPushSilveryTokens(name?: string | null): ThemeTokens {
     'bg-selected-hover': accent,
     'bg-inverse': foreground,
     'fg-on-inverse': background,
+    // Semantic components stay quiet on the AMOLED canvas: hue belongs to
+    // text/borders, not saturated full-cell fills.
+    'bg-info': panel,
+    'fg-on-info': info,
+    'bg-success': panel,
+    'fg-on-success': success,
+    'bg-warning': panel,
+    'fg-on-warning': warning,
     'fg-error': fault,
-    'bg-error': fault,
-    'fg-on-error': background,
+    'bg-error': panel,
+    'fg-on-error': fault,
   };
 }
 

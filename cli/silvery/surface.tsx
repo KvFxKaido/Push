@@ -2292,7 +2292,7 @@ export function PushSurface({
     completionRows,
   });
   // Composer frame: the rule (the frame edge the height budget reserves)
-  // and the human caret (❯) that law 2 names the composer cursor — the one accent
+  // and the human caret (❯) that law 2 names the composer cursor — the focus
   // shape marking where input goes, mirrored from the transcript's user glyph.
   const composerGlyphs = resolveGlyphs(detectUnicode());
   const composerRule = (detectUnicode() ? '─' : '-').repeat(Math.max(0, columns));

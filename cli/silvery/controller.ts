@@ -113,7 +113,7 @@ export interface SilverySnapshot {
     text: string;
     live: boolean;
   };
-  /** Live theme preference — drives silvery `ThemeProvider` accent hue (v2 law 2). */
+  /** Live theme preference — drives Silvery's semantic hues (v2 law 2). */
   theme: string;
   /** CLI exec mode (`auto` / `strict` / `yolo`) for the composer mode label. */
   execMode: string;
@@ -2311,14 +2311,14 @@ export async function createSilveryController(
       const sub = (parts[0] || 'show').toLowerCase();
       if (sub === 'show' || !arg) {
         appendStatus(
-          `theme: ${resolveThemeName()} — one accent hue; grayscale posture stays (v2).`,
+          `theme: ${resolveThemeName()} — semantic color over the AMOLED/grayscale baseline.`,
         );
         return true;
       }
       if (sub === 'list') {
         appendStatus(
           [
-            'Themes (pick the accent hue; color budget is always one accent + fault):',
+            'Themes (semantic roles stay stable; hue and saturation change):',
             ...THEME_NAMES.map((name) => `  ${name.padEnd(10)}  ${VARIANTS[name].description}`),
           ].join('\n'),
         );
@@ -2335,7 +2335,7 @@ export async function createSilveryController(
       config.theme = name;
       process.env.PUSH_THEME = name;
       await persistConfig(config);
-      appendStatus(`theme: ${name} — accent hue applied.`);
+      appendStatus(`theme: ${name} — semantic palette applied.`);
       return true;
     }
 

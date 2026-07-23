@@ -1,5 +1,5 @@
 /**
- * Visual Language v2 pure helpers — glyphs, color budget, motion, frame copy.
+ * Visual Language v2 pure helpers — glyphs, semantic color, motion, frame copy.
  * Source: docs/cli/design/TUI Visual Language v2.md
  */
 import assert from 'node:assert/strict';
@@ -179,16 +179,30 @@ describe('visual language v2 glyphs', () => {
   });
 });
 
-describe('visual language v2 color budget', () => {
-  it('exposes only accent + fault + grayscale tokens (laws 2–3)', () => {
-    assert.deepEqual(Object.keys(VL_COLOR).sort(), ['accent', 'fault', 'muted', 'primary']);
+describe('visual language v2 semantic color', () => {
+  it('exposes the grayscale foundation and stable semantic roles (laws 2–3)', () => {
+    assert.deepEqual(Object.keys(VL_COLOR).sort(), [
+      'accent',
+      'code',
+      'fault',
+      'info',
+      'link',
+      'muted',
+      'primary',
+      'success',
+      'warning',
+    ]);
     assert.equal(VL_COLOR.accent, '$fg-accent');
+    assert.equal(VL_COLOR.info, '$fg-info');
+    assert.equal(VL_COLOR.link, '$fg-link');
+    assert.equal(VL_COLOR.success, '$fg-success');
+    assert.equal(VL_COLOR.warning, '$fg-warning');
     assert.equal(VL_COLOR.fault, '$fg-error');
   });
 
-  it('styles diffs without success green or del red (law 2)', () => {
-    assert.equal(diffLineColor('add'), VL_COLOR.primary);
-    assert.equal(diffLineColor('del'), VL_COLOR.muted);
+  it('styles diffs semantically while their +/- structure remains intact (laws 2–3)', () => {
+    assert.equal(diffLineColor('add'), VL_COLOR.success);
+    assert.equal(diffLineColor('del'), VL_COLOR.fault);
     assert.equal(diffLineColor('ctx'), VL_COLOR.muted);
   });
 
@@ -196,7 +210,7 @@ describe('visual language v2 color budget', () => {
     const g = GLYPHS_UNICODE;
     assert.equal(streamMark('tool_pending', g).glyph, g.markWork);
     assert.equal(streamMark('tool_pending', g).color, VL_COLOR.accent);
-    assert.equal(streamMark('tool_ok', g).color, VL_COLOR.muted);
+    assert.equal(streamMark('tool_ok', g).color, VL_COLOR.success);
     assert.equal(streamMark('tool_error', g).color, VL_COLOR.fault);
     assert.equal(streamMark('reviewer', g).glyph, '⬢');
     assert.equal(streamMark('auditor', g).glyph, '⬢');
@@ -430,7 +444,7 @@ describe('visual language v2 fault copy', () => {
   });
 });
 
-describe('visual language v2 theme accent', () => {
+describe('visual language v2 theme semantics', () => {
   it('accepts hex accents and falls back safely', () => {
     assert.equal(accentHexForTheme('#38bdf8'), '#38bdf8');
     assert.equal(accentHexForTheme('not-a-color'), '#7dd3fc');
@@ -446,9 +460,15 @@ describe('visual language v2 theme accent', () => {
     assert.equal(resolveThemeColor('$fg-accent', theme), tokens['fg-accent']);
     assert.equal(resolveThemeColor('$bg-cursor', theme), tokens['fg-accent']);
     assert.equal(resolveThemeColor('$bg-selected', theme), tokens['fg-accent']);
+    assert.equal(tokens['fg-info'], VARIANTS.neon.tokens['accent.secondary']);
+    assert.equal(tokens['fg-link'], VARIANTS.neon.tokens['accent.link']);
+    assert.equal(tokens['fg-success'], VARIANTS.neon.tokens['state.success']);
+    assert.equal(tokens['fg-warning'], VARIANTS.neon.tokens['state.warn']);
+    assert.equal(tokens['fg-error'], VARIANTS.neon.tokens['state.error']);
+    assert.equal(tokens['fg-code'], VARIANTS.neon.tokens['accent.secondary']);
   });
 
-  it("keeps Push's near-black neutral foundation across accent themes", () => {
+  it("keeps Push's near-black neutral foundation across semantic themes", () => {
     const neutral = VARIANTS.mono.tokens;
     const neon = createPushSilveryTokens('neon');
     const forest = createPushSilveryTokens('forest');
@@ -466,5 +486,8 @@ describe('visual language v2 theme accent', () => {
     }
 
     assert.notEqual(neon['fg-accent'], forest['fg-accent']);
+    assert.notEqual(neon['fg-success'], forest['fg-success']);
+    assert.notEqual(neon['fg-warning'], forest['fg-warning']);
+    assert.notEqual(neon['fg-link'], forest['fg-link']);
   });
 });
