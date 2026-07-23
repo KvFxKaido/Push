@@ -400,7 +400,6 @@ const QUOTE = /^\s*>\s?(.*)$/;
 const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 const TASK = /^\[([ xX])\]\s+(.*)$/;
-const STREAMING_TASK = /^\[([ xX])\]$/;
 const TABLE_DELIMITER = /^:?-{3,}:?$/;
 
 function isEscaped(text: string, index: number): boolean {
@@ -684,16 +683,13 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     if (bullet) {
       const streamingTail = index === streamingTailIndex;
       const task = TASK.exec(bullet[2]);
-      const partialTask = streamingTail ? STREAMING_TASK.exec(bullet[2]) : null;
-      const taskState = task?.[1] ?? partialTask?.[1];
       out.push({
         kind: 'bullet',
         marker: bullet[1],
-        ...(taskState ? { task: true, checked: taskState.toLowerCase() === 'x' } : {}),
-        // A closing bracket makes the task state unambiguous. Until then, keep
-        // `[`, `[ `, and `[x` literal so ordinary prose cannot flicker through
-        // a speculative checkbox; settled malformed bullets remain untouched.
-        spans: parseInline(task?.[2] ?? (partialTask ? '' : bullet[2]), {
+        ...(task ? { task: true, checked: task[1].toLowerCase() === 'x' } : {}),
+        // The whitespace after `]` is the disambiguation boundary: without it,
+        // `[x]` may still grow into an inline link such as `[x](url)`.
+        spans: parseInline(task?.[2] ?? bullet[2], {
           streamingTail,
         }),
       });

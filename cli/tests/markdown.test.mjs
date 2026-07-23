@@ -424,8 +424,8 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.deepEqual(parseMarkdown('live **tail')[0].spans, [{ text: 'live **tail' }]);
   });
 
-  it('repairs only an unambiguous task marker on the active final line', () => {
-    const lines = parseMarkdown('- [x]\n- [X]', { streaming: true });
+  it('waits for task-marker whitespace on the active final line', () => {
+    const lines = parseMarkdown('- [x]\n- [X] ', { streaming: true });
     assert.equal(lines[0].task, undefined);
     assert.deepEqual(lines[0].spans, [{ text: '[x]' }]);
     assert.equal(lines[1].task, true);
@@ -568,13 +568,61 @@ describe('MarkdownBody — streaming prefix contract', () => {
     ]);
     assertNoMarkerUnhide('- [xylophone', xylophone, /[\[\]]/);
 
-    const checked = await renderPrefixes('- [x]');
-    assert.deepEqual(checked, ['-', '•', '• [', '• [x', '☑\uFE0E']);
-    assertNoMarkerUnhide('- [x]', checked, /[\[\]]/);
+    const linkSource = '- [x](url)';
+    const link = await renderPrefixes(linkSource);
+    assert.deepEqual(link, [
+      '-',
+      '•',
+      '• [',
+      '• [x',
+      '• [x]',
+      '• x',
+      '• x',
+      '• x',
+      '• x',
+      '• x url',
+    ]);
+    assertNoMarkerUnhide(linkSource, link, /[\[\]]/);
+    for (let end = 1; end <= linkSource.length; end += 1) {
+      assert.notEqual(parseMarkdown(linkSource.slice(0, end), { streaming: true })[0].task, true);
+    }
 
-    const checkedAscii = await renderPrefixes('- [x]', false);
-    assert.deepEqual(checkedAscii, ['-', '-', '- [', '- [x', '[x]']);
-    assertNoMarkerUnhide('- [x]', checkedAscii, /[\[\]]/);
+    const taskSource = '- [x] done';
+    const task = await renderPrefixes(taskSource);
+    assert.deepEqual(task, [
+      '-',
+      '•',
+      '• [',
+      '• [x',
+      '• [x]',
+      '☑\uFE0E',
+      '☑\uFE0E d',
+      '☑\uFE0E do',
+      '☑\uFE0E don',
+      '☑\uFE0E done',
+    ]);
+    assertNoMarkerUnhide(taskSource, task, /[\[\]]/);
+    for (let end = 1; end <= taskSource.length; end += 1) {
+      assert.equal(
+        parseMarkdown(taskSource.slice(0, end), { streaming: true })[0].task === true,
+        end >= 6,
+      );
+    }
+
+    const taskAscii = await renderPrefixes(taskSource, false);
+    assert.deepEqual(taskAscii, [
+      '-',
+      '-',
+      '- [',
+      '- [x',
+      '- [x]',
+      '[x]',
+      '[x] d',
+      '[x] do',
+      '[x] don',
+      '[x] done',
+    ]);
+    assertNoMarkerUnhide(taskSource, taskAscii, /[\[\]]/);
   });
 
   it('keeps every task-list and strikethrough prefix sane without marker churn', async () => {
@@ -592,9 +640,9 @@ describe('MarkdownBody — streaming prefix contract', () => {
             displayWidth(rendered) <= displayWidth(prefix),
             `${JSON.stringify(prefix)} expanded to ${JSON.stringify(rendered)}`,
           );
-          if (unicode && end >= 5) {
+          if (unicode && end >= 6) {
             assert.doesNotMatch(rendered, /[\[\]]/, `literal task marker at prefix ${end}`);
-          } else if (!unicode && end >= 5) {
+          } else if (!unicode && end >= 6) {
             const marker = final[3].toLowerCase() === 'x' ? '[x]' : '[ ]';
             assert.ok(rendered.startsWith(marker), `unstable ASCII task marker at prefix ${end}`);
           }
