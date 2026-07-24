@@ -290,9 +290,11 @@ user-facing line, write the sentence a competent operator would say out loud.
 
 Markdown styling follows the same grayscale-complete rule as runtime chrome:
 
-- ATX headings collapse six source levels into three terminal tiers: primary is bold +
-  underlined with a strong rail, secondary is bold with a square marker, and tertiary is
-  italic + muted with a middle dot. Color reinforces those shape/weight differences.
+- ATX headings preserve all six source levels inside three terminal tiers: h1–h2 are bold +
+  underlined with the accent strong rail, h3–h4 are bold with the info square marker, and
+  h5–h6 are italic + muted with a middle dot. Every deeper Unicode level is inset by one
+  cell, spending only the cell freed by its additional source hash; ASCII retains the exact
+  hash count. Color reinforces those shape/weight/position differences.
 - GFM tasks replace `- [ ]` / `- [x]` with text-presentation boxes. Completion adds the
   success role and strikes the label; either signal remains readable without the other.
 - Links use the link role plus a visible destination and OSC 8 metadata. Inline code uses
