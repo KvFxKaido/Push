@@ -650,18 +650,9 @@ describe('MarkdownBody — nested lists + hanging indent', () => {
     const rows = renderedText(raw).split('\n');
     // depth-1 hang column = 3; body width 11 → "alpha beta" / "gamma delta" or similar.
     assert.ok(rows.length >= 2, `expected wrap rows, got ${JSON.stringify(rows)}`);
-    // measured_height agreement: renderStatic content height equals visual rows.
-    // renderStatic returns ANSI with contentHeight when available; fall back to row count.
-    const contentHeight =
-      typeof raw === 'object' && raw && 'contentHeight' in raw
-        ? raw.contentHeight
-        : raw.split('\n').filter((line, index, all) => {
-            // strip trailing empty buffer rows the same way the contract helper does
-            return index < all.length;
-          }).length;
-    // Prefer the joined trimmed text row count as the authoritative visual count
-    // for MarkdownBody (column of Text nodes = one visual row each).
-    assert.equal(rows.length, rows.length); // pin: hang wrap produced N rows
+    // Pin the exact rows, not just their count: an off-by-one in the body
+    // column would still yield two rows while breaking where they split.
+    assert.deepEqual(rows, [' • alpha beta', '   gamma delta']);
     for (const row of rows) {
       assert.ok(
         displayWidth(row) <= availableWidth,
@@ -676,7 +667,53 @@ describe('MarkdownBody — nested lists + hanging indent', () => {
         `continuation not hang-indented: ${JSON.stringify(rows[i])}`,
       );
     }
-    void contentHeight;
+  });
+
+  // Hanging indent narrows the body column, so a wrapping item can occupy more
+  // rows than the same text at full width — the one place lists move row count.
+  // That makes `measured_height` the invariant most able to break here, so check
+  // it through the real transcript row, not through MarkdownBody alone.
+  it('satisfies the transcript render contract for a wrapping nested item', async () => {
+    const Silvery = await import('silvery');
+    const { renderTranscriptRowForAssertion } = await import('../silvery/surface.tsx');
+    const { inspectTranscriptRenderContract, transcriptRenderLines } = await import(
+      '../silvery/render-contract.ts'
+    );
+    await Silvery.renderString(React.createElement(Silvery.Text, null, 'init'));
+
+    const item = {
+      id: 'nested-wrap',
+      kind: 'message',
+      role: 'assistant',
+      text: '  - alpha beta gamma delta epsilon zeta',
+    };
+    const layoutWidth = 18;
+    const rendered = renderTranscriptRowForAssertion({ item, layoutWidth });
+    const lines = transcriptRenderLines(rendered);
+    const contractInput = {
+      rowId: item.id,
+      rowKind: item.kind,
+      width: layoutWidth,
+      measuredHeight: rendered.contentHeight,
+      rendered,
+    };
+
+    assert.ok(rendered.contentHeight > 1, 'expected the nested item to wrap');
+    assert.equal(lines.length, rendered.contentHeight);
+    assert.ok(
+      lines.slice(1).every((line) => /^\s{4,}\S/.test(Silvery.stripAnsi(line).trimEnd())),
+      `continuation rows lost their hang: ${JSON.stringify(lines.map((l) => Silvery.stripAnsi(l).trimEnd()))}`,
+    );
+    assert.deepEqual(inspectTranscriptRenderContract(contractInput), [], 'must verify clean');
+
+    // Prove the checker is live rather than trivially satisfied: understating the
+    // height by one row must surface exactly one measured_height violation.
+    const understated = inspectTranscriptRenderContract({
+      ...contractInput,
+      measuredHeight: rendered.contentHeight - 1,
+    });
+    assert.equal(understated.length, 1);
+    assert.equal(understated[0].invariant, 'measured_height');
   });
 
   it('never exceeds availableWidth for a deep nest on a narrow terminal', async () => {
