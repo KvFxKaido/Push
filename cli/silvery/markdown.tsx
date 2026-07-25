@@ -97,6 +97,8 @@ export interface InlineSpan {
   /** Image alt text — terminal fallback for an image destination. */
   image?: boolean;
   url?: string;
+  /** False for reference links, whose destination is OSC 8 metadata only. */
+  showUrl?: boolean;
 }
 
 export type TableAlignment = 'left' | 'center' | 'right';
@@ -116,6 +118,12 @@ const RE = {
   code: /`([^`\n]+)`/y,
   imageStart: /!\[([^\]\n]*)\]\(/y,
   linkStart: /\[([^\]\n]+)\]\(/y,
+  angleAutolink: /<(https?:\/\/[^<>\s]+)>/iy,
+  reference: /\[([^\]\n]+)\](?:\[([^\]\n]*)\])?/y,
+  // Image-reference syntax is unsupported and stays literal. It must be consumed
+  // as ONE run: letting the scanner walk into it leaves a trailing `[ref]` that
+  // resolves as a standalone shortcut link, rendering `![alt][ref]` as `![alt]ref`.
+  imageReferenceLiteral: /!\[[^\]\n]*\](?:\[[^\]\n]*\])?/y,
   boldItalic: /\*\*\*([^*\n]+?)\*\*\*/y,
   strike: /~~([^~\n]+?)~~/y,
   bold: /\*\*([^*\n]+?)\*\*/y,
@@ -141,6 +149,12 @@ const STREAMING_RE = {
 export interface ParseInlineOptions {
   /** Style supported half-open syntax at the end of a live source line. */
   streamingTail?: boolean;
+  /** Reference definitions encountered above this source line. */
+  references?: ReadonlyMap<string, string>;
+}
+
+function normalizeReferenceLabel(label: string): string {
+  return label.trim().replace(/\s+/gu, ' ').toLowerCase();
 }
 
 function canOpenStreamingEmphasis(line: string, index: number): boolean {
@@ -239,6 +253,54 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
       flush();
       spans.push({ text: stripDecorativeEmoji(link[1]), link: true, url: linkDestination.url });
       i = linkDestination.end;
+      continue;
+    }
+    // Runs only after the inline-image branch above has declined (no `(dest)`),
+    // so a real `![alt](url)` is unaffected. Consuming the whole construct here
+    // is what keeps its trailing `[ref]` from resolving on its own.
+    RE.imageReferenceLiteral.lastIndex = i;
+    const imageReferenceLiteral = RE.imageReferenceLiteral.exec(line);
+    if (imageReferenceLiteral && imageReferenceLiteral.index === i) {
+      buf += imageReferenceLiteral[0];
+      i = RE.imageReferenceLiteral.lastIndex;
+      continue;
+    }
+    RE.angleAutolink.lastIndex = i;
+    const angleAutolink = RE.angleAutolink.exec(line);
+    if (angleAutolink && angleAutolink.index === i) {
+      flush();
+      spans.push({ text: angleAutolink[1], link: true, url: angleAutolink[1] });
+      i = RE.angleAutolink.lastIndex;
+      continue;
+    }
+    RE.reference.lastIndex = i;
+    const reference = RE.reference.exec(line);
+    const shortcutBeforeInlineDestination =
+      reference?.[2] === undefined && line[RE.reference.lastIndex] === '(';
+    if (
+      reference &&
+      reference.index === i &&
+      (i === 0 || line[i - 1] !== '!') &&
+      !shortcutBeforeInlineDestination
+    ) {
+      const definitionLabel =
+        reference[2] === undefined || reference[2] === '' ? reference[1] : reference[2];
+      const url = options.references?.get(normalizeReferenceLabel(definitionLabel));
+      if (url) {
+        flush();
+        spans.push({
+          text: stripDecorativeEmoji(reference[1]),
+          link: true,
+          url,
+          showUrl: false,
+        });
+      } else {
+        // Consume the whole unresolved construct as one literal run. Advancing
+        // only past its first bracket pair could accidentally style a trailing
+        // `[ref]` as a separate shortcut link.
+        buf += reference[0];
+      }
+      i = RE.reference.lastIndex;
       continue;
     }
     RE.boldItalic.lastIndex = i;
@@ -360,6 +422,7 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
 
 export type MdLineKind =
   | 'text'
+  | 'definition'
   | 'heading'
   | 'bullet'
   | 'ordered'
@@ -408,6 +471,21 @@ const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 const TASK = /^\[([ xX])\]\s+(.*)$/;
 const TABLE_DELIMITER = /^:?-{3,}:?$/;
+const REFERENCE_DEFINITION =
+  /^(?: {0,3})\[([^\]\n]+)\]:[ \t]*(?:<([^<>\n]+)>|(\S+?))(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^\)\n]*\)))?[ \t]*$/;
+
+interface ReferenceDefinition {
+  label: string;
+  url: string;
+}
+
+function parseReferenceDefinition(raw: string): ReferenceDefinition | null {
+  const match = REFERENCE_DEFINITION.exec(raw);
+  if (!match) return null;
+  const label = normalizeReferenceLabel(match[1]);
+  const url = match[2] ?? match[3];
+  return label && url ? { label, url } : null;
+}
 
 /**
  * List nest depth from captured leading whitespace.
@@ -498,11 +576,17 @@ function spanDisplayWidth(spans: InlineSpan[]): number {
   let width = 0;
   for (const span of spans) {
     width += displayWidth(span.text);
-    if ((span.link || span.image) && span.url && span.url !== span.text) {
+    if (showsVisibleUrl(span)) {
       width += (span.text ? 1 : 0) + displayWidth(span.url);
     }
   }
   return width;
+}
+
+function showsVisibleUrl(span: InlineSpan): span is InlineSpan & { url: string } {
+  return Boolean(
+    (span.link || span.image) && span.url && span.url !== span.text && span.showUrl !== false,
+  );
 }
 
 function normalizeBodyCells(cells: string[], columnCount: number): string[] {
@@ -528,6 +612,7 @@ function tryParseTable(
   rawLines: string[],
   start: number,
   streamingTailIndex: number,
+  references: ReadonlyMap<string, string>,
 ): { lines: MdLine[]; next: number } | null {
   // A header that is itself a block construct (e.g. `# A | B`) stays that block,
   // never a table header.
@@ -547,6 +632,7 @@ function tryParseTable(
     const hasOpenTailCell = rowIndex === streamingTailIndex && !raw.trimEnd().endsWith('|');
     return cells.map((cell, column) =>
       parseInline(cell, {
+        references,
         streamingTail: hasOpenTailCell && column === tailColumn,
       }),
     );
@@ -561,13 +647,17 @@ function tryParseTable(
     {
       role: 'header',
       raw: rawLines[start],
-      spans: parseInline(rawLines[start], { streamingTail: start === streamingTailIndex }),
+      spans: parseInline(rawLines[start], {
+        references,
+        streamingTail: start === streamingTailIndex,
+      }),
       cells: parseCells(headerCells, start, rawLines[start]),
     },
     {
       role: 'divider',
       raw: rawLines[start + 1],
       spans: parseInline(rawLines[start + 1], {
+        references,
         streamingTail: start + 1 === streamingTailIndex,
       }),
       cells: headerCells.map(() => [{ text: '' }]),
@@ -579,6 +669,10 @@ function tryParseTable(
     // A block-construct row (heading/quote/list/rule with a pipe) ends the
     // table and is reclassified by the caller, rather than absorbed as a body row.
     if (isBlockConstruct(rawLines[next])) break;
+    // A reference definition is the same category: a destination may legally
+    // contain `|`, so absorbing it as a body row would both split the URL at the
+    // pipe and skip registration, leaving every later reference to it unresolved.
+    if (parseReferenceDefinition(rawLines[next])) break;
     const cells = splitTableCells(rawLines[next]);
     if (!cells) break;
     // An overfull row would lose cells under GFM's ignore-excess rule; the
@@ -589,7 +683,10 @@ function tryParseTable(
     rows.push({
       role: 'body',
       raw: rawLines[next],
-      spans: parseInline(rawLines[next], { streamingTail: next === streamingTailIndex }),
+      spans: parseInline(rawLines[next], {
+        references,
+        streamingTail: next === streamingTailIndex,
+      }),
       cells: parseCells(normalizedCells, next, rawLines[next], cells.length - 1),
     });
     next += 1;
@@ -637,6 +734,10 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
   const out: MdLine[] = [];
   const rawLines = text.split(/\r?\n/);
   const streamingTailIndex = options.streaming ? rawLines.length - 1 : -1;
+  // Deliberately single-pass: only definitions above a reference are visible.
+  // Re-parsing a growing stream therefore cannot retroactively restyle a
+  // settled line when a later definition arrives.
+  const references = new Map<string, string>();
   let inFence = false;
   // Open fence's language + the code-line objects collected so far, so the
   // whole block can be highlighted at once on close. Block-level, not
@@ -678,7 +779,16 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
       out.push(codeLine);
       continue;
     }
-    const table = tryParseTable(rawLines, index, streamingTailIndex);
+    const definition = parseReferenceDefinition(raw);
+    if (definition) {
+      // CommonMark's first definition wins. Keeping the source as a muted
+      // literal row preserves both content and the one-line-in/one-line-out
+      // transcript contract.
+      if (!references.has(definition.label)) references.set(definition.label, definition.url);
+      out.push({ kind: 'definition', raw });
+      continue;
+    }
+    const table = tryParseTable(rawLines, index, streamingTailIndex, references);
     if (table) {
       out.push(...table.lines);
       index = table.next - 1;
@@ -699,7 +809,10 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
       out.push({
         kind: 'heading',
         depth: heading[1].length,
-        spans: parseInline(heading[2], { streamingTail: index === streamingTailIndex }),
+        spans: parseInline(heading[2], {
+          references,
+          streamingTail: index === streamingTailIndex,
+        }),
       });
       continue;
     }
@@ -707,7 +820,10 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     if (quote) {
       out.push({
         kind: 'quote',
-        spans: parseInline(quote[1], { streamingTail: index === streamingTailIndex }),
+        spans: parseInline(quote[1], {
+          references,
+          streamingTail: index === streamingTailIndex,
+        }),
       });
       continue;
     }
@@ -719,7 +835,10 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
         // Number + trailing space only; nest indent is applied from `depth` so
         // the render prefix stays ≤ source prefix width (one cell per level).
         marker: `${ordered[2]}. `,
-        spans: parseInline(ordered[3], { streamingTail: index === streamingTailIndex }),
+        spans: parseInline(ordered[3], {
+          references,
+          streamingTail: index === streamingTailIndex,
+        }),
       });
       continue;
     }
@@ -734,6 +853,7 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
         // The whitespace after `]` is the disambiguation boundary: without it,
         // `[x]` may still grow into an inline link such as `[x](url)`.
         spans: parseInline(task?.[2] ?? bullet[2], {
+          references,
           streamingTail,
         }),
       });
@@ -741,7 +861,10 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     }
     out.push({
       kind: 'text',
-      spans: parseInline(raw, { streamingTail: index === streamingTailIndex }),
+      spans: parseInline(raw, {
+        references,
+        streamingTail: index === streamingTailIndex,
+      }),
     });
   }
   // An unterminated fence (streaming mid-block, or a missing close) still gets
@@ -863,7 +986,7 @@ function Spans({
         return (
           <React.Fragment key={index}>
             {label}
-            {isLinkLike && span.url && span.url !== span.text ? (
+            {showsVisibleUrl(span) ? (
               href ? (
                 <Link href={href} color={VL_COLOR.muted}>
                   {span.text ? ' ' : ''}
@@ -1062,6 +1185,8 @@ function LineView({
       );
     case 'fence':
       return <Text color={VL_COLOR.code}>```{line.lang}</Text>;
+    case 'definition':
+      return <Text color={VL_COLOR.muted}>{line.raw}</Text>;
     case 'code':
       // Highlighted when the fence had a known language; flat-muted otherwise
       // (unsupported language, or a whitespace-only line with no spans).

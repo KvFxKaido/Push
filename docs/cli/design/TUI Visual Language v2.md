@@ -297,9 +297,15 @@ Markdown styling follows the same grayscale-complete rule as runtime chrome:
   hash count. Color reinforces those shape/weight/position differences.
 - GFM tasks replace `- [ ]` / `- [x]` with text-presentation boxes. Completion adds the
   success role and strikes the label; either signal remains readable without the other.
-- Links use the link role plus a visible destination and OSC 8 metadata. Inline code uses
-  the code role plus a subtle neutral surface. Quote rails and table headers use info color while their
-  body text remains grayscale.
+- Inline links use the link role plus a visible destination and OSC 8 metadata. Reference
+  links use the same role but keep the resolved destination in safe OSC 8 metadata only: the
+  label is their entire visible width, including during table measurement. Angle-bracket
+  `http(s)` autolinks use the URL itself as the label. Reference-definition lines remain
+  visible as muted literal rows, and bare URLs remain literal. Image-reference syntax
+  (`![alt][ref]`) is unsupported and stays literal in full — including its trailing bracket
+  pair, which would otherwise resolve on its own as a shortcut. Inline code uses the code role
+  plus a subtle neutral surface. Quote rails and table headers use info color while their body
+  text remains grayscale.
 - Fences and unsupported-language code use the code role; known languages keep syntax
   highlighting. Neither treatment changes source-line count.
 - List items carry nest depth and hang their soft-wrap. Leading whitespace is normalized to a
@@ -339,6 +345,10 @@ The TUI adopts the first behavior through its own grammar:
   accented nor echoed into the transcript.
 - Repair may only remove visible marker cells. It must not add a row or increase the
   displayed width of a source line. The table fit-or-raw rule remains unchanged.
+- Reference definitions are collected in one top-to-bottom pass. A reference resolves only
+  against definitions already seen above it; forward references stay literal even after their
+  definition arrives. This deliberate CommonMark divergence prevents a growing stream from
+  retroactively restyling or reflowing settled rows.
 
 The second Streamdown idea — stable block parsing and memoized completed blocks — is a
 measured follow-up, not part of this slice. `markdown.tsx` is substantially cheaper than a
