@@ -331,6 +331,180 @@ describe('MarkdownBody — terminal links', () => {
   });
 });
 
+describe('MarkdownBody — reference links and angle autolinks', () => {
+  it('resolves full, collapsed, and shortcut references with normalized labels', async () => {
+    const source = [
+      '[Primary   Ref]: https://push.local/full "Full title"',
+      "[collapsed]: https://push.local/collapsed 'Collapsed title'",
+      '[shortcut]: <https://push.local/shortcut> (Shortcut title)',
+      '[full][ PRIMARY ref ] / [collapsed][] / [shortcut]',
+    ].join('\n');
+    const expected = [
+      '[Primary   Ref]: https://push.local/full "Full title"',
+      "[collapsed]: https://push.local/collapsed 'Collapsed title'",
+      '[shortcut]: <https://push.local/shortcut> (Shortcut title)',
+      'full / collapsed / shortcut',
+    ].join('\n');
+
+    for (const unicode of [true, false]) {
+      const raw = await renderMarkdownBodyRaw(source, 80, false, unicode);
+      const rendered = renderedText(raw);
+      assert.equal(rendered, expected);
+      assert.equal(rendered.split('\n').length, source.split('\n').length);
+
+      const segments = parseAnsiText(raw).flat();
+      const linked = segments.filter((segment) => segment.hyperlink);
+      assert.deepEqual(
+        linked.map((segment) => [segment.text, segment.hyperlink]),
+        [
+          ['full', 'https://push.local/full'],
+          ['collapsed', 'https://push.local/collapsed'],
+          ['shortcut', 'https://push.local/shortcut'],
+        ],
+      );
+      const definition = segments.find((segment) => segment.text.includes('[Primary   Ref]:'));
+      assert.ok(definition, 'definition row was not rendered');
+      assert.notEqual(definition.fg, linked[0]?.fg, 'definition row should stay muted');
+    }
+  });
+
+  it('keeps unresolved and bare URLs literal, and gates unsafe reference targets', async () => {
+    const source = [
+      '[unsafe]: javascript:alert(1)',
+      '[missing][ref] / [missing][] / [missing]',
+      '[unsafe]',
+      'https://push.local/bare',
+    ].join('\n');
+    const expected = [
+      '[unsafe]: javascript:alert(1)',
+      '[missing][ref] / [missing][] / [missing]',
+      'unsafe',
+      'https://push.local/bare',
+    ].join('\n');
+
+    for (const unicode of [true, false]) {
+      const raw = await renderMarkdownBodyRaw(source, 80, false, unicode);
+      assert.equal(renderedText(raw), expected);
+      assert.equal(
+        parseAnsiText(raw)
+          .flat()
+          .filter((segment) => segment.hyperlink).length,
+        0,
+      );
+      assert.doesNotMatch(raw, /\]8;/, 'unsafe or bare URL acquired OSC 8 metadata');
+    }
+  });
+
+  it('keeps long reference destinations metadata-only at narrow table widths', async () => {
+    const longUrl = 'https://example.com/a-reference-destination-much-longer-than-source';
+    const source = [`[d]: ${longUrl}`, 'A | B', '--- | ---', '[docs][d] | x'].join('\n');
+    const availableWidth = 8;
+
+    for (const unicode of [true, false]) {
+      const raw = await renderMarkdownBodyRaw(source, availableWidth, false, unicode);
+      const rows = renderedText(raw).split('\n');
+      const rail = unicode ? '│' : '|';
+      const divider = unicode ? '─────┼──' : '-----+--';
+      assert.deepEqual(rows.slice(-3), [`A    ${rail} B`, divider, `docs ${rail} x`]);
+      assert.equal(rows.length, source.split('\n').length);
+      assert.equal(displayWidth(rows[3]), availableWidth);
+      assert.ok(displayWidth(rows[3]) <= displayWidth('[docs][d] | x'));
+      assert.equal(rows[3].includes(longUrl), false, 'reference URL leaked into visible cells');
+
+      const linked = parseAnsiText(raw)
+        .flat()
+        .filter((segment) => segment.hyperlink);
+      assert.deepEqual(
+        linked.map((segment) => [segment.text, segment.hyperlink]),
+        [['docs', longUrl]],
+      );
+    }
+  });
+
+  it('renders angle autolinks in prose and table cells', async () => {
+    const proseUrl = 'https://push.local/angle';
+    const tableUrl = 'https://push.local/table';
+    const source = [`Visit <${proseUrl}>`, 'Name | Link', '--- | ---', `cell | <${tableUrl}>`].join(
+      '\n',
+    );
+
+    for (const unicode of [true, false]) {
+      const raw = await renderMarkdownBodyRaw(source, 40, false, unicode);
+      const rows = renderedText(raw).split('\n');
+      const rail = unicode ? '│' : '|';
+      assert.equal(rows[0], `Visit ${proseUrl}`);
+      assert.equal(rows[3], `cell ${rail} ${tableUrl}`);
+      assert.doesNotMatch(rows.join('\n'), /<https?:\/\//);
+      assert.deepEqual(
+        parseAnsiText(raw)
+          .flat()
+          .filter((segment) => segment.hyperlink)
+          .map((segment) => [segment.text, segment.hyperlink]),
+        [
+          [proseUrl, proseUrl],
+          [tableUrl, tableUrl],
+        ],
+      );
+    }
+  });
+
+  it('keeps references and definitions inside code literal', async () => {
+    const source = [
+      '[live]: https://push.local/live',
+      'Inline `[live]`',
+      '```md',
+      '[live]',
+      '[blocked]: https://push.local/blocked',
+      '```',
+      'Outside [live] [blocked]',
+    ].join('\n');
+    const expected = [
+      '[live]: https://push.local/live',
+      'Inline [live]',
+      '```md',
+      '[live]',
+      '[blocked]: https://push.local/blocked',
+      '```',
+      'Outside live [blocked]',
+    ].join('\n');
+
+    for (const unicode of [true, false]) {
+      const raw = await renderMarkdownBodyRaw(source, 80, false, unicode);
+      assert.equal(renderedText(raw), expected);
+      const linked = parseAnsiText(raw)
+        .flat()
+        .filter((segment) => segment.hyperlink);
+      assert.deepEqual(
+        linked.map((segment) => [segment.text, segment.hyperlink]),
+        [['live', 'https://push.local/live']],
+      );
+    }
+  });
+
+  it('never reflows a settled forward reference as its definition streams in', async () => {
+    const settled = 'Before [docs][d]\n';
+    const final = `${settled}[d]: https://push.local/a-long-reference-destination`;
+
+    for (const unicode of [true, false]) {
+      let settledSnapshot = null;
+      for (let end = settled.length; end <= final.length; end += 1) {
+        const raw = await renderMarkdownBodyRaw(final.slice(0, end), 12, true, unicode);
+        const firstRow = renderedText(raw).split('\n')[0];
+        if (settledSnapshot === null) settledSnapshot = firstRow;
+        assert.equal(firstRow, settledSnapshot, `settled row changed at prefix ${end}`);
+        assert.equal(firstRow, 'Before [docs][d]');
+        assert.equal(
+          parseAnsiText(raw)
+            .flat()
+            .filter((segment) => segment.hyperlink).length,
+          0,
+          `forward reference linked at prefix ${end}`,
+        );
+      }
+    }
+  });
+});
+
 describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
   it('produces exactly one MdLine per source line', () => {
     const text = '# Title\n\nbody line\n- item\n1. step\n> quote\n\n```ts\ncode();\n```';
