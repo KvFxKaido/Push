@@ -12,14 +12,18 @@
  * Two invariants keep the transcript height math (`countVisualLines` in
  * `surface.tsx`) honest:
  *
- *  1. **Line-oriented.** One source line renders to exactly one row; newlines
- *     (LF or CRLF) are never added or removed. Fenced code keeps its ``` markers
- *     (dimmed) rather than stripping them, so the line count equals `item.text`.
+ *  1. **Line-oriented.** Source newlines (LF or CRLF) are never added or
+ *     removed — one source line is still one `MdLine`. Soft-wrap of list items
+ *     may emit multiple visual rows under a hanging indent when
+ *     `availableWidth` is known; fenced code keeps its ``` markers (dimmed)
+ *     rather than stripping them.
  *  2. **Width-contained.** Stripping markers (`**`, `##`, brackets) only ever
  *     shortens ordinary lines, and a horizontal rule is rendered at its source
- *     length. Tables are the one width-increasing construct: they render as
- *     padded columns only when the shared table layout fits the known body
- *     width; otherwise each source row falls back to ordinary raw text.
+ *     length. List indent is normalized from leading whitespace but the rendered
+ *     prefix never exceeds the source prefix width. Tables are the one
+ *     width-increasing construct: they render as padded columns only when the
+ *     shared table layout fits the known body width; otherwise each source row
+ *     falls back to ordinary raw text.
  *
  * The parse layer is pure and unit-tested; the component only maps its output
  * onto silvery nodes.
@@ -370,9 +374,12 @@ export interface MdLine {
   kind: MdLineKind;
   /** Inline spans for text-bearing kinds. */
   spans?: InlineSpan[];
-  /** Leading marker rendered dim (bullet glyph, `N.`, quote rail). */
+  /**
+   * Leading marker rendered dim (`N. ` for ordered; unused for bullets —
+   * indent comes from `depth` + the capability bullet glyph).
+   */
   marker?: string;
-  /** ATX heading depth (1–6). */
+  /** ATX heading depth (1–6), or list nest depth (0 = top-level). */
   depth?: number;
   /** GFM task-list item. */
   task?: boolean;
@@ -401,6 +408,40 @@ const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 const TASK = /^\[([ xX])\]\s+(.*)$/;
 const TABLE_DELIMITER = /^:?-{3,}:?$/;
+
+/**
+ * List nest depth from captured leading whitespace.
+ *
+ * Mapping (display cells of indent → level):
+ *  - each tab counts as 4 cells; every other character as 1
+ *  - level = floor(cells / 2), clamped to [0, MAX_LIST_DEPTH]
+ *  - so 0 → 0, 1 → 0, 2–3 → 1, 4–5 → 2, …; a jump from level 0 to 3 is fine
+ *    (depth is per-line, never relative to the previous item)
+ *
+ * Render indent is one cell per level. Because level = floor(cells / 2) ≤ cells,
+ * the rendered indent never exceeds the source indent width (width-non-expansion).
+ */
+export const MAX_LIST_DEPTH = 6;
+const LIST_INDENT_STEP = 2;
+
+export function listIndentCells(leading: string): number {
+  let cells = 0;
+  for (const ch of leading) {
+    cells += ch === '\t' ? 4 : 1;
+  }
+  return cells;
+}
+
+export function listDepthFromLeading(leading: string): number {
+  return Math.min(MAX_LIST_DEPTH, Math.floor(listIndentCells(leading) / LIST_INDENT_STEP));
+}
+
+/** One cell of indent per nest level (clamped); never negative. */
+export function listIndentPrefix(depth: number): string {
+  const level = Number.isFinite(depth) ? Math.trunc(depth) : 0;
+  const clamped = Math.max(0, Math.min(MAX_LIST_DEPTH, level));
+  return ' '.repeat(clamped);
+}
 
 function isEscaped(text: string, index: number): boolean {
   let slashCount = 0;
@@ -674,7 +715,10 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
     if (ordered) {
       out.push({
         kind: 'ordered',
-        marker: `${ordered[1]}${ordered[2]}. `,
+        depth: listDepthFromLeading(ordered[1]),
+        // Number + trailing space only; nest indent is applied from `depth` so
+        // the render prefix stays ≤ source prefix width (one cell per level).
+        marker: `${ordered[2]}. `,
         spans: parseInline(ordered[3], { streamingTail: index === streamingTailIndex }),
       });
       continue;
@@ -685,7 +729,7 @@ export function parseMarkdown(text: string, options: ParseMarkdownOptions = {}):
       const task = TASK.exec(bullet[2]);
       out.push({
         kind: 'bullet',
-        marker: bullet[1],
+        depth: listDepthFromLeading(bullet[1]),
         ...(task ? { task: true, checked: task[1].toLowerCase() === 'x' } : {}),
         // The whitespace after `]` is the disambiguation boundary: without it,
         // `[x]` may still grow into an inline link such as `[x](url)`.
@@ -849,6 +893,73 @@ function padFor(width: number, contentWidth: number, alignment: TableAlignment):
   return ['', ' '.repeat(total)];
 }
 
+/**
+ * List item with nest indent + hanging soft-wrap.
+ *
+ * The hang is produced by **layout**, not by pre-wrapping text: a fixed-width
+ * marker column plus a flexible body column, so the body's own soft-wrap lands
+ * inside the body column and continuation rows align under the text.
+ *
+ * This is deliberate. Pre-wrapping to strings would force the body through a
+ * plain-text flattening step, and every wrapped row would lose its inline
+ * spans — bold, code, and the OSC 8 terminal links from #1588 all silently
+ * degrade to raw text exactly when an item is long enough to wrap. Keeping the
+ * body as one `<Text>` of `<Spans>` preserves styling at every width, and it
+ * reuses the transcript's pre-existing measured wrap path instead of adding a
+ * second, unmeasured one.
+ *
+ * Streaming monotonicity: depth depends only on this line's own leading
+ * whitespace and the body column width is a function of the stable available
+ * width — never of later characters — so settled rows above a growing tail
+ * cannot reflow.
+ */
+function ListItemView({
+  indent,
+  marker,
+  markerColor,
+  spans,
+  base,
+  strike = false,
+  availableWidth,
+}: {
+  indent: string;
+  marker: string;
+  markerColor: VlColor;
+  spans: InlineSpan[];
+  base: VlColor | undefined;
+  strike?: boolean;
+  availableWidth: number | undefined;
+}) {
+  const prefixWidth = displayWidth(indent) + displayWidth(marker);
+  const body = <Spans spans={spans} base={base} strike={strike} />;
+
+  // No known width (or no room left for a body column): one row, as before.
+  // Ink may still wrap at the container, but hang alignment needs a budget.
+  if (!availableWidth || availableWidth - prefixWidth < 1) {
+    return (
+      <Text color={base}>
+        {indent}
+        <Text color={markerColor}>{marker}</Text>
+        {body}
+      </Text>
+    );
+  }
+
+  return (
+    <Box flexDirection="row" width={availableWidth}>
+      <Box width={prefixWidth} flexShrink={0}>
+        <Text color={base}>
+          {indent}
+          <Text color={markerColor}>{marker}</Text>
+        </Text>
+      </Box>
+      <Box flexGrow={1}>
+        <Text color={base}>{body}</Text>
+      </Box>
+    </Box>
+  );
+}
+
 function TableCell({
   spans,
   width,
@@ -984,36 +1095,42 @@ function LineView({
         </Text>
       );
     case 'bullet': {
+      const indent = listIndentPrefix(line.depth ?? 0);
       if (line.task) {
         const checked = line.checked === true;
         return (
-          <Text color={checked ? VL_COLOR.muted : base}>
-            {line.marker}
-            <Text color={checked ? VL_COLOR.success : VL_COLOR.muted}>
-              {checked ? marks.taskDone : marks.taskOpen}
-            </Text>
-            <Spans
-              spans={line.spans ?? []}
-              base={checked ? VL_COLOR.muted : base}
-              strike={checked}
-            />
-          </Text>
+          <ListItemView
+            indent={indent}
+            marker={checked ? marks.taskDone : marks.taskOpen}
+            markerColor={checked ? VL_COLOR.success : VL_COLOR.muted}
+            spans={line.spans ?? []}
+            base={checked ? VL_COLOR.muted : base}
+            strike={checked}
+            availableWidth={availableWidth}
+          />
         );
       }
       return (
-        <Text color={base}>
-          {line.marker}
-          <Text color={VL_COLOR.muted}>{marks.bullet}</Text>
-          <Spans spans={line.spans ?? []} base={base} />
-        </Text>
+        <ListItemView
+          indent={indent}
+          marker={marks.bullet}
+          markerColor={VL_COLOR.muted}
+          spans={line.spans ?? []}
+          base={base}
+          availableWidth={availableWidth}
+        />
       );
     }
     case 'ordered':
       return (
-        <Text color={base}>
-          <Text color={VL_COLOR.muted}>{line.marker}</Text>
-          <Spans spans={line.spans ?? []} base={base} />
-        </Text>
+        <ListItemView
+          indent={listIndentPrefix(line.depth ?? 0)}
+          marker={line.marker ?? ''}
+          markerColor={VL_COLOR.muted}
+          spans={line.spans ?? []}
+          base={base}
+          availableWidth={availableWidth}
+        />
       );
     case 'table':
       return (
