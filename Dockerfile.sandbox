@@ -41,7 +41,7 @@
 # checking out this repo). It is warn-only and non-fatal: nothing sets
 # `engine-strict`, and pnpm exits 0. Do not "fix" it by forcing Node 24 in here.
 
-FROM docker.io/cloudflare/sandbox:0.12.3-python
+FROM docker.io/cloudflare/sandbox:0.12.4-python
 ARG PUSH_SANDBOX_COREPACK_VERSION=0.35.0
 # pnpm 10.x, NOT 11.x: keep this on the same major as the repo's `packageManager`
 # (pnpm@10.34.5), because the pre-bake below installs Push's own node_modules with
