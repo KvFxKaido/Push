@@ -503,6 +503,62 @@ describe('MarkdownBody — reference links and angle autolinks', () => {
       }
     }
   });
+
+  // Image-reference syntax is unsupported, and "unsupported" has to mean the
+  // WHOLE construct stays literal. Consuming only its first bracket pair leaves a
+  // trailing `[ref]` for the scanner to resolve as a standalone shortcut, so a
+  // defined label turned `![alt][id]` into `![alt]id` carrying an OSC 8 link to
+  // the image. Note it only misbehaved when the label resolved — an undefined
+  // label looked correct, which is what made it easy to miss by reading.
+  it('keeps every image-reference form literal even when the label resolves', async () => {
+    const imageUrl = 'https://example.com/pic.png';
+    for (const unicode of [true, false]) {
+      for (const construct of ['![alt][id]', '![id][]', '![id]', '![alt']) {
+        const source = `[id]: ${imageUrl}\n${construct}`;
+        const raw = await renderMarkdownBodyRaw(source, 60, false, unicode);
+        assert.equal(renderedText(raw).split('\n')[1], construct, `${construct} was rewritten`);
+        assert.deepEqual(
+          parseAnsiText(raw)
+            .flat()
+            .filter((segment) => segment.hyperlink)
+            .map((segment) => segment.text),
+          [],
+          `${construct} produced a hyperlink`,
+        );
+      }
+    }
+    // The inline image form must still resolve — this guard sits after that branch.
+    const inline = await renderMarkdownBodyRaw(`![diagram](${imageUrl})`, 60);
+    assert.equal(
+      parseAnsiText(inline)
+        .flat()
+        .some((segment) => segment.hyperlink === imageUrl),
+      true,
+      'inline image lost its destination',
+    );
+  });
+
+  // A destination may legally contain `|`. Absorbing the definition as a table
+  // body row split the URL at the pipe AND skipped registration, so every later
+  // reference to it silently stayed literal.
+  it('ends a table at a pipe-bearing reference definition and still registers it', async () => {
+    const url = 'https://example.test/a|b';
+    const source = ['A | B', '--- | ---', 'x | y', `[ref]: ${url}`, 'see [docs][ref]'].join('\n');
+    const raw = await renderMarkdownBodyRaw(source, 60);
+    const rows = renderedText(raw).split('\n');
+
+    assert.equal(rows.length, source.split('\n').length);
+    // The definition keeps its own row verbatim — pipe intact, not split into cells.
+    assert.equal(rows[3], `[ref]: ${url}`);
+    assert.equal(rows[4], 'see docs');
+    assert.deepEqual(
+      parseAnsiText(raw)
+        .flat()
+        .filter((segment) => segment.hyperlink)
+        .map((segment) => [segment.text, segment.hyperlink]),
+      [['docs', url]],
+    );
+  });
 });
 
 describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {

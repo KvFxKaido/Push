@@ -120,6 +120,10 @@ const RE = {
   linkStart: /\[([^\]\n]+)\]\(/y,
   angleAutolink: /<(https?:\/\/[^<>\s]+)>/iy,
   reference: /\[([^\]\n]+)\](?:\[([^\]\n]*)\])?/y,
+  // Image-reference syntax is unsupported and stays literal. It must be consumed
+  // as ONE run: letting the scanner walk into it leaves a trailing `[ref]` that
+  // resolves as a standalone shortcut link, rendering `![alt][ref]` as `![alt]ref`.
+  imageReferenceLiteral: /!\[[^\]\n]*\](?:\[[^\]\n]*\])?/y,
   boldItalic: /\*\*\*([^*\n]+?)\*\*\*/y,
   strike: /~~([^~\n]+?)~~/y,
   bold: /\*\*([^*\n]+?)\*\*/y,
@@ -249,6 +253,16 @@ export function parseInline(line: string, options: ParseInlineOptions = {}): Inl
       flush();
       spans.push({ text: stripDecorativeEmoji(link[1]), link: true, url: linkDestination.url });
       i = linkDestination.end;
+      continue;
+    }
+    // Runs only after the inline-image branch above has declined (no `(dest)`),
+    // so a real `![alt](url)` is unaffected. Consuming the whole construct here
+    // is what keeps its trailing `[ref]` from resolving on its own.
+    RE.imageReferenceLiteral.lastIndex = i;
+    const imageReferenceLiteral = RE.imageReferenceLiteral.exec(line);
+    if (imageReferenceLiteral && imageReferenceLiteral.index === i) {
+      buf += imageReferenceLiteral[0];
+      i = RE.imageReferenceLiteral.lastIndex;
       continue;
     }
     RE.angleAutolink.lastIndex = i;
@@ -655,6 +669,10 @@ function tryParseTable(
     // A block-construct row (heading/quote/list/rule with a pipe) ends the
     // table and is reclassified by the caller, rather than absorbed as a body row.
     if (isBlockConstruct(rawLines[next])) break;
+    // A reference definition is the same category: a destination may legally
+    // contain `|`, so absorbing it as a body row would both split the URL at the
+    // pipe and skip registration, leaving every later reference to it unresolved.
+    if (parseReferenceDefinition(rawLines[next])) break;
     const cells = splitTableCells(rawLines[next]);
     if (!cells) break;
     // An overfull row would lose cells under GFM's ignore-excess rule; the

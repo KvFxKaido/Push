@@ -301,7 +301,9 @@ Markdown styling follows the same grayscale-complete rule as runtime chrome:
   links use the same role but keep the resolved destination in safe OSC 8 metadata only: the
   label is their entire visible width, including during table measurement. Angle-bracket
   `http(s)` autolinks use the URL itself as the label. Reference-definition lines remain
-  visible as muted literal rows, and bare URLs remain literal. Inline code uses the code role
+  visible as muted literal rows, and bare URLs remain literal. Image-reference syntax
+  (`![alt][ref]`) is unsupported and stays literal in full — including its trailing bracket
+  pair, which would otherwise resolve on its own as a shortcut. Inline code uses the code role
   plus a subtle neutral surface. Quote rails and table headers use info color while their body
   text remains grayscale.
 - Fences and unsupported-language code use the code role; known languages keep syntax
