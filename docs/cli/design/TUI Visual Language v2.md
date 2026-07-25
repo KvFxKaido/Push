@@ -302,10 +302,20 @@ Markdown styling follows the same grayscale-complete rule as runtime chrome:
   body text remains grayscale.
 - Fences and unsupported-language code use the code role; known languages keep syntax
   highlighting. Neither treatment changes source-line count.
+- List items carry nest depth and hang their soft-wrap. Leading whitespace is normalized to a
+  level (a tab counts as four cells, two cells make a level, clamped at six) and rendered as
+  one cell of indent per level, so the rendered prefix is never wider than the source prefix
+  it replaces. Continuation rows align under the item's text rather than the left margin.
+  The hang comes from layout — a fixed marker column beside a flexible body column — not from
+  pre-wrapping text into strings: flattening a body to plain rows would strip its inline spans
+  and OSC 8 links at exactly the widths where items wrap.
 
-These substitutions may remove marker cells but may not add a row or render wider than the
-source line. That keeps heading/task styling inside the same transcript measurement contract
-as streaming repair and fit-or-raw tables.
+These substitutions may remove marker cells and may not render wider than the source line.
+Row count is the one place lists differ: hanging indent narrows the body column, so a long
+item may occupy more visual rows than the same text would at full width. That stays inside the
+transcript measurement contract because the wrap is performed by the same layout pass the
+surface already measures — one source line is still one parsed line, and no construct invents
+rows the renderer cannot see.
 
 ## Streaming Markdown adaptation
 

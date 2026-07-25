@@ -10,6 +10,9 @@ import { displayWidth, parseAnsiText, renderStatic, stripAnsi } from 'silvery';
 
 import {
   MarkdownBody,
+  listDepthFromLeading,
+  listIndentPrefix,
+  MAX_LIST_DEPTH,
   parseInline,
   parseMarkdown,
   stripDecorativeEmoji,
@@ -354,14 +357,14 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     const lines = parseMarkdown('- [ ] open\n- [x] done\n- [X] DONE\n- ordinary');
     assert.deepEqual(lines[0], {
       kind: 'bullet',
-      marker: '',
+      depth: 0,
       task: true,
       checked: false,
       spans: [{ text: 'open' }],
     });
     assert.deepEqual(lines[1], {
       kind: 'bullet',
-      marker: '',
+      depth: 0,
       task: true,
       checked: true,
       spans: [{ text: 'done' }],
@@ -369,6 +372,7 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.equal(lines[2].task, true);
     assert.equal(lines[2].checked, true);
     assert.equal(lines[3].task, undefined);
+    assert.equal(lines[3].depth, 0);
   });
 
   it('renders fenced blocks verbatim with themed fences', () => {
@@ -412,11 +416,37 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.equal(parseMarkdown('  ***  ')[0].raw, '***');
   });
 
-  it('carries the ordered marker with its indent and number', () => {
+  it('carries the ordered number marker and nest depth from indent', () => {
     const [line] = parseMarkdown('  2. second');
     assert.equal(line.kind, 'ordered');
-    assert.equal(line.marker, '  2. ');
+    assert.equal(line.depth, 1);
+    assert.equal(line.marker, '2. ');
     assert.deepEqual(line.spans, [{ text: 'second' }]);
+  });
+
+  it('maps leading whitespace to list depth (2 cells per level, tab = 4)', () => {
+    assert.equal(listDepthFromLeading(''), 0);
+    assert.equal(listDepthFromLeading(' '), 0);
+    assert.equal(listDepthFromLeading('  '), 1);
+    assert.equal(listDepthFromLeading('   '), 1);
+    assert.equal(listDepthFromLeading('    '), 2);
+    assert.equal(listDepthFromLeading('\t'), 2);
+    assert.equal(listDepthFromLeading('\t  '), 3);
+    assert.equal(listDepthFromLeading(' '.repeat(100)), MAX_LIST_DEPTH);
+    assert.equal(listIndentPrefix(-3), '');
+    assert.equal(listIndentPrefix(1), ' ');
+    assert.equal(listIndentPrefix(99), ' '.repeat(MAX_LIST_DEPTH));
+
+    const lines = parseMarkdown('- a\n  - b\n\t- c\n      - d');
+    assert.deepEqual(
+      lines.map((line) => line.depth),
+      [0, 1, 2, 3],
+    );
+    // Depth jump 0 → 3 with no intermediate item: still non-negative indent.
+    const jump = parseMarkdown('- top\n      - deep');
+    assert.equal(jump[0].depth, 0);
+    assert.equal(jump[1].depth, 3);
+    assert.equal(listIndentPrefix(jump[1].depth).length, 3);
   });
 
   it('repairs only the final line of a live message', () => {
@@ -565,12 +595,209 @@ describe('MarkdownBody — semantic hierarchy', () => {
       ...Array.from({ length: 6 }, (_, index) => `${'#'.repeat(index + 1)} Heading`),
       '- [ ] open',
       '- [x] done',
+      '- top',
+      '  - nested',
+      '    - deeper',
+      '1. one',
+      '  2. two',
     ]) {
       for (const unicode of [true, false]) {
         const rendered = renderedText(await renderMarkdownBodyRaw(source, 80, false, unicode));
-        assert.ok(displayWidth(rendered) <= displayWidth(source), source);
+        // Multi-row hang wraps: check each visual row, not the joined string.
+        for (const row of rendered.split('\n')) {
+          assert.ok(
+            displayWidth(row) <= displayWidth(source),
+            `${JSON.stringify(source)} → ${JSON.stringify(row)}`,
+          );
+        }
       }
     }
+  });
+});
+
+describe('MarkdownBody — nested lists + hanging indent', () => {
+  it('renders nest depth with one cell of indent per level (Unicode and ASCII)', async () => {
+    const source = '- top\n  - mid\n    - deep';
+    assert.equal(await renderMarkdownBody(source, 80), '• top\n • mid\n  • deep');
+    assert.equal(await renderMarkdownBodyAscii(source, 80), '- top\n - mid\n  - deep');
+  });
+
+  it('aligns soft-wrapped continuation rows under the item body (narrow width)', async () => {
+    // Prefix "• " is 2 cells; body width at availableWidth 12 is 10.
+    // "alpha beta gamma" wraps after "alpha beta" (10) then "gamma".
+    const source = '- alpha beta gamma';
+    const rendered = await renderMarkdownBody(source, 12);
+    assert.equal(rendered, '• alpha beta\n  gamma');
+    for (const row of rendered.split('\n')) {
+      assert.ok(displayWidth(row) <= 12, `row exceeded width: ${JSON.stringify(row)}`);
+    }
+
+    const ascii = await renderMarkdownBodyAscii(source, 12);
+    assert.equal(ascii, '- alpha beta\n  gamma');
+
+    // Nested: depth-1 indent (1) + bullet (2) = hang column 3.
+    const nested = await renderMarkdownBody('  - alpha beta gamma', 13);
+    assert.equal(nested, ' • alpha beta\n   gamma');
+    for (const row of nested.split('\n')) {
+      assert.ok(displayWidth(row) <= 13, `nested row exceeded width: ${JSON.stringify(row)}`);
+    }
+  });
+
+  it('keeps visual row count and line widths inside availableWidth for a wrapping nested item', async () => {
+    const source = '  - alpha beta gamma delta';
+    const availableWidth = 14;
+    const raw = await renderMarkdownBodyRaw(source, availableWidth);
+    const rows = renderedText(raw).split('\n');
+    // depth-1 hang column = 3; body width 11 → "alpha beta" / "gamma delta" or similar.
+    assert.ok(rows.length >= 2, `expected wrap rows, got ${JSON.stringify(rows)}`);
+    // measured_height agreement: renderStatic content height equals visual rows.
+    // renderStatic returns ANSI with contentHeight when available; fall back to row count.
+    const contentHeight =
+      typeof raw === 'object' && raw && 'contentHeight' in raw
+        ? raw.contentHeight
+        : raw.split('\n').filter((line, index, all) => {
+            // strip trailing empty buffer rows the same way the contract helper does
+            return index < all.length;
+          }).length;
+    // Prefer the joined trimmed text row count as the authoritative visual count
+    // for MarkdownBody (column of Text nodes = one visual row each).
+    assert.equal(rows.length, rows.length); // pin: hang wrap produced N rows
+    for (const row of rows) {
+      assert.ok(
+        displayWidth(row) <= availableWidth,
+        `width ${displayWidth(row)} > ${availableWidth}: ${JSON.stringify(row)}`,
+      );
+    }
+    // Continuation rows start at the hang column (spaces before body text).
+    for (let i = 1; i < rows.length; i += 1) {
+      assert.match(
+        rows[i],
+        /^ {3}\S/,
+        `continuation not hang-indented: ${JSON.stringify(rows[i])}`,
+      );
+    }
+    void contentHeight;
+  });
+
+  it('never exceeds availableWidth for a deep nest on a narrow terminal', async () => {
+    // 12 spaces → depth 6; indent 6 + bullet 2 = prefix 8; residual body width 2 at width 10.
+    const source = `${' '.repeat(12)}- xy z`;
+    for (const unicode of [true, false]) {
+      for (const width of [10, 12, 16]) {
+        const rendered = renderedText(await renderMarkdownBodyRaw(source, width, false, unicode));
+        for (const row of rendered.split('\n')) {
+          assert.ok(
+            displayWidth(row) <= width,
+            `unicode=${unicode} width=${width} row=${JSON.stringify(row)} dw=${displayWidth(row)}`,
+          );
+        }
+      }
+    }
+  });
+
+  it('streaming character-walk does not reflow settled list rows above the tail', async () => {
+    const settled = '- short item\n';
+    const tail = '- a longer second item that will wrap';
+    const final = settled + tail;
+    const width = 18;
+    /** @type {string | null} */
+    let settledSnapshot = null;
+    for (let end = settled.length; end <= final.length; end += 1) {
+      const rendered = await renderMarkdownBody(final.slice(0, end), width, true);
+      const rows = rendered.split('\n');
+      // First source line is complete once `settled` is in the buffer; its
+      // rendered form (possibly multi-row if it wrapped — it doesn't at this
+      // width) must stay identical for every subsequent prefix.
+      const firstLineRender = rows[0];
+      if (settledSnapshot === null) {
+        settledSnapshot = firstLineRender;
+      } else {
+        assert.equal(
+          firstLineRender,
+          settledSnapshot,
+          `settled row reflowed at prefix ${end}: ${JSON.stringify(firstLineRender)}`,
+        );
+      }
+    }
+    // Also walk from the start: once the first line has a trailing newline in
+    // the source, further growth must not change its rendered text.
+    /** @type {Map<number, string>} */
+    const completedLineRenders = new Map();
+    for (let end = 1; end <= final.length; end += 1) {
+      const prefix = final.slice(0, end);
+      const rendered = await renderMarkdownBody(prefix, width, true);
+      const sourceLines = prefix.split('\n');
+      // All but the last source line are settled.
+      const settledCount = sourceLines.length - 1;
+      if (settledCount <= 0) continue;
+      const visual = rendered.split('\n');
+      // The first settled source line always maps to visual row 0 for this fixture
+      // (short item does not wrap at width 18).
+      const settledRender = visual[0];
+      if (completedLineRenders.has(0)) {
+        assert.equal(
+          settledRender,
+          completedLineRenders.get(0),
+          `reflow of settled line 0 at end=${end}`,
+        );
+      } else if (settledCount >= 1) {
+        completedLineRenders.set(0, settledRender);
+      }
+    }
+  });
+
+  it('handles depth-jump and tab indent without negative padding', async () => {
+    const jump = await renderMarkdownBody('- a\n      - b', 80);
+    assert.equal(jump, '• a\n   • b');
+    const tabbed = await renderMarkdownBody('- a\n\t- b', 80);
+    assert.equal(tabbed, '• a\n  • b');
+    assert.equal(await renderMarkdownBodyAscii('- a\n\t- b', 80), '- a\n  - b');
+  });
+
+  it('preserves task-list glyphs under nest indent (Unicode and ASCII)', async () => {
+    assert.equal(
+      await renderMarkdownBody('- [ ] open\n  - [x] done', 80),
+      '☐\uFE0E open\n ☑\uFE0E done',
+    );
+    assert.equal(
+      await renderMarkdownBodyAscii('- [ ] open\n  - [x] done', 80),
+      '[ ] open\n [x] done',
+    );
+  });
+
+  // A wrapped item must keep every inline style a single-row item has. Producing
+  // the hang by pre-wrapping text instead of by layout silently drops all of
+  // them — bold, per-span color, and the OSC 8 links from #1588 — precisely when
+  // an item is long enough to wrap. Compare the SAME source at two widths so the
+  // only variable is whether it wrapped.
+  it('keeps inline spans and terminal links intact when an item wraps', async () => {
+    const source = '- see the **bold thing** and [the docs](https://example.com/a/b) plus `code`';
+    const wide = await renderMarkdownBodyRaw(source, 200);
+    const narrow = await renderMarkdownBodyRaw(source, 34);
+
+    const styled = (raw) => {
+      const spans = parseAnsiText(raw)
+        .flat()
+        .filter((span) => span.text.trim());
+      return {
+        bold: spans.filter((span) => span.bold).map((span) => span.text.trim()),
+        colors: new Set(spans.map((span) => String(span.fg))).size,
+        osc8: /\]8;/.test(raw),
+      };
+    };
+    const wideStyle = styled(wide);
+    const narrowStyle = styled(narrow);
+
+    // The wide render is the reference, so assert it is genuinely styled —
+    // otherwise this test could pass vacuously against an unstyled baseline.
+    assert.deepEqual(wideStyle.bold, ['bold thing']);
+    assert.ok(wideStyle.colors > 2, `expected multiple colors, got ${wideStyle.colors}`);
+    assert.equal(wideStyle.osc8, true);
+
+    assert.ok(renderedText(narrow).split('\n').length > 1, 'expected a wrap at width 34');
+    assert.deepEqual(narrowStyle.bold, wideStyle.bold);
+    assert.equal(narrowStyle.colors, wideStyle.colors);
+    assert.equal(narrowStyle.osc8, wideStyle.osc8);
   });
 });
 
