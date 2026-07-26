@@ -616,6 +616,7 @@ export async function applyPostExecutionSideEffects(
     updateVerificationState(chatId, (state) =>
       recordVerificationMutation(state, {
         source: 'tool',
+        // eslint-disable-next-line no-restricted-syntax -- tool name in copy; tool identifiers are exempt from the vocabulary pin
         detail: 'sandbox_exec may have mutated the workspace.',
       }),
     );

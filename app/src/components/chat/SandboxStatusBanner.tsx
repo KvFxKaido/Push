@@ -12,7 +12,7 @@ interface SandboxStatusChipProps {
 export function SandboxStatusChip({ status, error, onOpenWorkspaceHub }: SandboxStatusChipProps) {
   if (status === 'ready' || status === 'reconnecting' || status === 'idle') return null;
 
-  const errorTitle = error ? categorizeSandboxError(error).title : 'Sandbox needs attention';
+  const errorTitle = error ? categorizeSandboxError(error).title : 'Workspace needs attention';
   const config: {
     label: string;
     title: string;
@@ -22,12 +22,12 @@ export function SandboxStatusChip({ status, error, onOpenWorkspaceHub }: Sandbox
     status === 'creating'
       ? {
           label: 'Starting',
-          title: 'Sandbox is starting',
+          title: 'Workspace is starting',
           className: 'text-push-fg-dim hover:text-push-fg-secondary',
           indicator: <Loader2 className="h-3 w-3 animate-spin" />,
         }
       : {
-          label: 'Sandbox',
+          label: 'Workspace',
           title: errorTitle,
           className: 'text-red-300 hover:text-red-200',
           indicator: <span className="h-1.5 w-1.5 rounded-full bg-red-400" />,

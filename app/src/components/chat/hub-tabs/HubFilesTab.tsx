@@ -66,7 +66,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
     setStartingSandbox(true);
     try {
       const id = await ensureSandbox();
-      if (!id) toast.error('Sandbox is not ready yet.');
+      if (!id) toast.error('Workspace is not ready yet.');
       return id;
     } finally {
       setStartingSandbox(false);
@@ -125,7 +125,7 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
   if (!sandboxReady) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-sm text-push-fg-secondary">Start a sandbox to browse files.</p>
+        <p className="text-sm text-push-fg-secondary">Start a workspace to browse files.</p>
         <button
           onClick={() => {
             void ensureHubSandbox().then((id) => {
@@ -140,8 +140,8 @@ export function HubFilesTab({ sandboxId, sandboxStatus, ensureSandbox }: HubFile
           )}
           <span>
             {startingSandbox || sandboxStatus === 'creating'
-              ? 'Starting sandbox...'
-              : 'Start sandbox'}
+              ? 'Starting workspace...'
+              : 'Start workspace'}
           </span>
         </button>
       </div>

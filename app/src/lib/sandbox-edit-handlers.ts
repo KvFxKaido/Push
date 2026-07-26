@@ -849,6 +849,7 @@ export async function handleSearchReplace(
         type: 'EDIT_GUARD_BLOCKED',
         retryable: false,
         message: `${path} is too large to fully load for search-replace.`,
+        // eslint-disable-next-line no-restricted-syntax -- model-facing tool guidance, not user copy
         detail: 'Use sandbox_read_file with ranges and sandbox_edit_file instead.',
       };
       return {
@@ -954,6 +955,7 @@ export async function handleSearchReplace(
           type: 'EDIT_CONTENT_NOT_FOUND',
           retryable: true,
           message: `Multi-line search string has encoding mismatches. Found a match after Unicode normalization near line ${fuzzyLineNo}.`,
+          // eslint-disable-next-line no-restricted-syntax -- model-facing tool guidance, not user copy
           detail: `Re-read the file with sandbox_read_file and copy the exact characters.`,
         };
         return {
@@ -1002,6 +1004,7 @@ export async function handleSearchReplace(
         type: 'EDIT_CONTENT_NOT_FOUND',
         retryable: true,
         message: `Search string has encoding mismatches (smart quotes, em-dashes, or mojibake). Found ${fuzzyMatches.length} line(s) that match after Unicode normalization.`,
+        // eslint-disable-next-line no-restricted-syntax -- model-facing tool guidance, not user copy
         detail: `Your search contains characters that don't match the file exactly — common mismatches include mojibake (e.g. "\\u00e2\\u20ac\\u201c" instead of an em-dash), smart quotes (\\u201c/\\u201d instead of ASCII "), and typographic dashes (\\u2013/\\u2014 instead of -).\nMatching lines after normalization:\n${shown.join('\n')}\n\nRe-read the file with sandbox_read_file and copy the exact characters.`,
       };
       return {

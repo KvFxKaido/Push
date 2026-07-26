@@ -57,6 +57,9 @@ import type { DiffPreviewCardData, ReviewResult, ReviewComment, ReviewDepth } fr
 import { DiffSeamIcon, SendLiftIcon } from '@/components/icons/push-custom-icons';
 import { PushMarkdownRenderer } from '@/components/chat/PushMarkdownRenderer';
 
+// Internal review-source id (not user copy) — hoisted for the vocabulary lint pin.
+const SANDBOX_REVIEW_SOURCE = 'sandbox';
+
 interface HubReviewTabProps {
   sandboxId: string | null;
   sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
@@ -258,7 +261,7 @@ function parseSavedReviewPayload(raw: string | null): SavedReviewPayload | null 
       reviewSource:
         parsed.reviewSource === 'github' ||
         parsed.reviewSource === 'commit' ||
-        parsed.reviewSource === 'sandbox'
+        parsed.reviewSource === SANDBOX_REVIEW_SOURCE
           ? parsed.reviewSource
           : 'sandbox',
       result: parsed.result,
@@ -588,8 +591,10 @@ export function HubReviewTab({
       onOpenDiff({
         diffData: reviewDiffData,
         label:
-          reviewContext.kind === 'sandbox' ? 'Working tree review snapshot' : reviewContext.label,
-        mode: reviewContext.kind === 'sandbox' ? 'review-sandbox' : 'review-github',
+          reviewContext.kind === SANDBOX_REVIEW_SOURCE
+            ? 'Working tree review snapshot'
+            : reviewContext.label,
+        mode: reviewContext.kind === SANDBOX_REVIEW_SOURCE ? 'review-sandbox' : 'review-github',
         target: { path: file, ...(line !== undefined ? { line } : {}) },
       });
     },
@@ -966,41 +971,42 @@ export function HubReviewTab({
         )}
 
         {/* Source selector — only in the review view (browsing needs no source) */}
-        {!showPullsView && (hasGitHubSource || hasCommitSource || reviewSource === 'sandbox') && (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {hasGitHubSource && (
+        {!showPullsView &&
+          (hasGitHubSource || hasCommitSource || reviewSource === SANDBOX_REVIEW_SOURCE) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {hasGitHubSource && (
+                  <button
+                    onClick={() => handleSourceChange('github')}
+                    className={glassSegmentPillClass(reviewSource === 'github')}
+                  >
+                    Branch diff
+                  </button>
+                )}
+                {hasCommitSource && (
+                  <button
+                    onClick={() => handleSourceChange('commit')}
+                    className={glassSegmentPillClass(reviewSource === 'commit')}
+                  >
+                    Last commit
+                  </button>
+                )}
                 <button
-                  onClick={() => handleSourceChange('github')}
-                  className={glassSegmentPillClass(reviewSource === 'github')}
+                  onClick={() => handleSourceChange(SANDBOX_REVIEW_SOURCE)}
+                  className={glassSegmentPillClass(reviewSource === SANDBOX_REVIEW_SOURCE)}
                 >
-                  Branch diff
+                  Working tree
                 </button>
-              )}
-              {hasCommitSource && (
-                <button
-                  onClick={() => handleSourceChange('commit')}
-                  className={glassSegmentPillClass(reviewSource === 'commit')}
-                >
-                  Last commit
-                </button>
-              )}
-              <button
-                onClick={() => handleSourceChange('sandbox')}
-                className={glassSegmentPillClass(reviewSource === 'sandbox')}
-              >
-                Working tree
-              </button>
+              </div>
+              <p className="text-push-2xs text-push-fg-dim">
+                {reviewSource === 'github'
+                  ? 'Reviews the pushed PR or branch diff against the default branch.'
+                  : reviewSource === 'commit'
+                    ? 'Reviews the diff of the most recent commit — no workspace needed.'
+                    : 'Reviews uncommitted working tree edits in the current workspace.'}
+              </p>
             </div>
-            <p className="text-push-2xs text-push-fg-dim">
-              {reviewSource === 'github'
-                ? 'Reviews the pushed PR or branch diff against the default branch.'
-                : reviewSource === 'commit'
-                  ? 'Reviews the diff of the most recent commit — no sandbox needed.'
-                  : 'Reviews uncommitted working tree edits in the current workspace.'}
-            </p>
-          </div>
-        )}
+          )}
 
         {!showPullsView &&
           (providerOptions.length === 0 ? (

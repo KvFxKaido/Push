@@ -229,11 +229,9 @@ export function WorkspaceSessionScreen({
       onBranchSwitch: handleSandboxBranchSwitch,
       onBranchDesync: ({ expected, actual, reconciled }) => {
         if (reconciled) {
-          toast.info(`Sandbox moved to ${actual} (was ${expected}) — Push followed.`);
+          toast.info(`Branch changed to ${actual} — following.`);
         } else {
-          toast.info(
-            `Sandbox moved to detached HEAD (was ${expected}) — Push did not change branches.`,
-          );
+          toast.info(`Checked out a detached HEAD (was ${expected}) — branch unchanged.`);
         }
       },
       onSandboxUnreachable: (reason, policy) => {

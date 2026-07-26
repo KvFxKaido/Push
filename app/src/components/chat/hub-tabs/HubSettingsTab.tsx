@@ -61,7 +61,7 @@ const DETAIL_META: Record<
   },
   workspace: {
     title: 'Workspace',
-    description: 'Runtime warm-up and branch safety.',
+    description: 'Workspace warm-up and branch safety.',
     icon: SETTINGS_SECTION_ICONS.workspace,
   },
   ai: {
@@ -192,11 +192,11 @@ export function HubSettingsTab({
     },
     {
       title: 'Workspace',
-      description: 'Controls for context, sandbox, and branch safety.',
+      description: 'Controls for context, workspace, and branch safety.',
       badge: sandboxLabel,
       icon: SETTINGS_SECTION_ICONS.workspace,
       lines: [
-        'The sandbox auto-starts on demand.',
+        'Your workspace starts on demand.',
         `Main protection is ${workspace.protectMainGlobal ? 'on' : 'off'} and the console is ${workspace.showToolActivity ? 'visible' : 'hidden'}.`,
       ],
       onClick: () => setActiveView('workspace'),

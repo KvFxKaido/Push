@@ -779,8 +779,7 @@ function MergeFlowSheet({
                         <div>
                           <p className="text-xs font-medium text-yellow-400">Uncommitted changes</p>
                           <p className="text-xs text-yellow-400/70 mt-0.5">
-                            You have uncommitted changes in the sandbox. Commit and push before
-                            merging.
+                            You have uncommitted workspace changes. Commit and push before merging.
                           </p>
                         </div>
                       </div>

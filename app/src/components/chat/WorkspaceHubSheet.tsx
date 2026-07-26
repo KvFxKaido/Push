@@ -513,7 +513,7 @@ export function WorkspaceHubSheet({
   const handleForgetSnapshotClick = useCallback(() => {
     if (!onForgetSandboxSnapshot) return;
     onForgetSandboxSnapshot();
-    toast.success('Forgot sandbox snapshot — next start will be a clean clone');
+    toast.success('Snapshot dropped — next start will be a fresh clone');
   }, [onForgetSandboxSnapshot]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
@@ -659,7 +659,7 @@ export function WorkspaceHubSheet({
   // ---- Commit & Push flow ----
   const openCommitTargetSheet = useCallback(() => {
     if (!sandboxReady) {
-      toast.error('Sandbox is not ready.');
+      toast.error('Workspace is not ready.');
       return;
     }
     setCommitTargetMode(blockedByProtectMain ? 'new' : 'current');
@@ -671,7 +671,7 @@ export function WorkspaceHubSheet({
 
   const handleExportScratchpadToRepo = useCallback(async () => {
     if (!sandboxId) {
-      toast.error('Sandbox is not ready.');
+      toast.error('Workspace is not ready.');
       return;
     }
     try {
@@ -689,7 +689,7 @@ export function WorkspaceHubSheet({
   const runCommitAndPush = useCallback(
     async (target: CommitPushTarget) => {
       if (!sandboxId) {
-        toast.error('Sandbox is not ready.');
+        toast.error('Workspace is not ready.');
         return;
       }
 
@@ -916,7 +916,7 @@ export function WorkspaceHubSheet({
 
   const suggestCommitMessage = useCallback(async () => {
     if (!sandboxId) {
-      toast.error('Sandbox is not ready.');
+      toast.error('Workspace is not ready.');
       return;
     }
 
@@ -990,7 +990,7 @@ export function WorkspaceHubSheet({
     setCommitTargetError(null);
     try {
       if (!sandboxId) {
-        throw new Error('Sandbox is not ready.');
+        throw new Error('Workspace is not ready.');
       }
 
       const diffResult = await getSandboxDiff(sandboxId);
@@ -1142,7 +1142,7 @@ export function WorkspaceHubSheet({
             };
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : 'Unable to inspect sandbox changes.';
+          const message = err instanceof Error ? err.message : "Couldn't read workspace changes.";
           setSwitchProbe((current) => {
             if (!current || current.branch !== branch) return current;
             return {
@@ -1510,18 +1510,20 @@ export function WorkspaceHubSheet({
                     <span className="text-push-fg-dim">Reconnecting…</span>
                   )}
                   {sandboxStatus === 'creating' && (
-                    <span className="text-push-fg-dim">Starting sandbox…</span>
+                    <span className="text-push-fg-dim">Starting workspace…</span>
                   )}
                   {sandboxStatus === 'idle' && (
                     <span className="text-push-fg-dim">
                       {snapshotInfo
-                        ? `Sandbox hibernated · snapshot ${formatSnapshotAge(snapshotInfo.createdAt)}`
-                        : 'Sandbox not running'}
+                        ? `Hibernated · snapshot ${formatSnapshotAge(snapshotInfo.createdAt)}`
+                        : 'Workspace not running'}
                     </span>
                   )}
                   {sandboxStatus === 'error' && (
                     <span className="text-red-400">
-                      {sandboxError ? categorizeSandboxError(sandboxError).title : 'Sandbox error'}
+                      {sandboxError
+                        ? categorizeSandboxError(sandboxError).title
+                        : 'Workspace error'}
                     </span>
                   )}
                 </span>
@@ -1554,7 +1556,7 @@ export function WorkspaceHubSheet({
                     {sandboxStatus === 'error' ? (
                       <>
                         <Plus className="h-3 w-3" />
-                        <span>New</span>
+                        <span>Fresh workspace</span>
                       </>
                     ) : (
                       <span>{snapshotInfo ? 'Restore' : 'Start'}</span>
@@ -1730,7 +1732,7 @@ export function WorkspaceHubSheet({
               <div className="space-y-2">
                 <div className="min-w-0">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">
-                    Sandbox Actions
+                    Workspace Actions
                   </p>
                   <p
                     className={`mt-1 truncate text-push-xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}
@@ -1743,7 +1745,7 @@ export function WorkspaceHubSheet({
                     onClick={scratchActions.onSaveSnapshot}
                     disabled={!scratchActions.canSaveSnapshot || scratchActions.snapshotRestoring}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 disabled:opacity-50`}
-                    title="Save sandbox snapshot"
+                    title="Save workspace snapshot"
                   >
                     {scratchActions.snapshotSaving ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1756,7 +1758,7 @@ export function WorkspaceHubSheet({
                     onClick={scratchActions.onRestoreSnapshot}
                     disabled={!scratchActions.canRestoreSnapshot || scratchActions.snapshotSaving}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 disabled:opacity-50`}
-                    title="Restore latest sandbox snapshot"
+                    title="Restore latest workspace snapshot"
                   >
                     {scratchActions.snapshotRestoring ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1769,7 +1771,7 @@ export function WorkspaceHubSheet({
                     onClick={scratchActions.onDownloadWorkspace}
                     disabled={!scratchActions.canDownloadWorkspace}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 disabled:opacity-50`}
-                    title="Download sandbox workspace"
+                    title="Download workspace"
                   >
                     {scratchActions.downloadingWorkspace ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />

@@ -16,6 +16,9 @@ import {
   isPendingActionCard,
 } from './tool-call-utils';
 
+// Internal card discriminator (not user copy) — hoisted for the vocabulary lint pin.
+const SANDBOX_STATE_CARD_TYPE = 'sandbox-state';
+
 interface ToolCallSummaryProps {
   items: ToolCallPair[];
   onCardAction?: (action: CardAction) => void;
@@ -85,7 +88,9 @@ export const ToolCallSummary = memo(function ToolCallSummary({
           // segment renderer, so skip them here to avoid double-render.
           const visibleCards = (item.callMsg.cards ?? [])
             .map((card, originalIndex) => ({ card, originalIndex }))
-            .filter(({ card }) => card.type !== 'sandbox-state' && !isPendingActionCard(card));
+            .filter(
+              ({ card }) => card.type !== SANDBOX_STATE_CARD_TYPE && !isPendingActionCard(card),
+            );
 
           return (
             <ChainOfThoughtStep

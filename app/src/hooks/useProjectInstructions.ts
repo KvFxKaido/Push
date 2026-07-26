@@ -266,7 +266,7 @@ export function useProjectInstructions(
         );
       }
       if (!id) {
-        toast.error('Sandbox is not ready yet. Try again in a moment.');
+        toast.error("Couldn't open project instructions. Try again in a moment.");
         return;
       }
 
@@ -332,7 +332,7 @@ export function useProjectInstructions(
       const id = sandbox.sandboxId;
       if (!id) {
         toast.warning(
-          'AGENTS.md draft may be ready, but sandbox session is unavailable to refresh context.',
+          'AGENTS.md draft may be ready, but the workspace is unavailable to refresh context.',
         );
         return;
       }

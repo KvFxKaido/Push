@@ -550,7 +550,7 @@ export function PrBrowser({ repoFullName, activeBranch, onOpenDiff }: PrBrowserP
                 className={`px-3 py-2 text-push-xs text-push-fg-dim ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
               >
                 This PR targets <span className="text-push-fg-secondary">{detail.headRef}</span>.
-                Switch to that branch if you want sandbox-backed fixes or branch-scoped review
+                Switch to that branch if you want workspace-backed fixes or branch-scoped review
                 tools.
               </p>
             )}

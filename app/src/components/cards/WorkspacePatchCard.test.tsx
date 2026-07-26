@@ -41,7 +41,7 @@ describe('WorkspacePatchCard', () => {
   it('renders the pending state with the "will be attempted" copy', () => {
     const html = renderToStaticMarkup(<WorkspacePatchCard data={baseData()} />);
     expect(html).toContain('Pending replay');
-    expect(html).toContain('Will be attempted if this sandbox is replaced.');
+    expect(html).toContain('Will be attempted if this workspace is replaced.');
     // Diff preview surface composed: file count + stats present.
     expect(html).toContain('1 file');
     expect(html).toContain('+1');
@@ -55,7 +55,7 @@ describe('WorkspacePatchCard', () => {
       />,
     );
     expect(html).toContain('Replayed');
-    expect(html).toContain('These changes were applied to the new sandbox.');
+    expect(html).toContain('These changes were applied to the new workspace.');
     expect(html).not.toContain('Already applied');
   });
 
@@ -84,7 +84,7 @@ describe('WorkspacePatchCard', () => {
       );
       expect(html).toContain('Replay refused');
       expect(html).toContain(
-        'Replay refused because the sandbox HEAD no longer matches the captured base.',
+        'Replay refused because the workspace HEAD no longer matches the captured base.',
       );
       // Explicit anti-drama check — the user asked for calm copy:
       // no "failed" language in the refusal. (Don't broaden this to
@@ -144,7 +144,7 @@ describe('WorkspacePatchCard', () => {
         />,
       );
       expect(html).toContain('Replay produced a conflict');
-      expect(html).toContain('Files in the new sandbox carry merge markers');
+      expect(html).toContain('Files in the new workspace carry merge markers');
       expect(html).toContain('Applied patch x.ts with conflicts.');
       // Detail not truncated → no truncation marker.
       expect(html).not.toContain('Conflict detail truncated');

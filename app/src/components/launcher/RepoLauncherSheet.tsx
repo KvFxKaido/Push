@@ -70,7 +70,7 @@ export function RepoLauncherSheet({
         <SheetHeader className="sr-only">
           <SheetTitle className="text-sm font-semibold text-push-fg">Launcher</SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">
-            Resume repo work, reopen your sandbox, or switch context without leaving chat.
+            Resume repo work, return to your workspace, or switch context without leaving chat.
           </SheetDescription>
         </SheetHeader>
 

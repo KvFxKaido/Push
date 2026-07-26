@@ -237,12 +237,12 @@ export function RepoLauncherPanel({
     }
     if (sandboxSession.status === 'creating') {
       return {
-        detail: 'Sandbox is starting',
+        detail: 'Workspace is starting',
         detailClass: 'text-push-fg-secondary',
       };
     }
     return {
-      detail: 'Sandbox needs attention before you continue',
+      detail: 'Workspace needs attention before you continue',
       detailClass: 'text-red-300',
     };
   }, [sandboxSession]);
@@ -515,7 +515,7 @@ export function RepoLauncherPanel({
             >
               <SandboxCubeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
               <div className="min-w-0">
-                <p className="text-sm font-medium text-push-fg">Resume sandbox</p>
+                <p className="text-sm font-medium text-push-fg">Resume work</p>
                 {sandboxResumeMeta && (
                   <p className={`mt-0.5 truncate text-xs ${sandboxResumeMeta.detailClass}`}>
                     {sandboxResumeMeta.detail}

@@ -33,7 +33,7 @@ describe('SandboxStatusChip', () => {
       <SandboxStatusChip status="error" error="connection refused" onOpenWorkspaceHub={noop} />,
     );
 
-    expect(html).toContain('Sandbox');
+    expect(html).toContain('Workspace');
     expect(html).toContain('Open workspace');
   });
 });

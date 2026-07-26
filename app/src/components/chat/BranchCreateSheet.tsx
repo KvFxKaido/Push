@@ -158,7 +158,7 @@ function BranchCreateSheet({
           </SheetTitle>
           <SheetDescription className="text-xs text-push-fg-dim">
             {forkBranch
-              ? `From ${fromBranch}. The running sandbox will create and switch to this branch.`
+              ? `From ${fromBranch}. The running workspace will create and switch to this branch.`
               : `From ${fromBranch}. The new branch will be created on GitHub from the current ref.`}
           </SheetDescription>
         </SheetHeader>

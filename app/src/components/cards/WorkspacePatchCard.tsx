@@ -66,7 +66,7 @@ function statusContent(applyState: WorkspacePatchApplyState): StatusContent {
       return {
         tone: 'neutral',
         title: 'Pending replay',
-        detail: 'Will be attempted if this sandbox is replaced.',
+        detail: 'Will be attempted if this workspace is replaced.',
       };
     case 'applied':
       // The reverse-check guard sets note='already-applied' when the
@@ -76,13 +76,13 @@ function statusContent(applyState: WorkspacePatchApplyState): StatusContent {
         return {
           tone: 'success',
           title: 'Already applied',
-          detail: 'The new sandbox already had these changes — nothing to replay.',
+          detail: 'The new workspace already had these changes — nothing to replay.',
         };
       }
       return {
         tone: 'success',
         title: 'Replayed',
-        detail: 'These changes were applied to the new sandbox.',
+        detail: 'These changes were applied to the new workspace.',
       };
     case 'refused':
       return {
@@ -94,7 +94,7 @@ function statusContent(applyState: WorkspacePatchApplyState): StatusContent {
       return {
         tone: 'error',
         title: 'Replay produced a conflict',
-        detail: 'Files in the new sandbox carry merge markers — resolve before continuing.',
+        detail: 'Files in the new workspace carry merge markers — resolve before continuing.',
         conflictDetail: applyState.detail,
       };
     default: {
@@ -122,7 +122,7 @@ function refusalCopy(reason: WorkspacePatchRefusalReason): string {
     case 'binary-placeholder':
       return "The captured diff includes binary changes that can't be replayed.";
     case 'base-mismatch':
-      return 'Replay refused because the sandbox HEAD no longer matches the captured base.';
+      return 'Replay refused because the workspace HEAD no longer matches the captured base.';
     default: {
       const _exhaustive: never = reason;
       void _exhaustive;
