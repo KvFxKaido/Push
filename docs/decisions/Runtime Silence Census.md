@@ -1,6 +1,6 @@
 # Runtime Silence Census
 
-**Status:** Draft
+**Status:** Current (partially implemented — Wave 0 verify + Wave 2's first PR shipped; Waves 1, 3, 4 and the rest of Wave 2 pending)
 **Date:** 2026-07-26
 **Scope:** every user-visible moment where the web/native app makes the user aware of the runtime (sandbox, container, snapshot machinery, connectivity). CLI/TUI vocabulary and Worker-side card internals are out of scope. Component/file *names* (`SandboxStatusBanner.tsx` etc.) are out of scope — this census is about copy that reaches a user, not identifiers.
 
