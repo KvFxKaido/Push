@@ -871,23 +871,6 @@ describe('useSandbox.markUnreachable', () => {
 });
 
 describe('useSandbox — native local-only recovery (Increment 2)', () => {
-  it('manual hibernate is a no-op on native and never ships WIP to the cloud', async () => {
-    checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
-    sandboxClient.createSandbox.mockResolvedValue({
-      status: 'ready',
-      sandboxId: 'sb-1',
-      ownerToken: 'tok',
-    });
-    const hook = render('owner/repo', 'main');
-    await hook.start('owner/repo', 'main');
-    syncRefsFromState();
-
-    const ok = await hook.hibernate();
-    expect(ok).toBe(false);
-    // The whole point: no snapshot call to Modal on the native shell.
-    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
-  });
-
   it('retires the dead id to idle on a definitively-gone refresh (so ensureSandbox cold-starts)', async () => {
     checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
     sandboxClient.createSandbox.mockResolvedValue({

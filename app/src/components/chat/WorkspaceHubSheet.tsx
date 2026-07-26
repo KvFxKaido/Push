@@ -192,8 +192,6 @@ interface WorkspaceHubSheetProps {
   onStartSandbox: () => void;
   onRetrySandbox: () => void;
   onNewSandbox: () => void;
-  /** Manually snapshot the sandbox and terminate it. See Modal Sandbox Snapshots Design §C. */
-  onHibernateSandbox?: () => Promise<boolean>;
   /** Drop the stored snapshot (and any dead binding) so the next start is a clean clone. */
   onForgetSandboxSnapshot?: () => void;
   /** Latest persisted snapshot for (repo, branch); null when no hibernate state exists. */
@@ -420,7 +418,6 @@ export function WorkspaceHubSheet({
   onStartSandbox,
   onRetrySandbox,
   onNewSandbox,
-  onHibernateSandbox,
   onForgetSandboxSnapshot,
   snapshotInfo,
   reviewProviders,
@@ -512,19 +509,6 @@ export function WorkspaceHubSheet({
     branch: string;
     mode: 'warm' | 'clean';
   } | null>(null);
-  const [hibernating, setHibernating] = useState(false);
-
-  const handleHibernateClick = useCallback(async () => {
-    if (!onHibernateSandbox) return;
-    setHibernating(true);
-    try {
-      const ok = await onHibernateSandbox();
-      if (ok) toast.success('Sandbox hibernated — workspace snapshot saved');
-      else toast.error('Hibernate failed — please try again');
-    } finally {
-      setHibernating(false);
-    }
-  }, [onHibernateSandbox]);
 
   const handleForgetSnapshotClick = useCallback(() => {
     if (!onForgetSandboxSnapshot) return;
@@ -1581,38 +1565,9 @@ export function WorkspaceHubSheet({
             </div>
           )}
 
-          {/* Sandbox lifecycle strip (ready) — hibernate to preserve working tree. */}
-          {sandboxStatus === 'ready' && sandboxId && onHibernateSandbox && (
-            <div
-              className={`flex items-center justify-between gap-2 ${HUB_GLASS_STRIP_CLASS} px-3 py-2`}
-            >
-              <div className="min-w-0 flex items-center gap-2">
-                <SandboxCubeIcon className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
-                <span className="min-w-0 truncate text-push-xs text-push-fg-dim">
-                  Sandbox live — hibernate to preserve the working tree across sessions
-                </span>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  onClick={handleHibernateClick}
-                  disabled={hibernating}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-7 gap-1 px-2.5 text-push-fg-dim disabled:opacity-50`}
-                  title="Snapshot the workspace and terminate the container"
-                >
-                  {hibernating ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Save className="h-3 w-3" />
-                  )}
-                  <span>{hibernating ? 'Hibernating…' : 'Hibernate'}</span>
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* On-device checkpoint history — self-gating (native shell + flag),
               renders nothing on web. Sits in the workspace-state zone next to
-              hibernate/snapshot. */}
+              the snapshot status. */}
           <CheckpointHistory
             sandboxId={sandboxId}
             repoFullName={repoFullName ?? null}

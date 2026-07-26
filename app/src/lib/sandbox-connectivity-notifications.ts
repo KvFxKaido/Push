@@ -35,20 +35,28 @@ export function getSandboxConnectivityToast(
   if (previousStatus === nextStatus) return null;
 
   if (nextStatus === 'reconnecting') {
-    return {
-      kind: 'info',
-      message: 'Reconnecting to sandbox...',
-      options: { id: SANDBOX_CONNECTIVITY_TOAST_ID },
-    };
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'sandbox_reconnecting',
+        previousStatus,
+        nextStatus,
+      }),
+    );
+    return null;
   }
 
   if (nextStatus === 'ready') {
     if (previousStatus === 'reconnecting') {
-      return {
-        kind: 'success',
-        message: 'Sandbox reconnected',
-        options: { id: SANDBOX_CONNECTIVITY_TOAST_ID },
-      };
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'sandbox_reconnected',
+          previousStatus,
+          nextStatus,
+        }),
+      );
+      return null;
     }
     if (previousStatus === 'creating') {
       return {
@@ -58,19 +66,6 @@ export function getSandboxConnectivityToast(
       };
     }
     return null;
-  }
-
-  if (nextStatus === 'idle') {
-    if (previousStatus === 'reconnecting') {
-      return null;
-    }
-    if (previousStatus === 'ready') {
-      return {
-        kind: 'info',
-        message: 'Sandbox idle. Code tools will start it again when needed.',
-        options: { id: SANDBOX_CONNECTIVITY_TOAST_ID },
-      };
-    }
   }
 
   return null;

@@ -1092,67 +1092,6 @@ export function useSandbox(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRepoFullName, activeBranch, sandboxId, status, snapshotInfoTick]);
 
-  // Explicit user-triggered hibernate. Mirrors the idle-timer path but surfaces
-  // success/failure to the caller so the hub can toast on error.
-  const hibernate = useCallback(async (): Promise<boolean> => {
-    const id = sandboxIdRef.current;
-    if (!id) return false;
-    // Native shell: no manual hibernate to Modal either — the affordance is
-    // hidden on native (WorkspaceChatRoute drops the handler), but guard the
-    // call too so nothing ships WIP to the cloud (Increment 2).
-    if (nativeCheckpointsActive()) {
-      console.log(
-        JSON.stringify({
-          level: 'info',
-          event: 'sandbox_manual_hibernate_skipped_native',
-          sandboxId: id,
-          reason: 'native_checkpoints_active',
-        }),
-      );
-      return false;
-    }
-    if (statusRef.current !== 'ready') return false;
-    if (activeRepoFullName == null || !activeBranch) return false;
-
-    const ownerToken = getSandboxOwnerToken(id) || '';
-    try {
-      const result = await hibernateSandbox(id, {
-        repoFullName: activeRepoFullName,
-        branch: activeBranch,
-      });
-      if (!result.ok || !result.snapshotId) {
-        console.debug('[useSandbox] Manual hibernate failed:', result.error);
-        return false;
-      }
-      const now = Date.now();
-      const existing = loadSandboxSession(activeRepoFullName, activeBranch);
-      saveSandboxSession(activeRepoFullName, activeBranch, {
-        sandboxId: id,
-        ownerToken,
-        repoFullName: activeRepoFullName,
-        branch: activeBranch,
-        createdAt: now,
-        snapshotId: result.snapshotId,
-        restoreToken: result.restoreToken,
-        snapshotCreatedAt: now,
-        hasMutated: existing?.hasMutated,
-      });
-      setSandboxId(null);
-      sandboxIdRef.current = null;
-      freshSandboxIdRef.current = null;
-      setFreshSandboxId(null);
-      snapshotRestoredSandboxIdRef.current = null;
-      setRestoredFromSnapshotSandboxId(null);
-      setStatus('idle');
-      setSnapshotInfoTick((n) => n + 1);
-      console.log(`[useSandbox] Manual hibernate → snapshot ${result.snapshotId}`);
-      return true;
-    } catch (err) {
-      console.debug('[useSandbox] Manual hibernate error:', err);
-      return false;
-    }
-  }, [activeRepoFullName, activeBranch]);
-
   // Drop the stored snapshot (and the dead container binding, if any). Used by
   // the Hub's "Forget sandbox state" affordance so the next start is a clean
   // clone instead of restoring a workspace the user has declared broken.
@@ -1395,7 +1334,6 @@ export function useSandbox(
     markUnreachable,
     rebindSessionRepo,
     createdAt,
-    hibernate,
     forgetSnapshot,
     requestRoundCheckpoint,
     snapshotInfo,

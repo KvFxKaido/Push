@@ -55,7 +55,6 @@ export interface ChatRouteWorkspaceProps {
     stop: () => Promise<void>;
     refresh: () => Promise<boolean>;
     markUnreachable: (reason: string, policy?: SandboxUnreachableRecoveryPolicy) => void;
-    hibernate: () => Promise<boolean>;
     forgetSnapshot: () => void;
     snapshotInfo: { snapshotId: string; createdAt: number } | null;
   };
