@@ -491,12 +491,12 @@ describe('handleZenGoModels', () => {
     });
   }
 
-  it('serves the live upstream listing annotated with the curated transport', async () => {
-    let captured: string | undefined;
+  it('serves the live upstream listing keyless and annotates the curated transport', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) => {
-        captured = url;
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
         return new Response(
           JSON.stringify({
             object: 'list',
@@ -512,8 +512,9 @@ describe('handleZenGoModels', () => {
         );
       }),
     );
-    const response = await handleZenGoModels(makeModelsRequest(), makeEnv({ ZEN_API_KEY: 'k' }));
-    expect(captured).toBe('https://opencode.ai/zen/go/v1/models');
+    const response = await handleZenGoModels(makeModelsRequest(), makeEnv());
+    expect(captured?.url).toBe('https://opencode.ai/zen/go/v1/models');
+    expect(captured?.init.headers).not.toHaveProperty('Authorization');
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data).toEqual([

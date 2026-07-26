@@ -1460,6 +1460,10 @@ export async function handleZenGoModels(request: Request, env: Env): Promise<Res
     keyMissingError:
       'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
     needsBody: false,
+    // The upstream model listing is genuinely public. Browser requests backed
+    // by gateway BYOK or an account-stored key therefore need no direct Zen
+    // credential to refresh the catalog.
+    allowMissingKey: true,
   });
   if (preamble instanceof Response) return preamble;
   const { requestId } = preamble;

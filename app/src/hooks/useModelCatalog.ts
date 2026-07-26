@@ -429,13 +429,19 @@ export function buildModelControl(
 // ---------------------------------------------------------------------------
 
 export function useModelCatalog(): ModelCatalog {
+  // The Go catalog must exist before useZenConfig so its validation follows
+  // the live membership source. Until the first successful fetch, pass null to
+  // preserve upstream-only selections instead of rejecting them against the
+  // smaller static fallback seed.
+  const [zenGoModelList, setZenGoModelList] = useState<string[]>([]);
+
   // Provider key/model configs
   const ollamaCfg = useOllamaConfig();
   const openRouterCfg = useOpenRouterConfig();
   const zaiCfg = useZaiConfig();
   const kimiCfg = useKimiConfig();
   const huggingfaceCfg = useHuggingFaceConfig();
-  const zenCfg = useZenConfig();
+  const zenCfg = useZenConfig(zenGoModelList.length > 0 ? zenGoModelList : null);
   const fireworksCfg = useFireworksConfig();
   const sakanaCfg = useSakanaConfig();
   const deepseekCfg = useDeepSeekConfig();
@@ -580,7 +586,6 @@ export function useModelCatalog(): ModelCatalog {
   const [huggingfaceModelList, setHuggingFaceModelList] = useState<string[]>([]);
   const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
-  const [zenGoModelList, setZenGoModelList] = useState<string[]>([]);
   const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
   const [sakanaModelList, setSakanaModelList] = useState<string[]>([]);
   const [deepseekModelList, setDeepseekModelList] = useState<string[]>([]);
