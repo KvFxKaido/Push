@@ -350,13 +350,38 @@ The TUI adopts the first behavior through its own grammar:
   definition arrives. This deliberate CommonMark divergence prevents a growing stream from
   retroactively restyling or reflowing settled rows.
 
-The second Streamdown idea — stable block parsing and memoized completed blocks — is a
-measured follow-up, not part of this slice. `markdown.tsx` is substantially cheaper than a
-remark pipeline, and Silvery already reconciles retained rows; introduce block caching only
-if profiling a long live response shows full-tail parsing or repeated fence highlighting is
-material. In particular, the current choice to syntax-highlight an unterminated fence is
-intentional and stays in force unless measurement justifies trading live color for less
-work.
+The second Streamdown idea — stable block parsing and memoized completed blocks — was gated
+on profiling. **That profile has now been run, and the named costs are not material, so
+block caching stays out.** `cli/tests/markdown-stream-profile.mjs` reproduces it (node 24,
+win32, 100 cols, one settled row plus a growing message inside the shipped `ListView`
+config). Streaming one more update into a message already holding 750–12,000 characters
+costs 0.25–4.6 ms of parsing against 34–198 ms of total per-update CPU: parsing is
+0.7–3.7% at every size measured. Caching completed blocks would buy back a few percent of
+an update. Note the unit — cost is reported per *update*, not per painted frame, because
+silvery coalesces: at 12,000 characters, 20 updates produced 16 paints.
+
+Profiling did find a real cost, just not that one. Per-update CPU grows with total message
+length rather than with the streamed chunk, and it is not markdown-specific: the structural
+floor — the same row count rendered as bare `<Text>` nodes, no parsing, no spans, no
+highlighting — grows from ~16 ms to ~37 ms across the same range. Much of the growth is
+node count, layout, and paint over the whole item, which no markdown-level cache can
+recover, and which `virtualization="measured"` does not bound because a long message is a
+single list item rather than many. A long live response therefore repaints in the ~10 fps
+range. If this is ever worth attacking, it belongs at that structural level — fewer
+retained nodes for settled content — not in the parser. Measure before building either
+way; the numbers above are one machine's.
+
+The fence question needs its own measurement, because fence cost scales with **block
+size** and a short-fence corpus hides it: highlighting runs over the whole accumulated
+block on every parse, including an unterminated one (`if (inFence) closeFence()`). Section
+B of the profiler streams a single growing code block for this. `highlightToSpans` goes
+from 0.07 ms at 19 lines to 2.06 ms at 642 lines — real scaling, but still small against a
+34–198 ms update. An open fence tracks a closed one almost exactly (0.80 ms vs 0.80 ms at
+218 lines), so live highlighting of an unterminated block costs no more than the settled
+parse that follows it. Both land *under* the same volume rendered as prose (0.80 ms vs
+2.61 ms), because fence lines skip `parseInline` entirely — a code-heavy response is
+cheaper to parse than a prose one, not dearer. There is no cost argument for trading live
+color for less work, so that choice stays in force.
 
 Streaming Markdown regressions are tested as prefixes, not only as completed examples. For
 every relevant partial form, tests pin source-line count, width non-expansion, live-only
