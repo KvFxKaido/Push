@@ -67,7 +67,6 @@ vi.mock('@/hooks/useWorkspaceChatPanelsController', () => ({
     handleContinueCurrentWorkspace: vi.fn(),
     handleReviewNewChatWorkspace: vi.fn(),
     handleStartFreshWorkspaceForNewChat: vi.fn(),
-    handleExpiryWarningReached: vi.fn(),
     handleExitWorkspaceRequest: vi.fn(),
   }),
 }));
@@ -143,7 +142,6 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
       pullHostRunLocal: vi.fn(),
       dismissHostRun: vi.fn(),
     },
-    saveExpiryCheckpoint: vi.fn(),
     ciStatus: null,
     diagnoseCIFailure: vi.fn(),
     forkBranchFromUI: vi.fn(async () => ({ ok: true as const })),

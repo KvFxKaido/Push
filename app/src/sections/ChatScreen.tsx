@@ -8,7 +8,6 @@ import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WebSearchMenu } from '@/components/chat/WebSearchMenu';
-import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
 import { SandboxStatusChip } from '@/components/chat/SandboxStatusBanner';
 import { AutoBackRestoreBanner } from '@/components/chat/AutoBackRestoreBanner';
 import { usePerfMark } from '@/hooks/usePerfMark';
@@ -33,7 +32,6 @@ type ChatInputProps = ComponentProps<typeof ChatInput>;
 // The sandbox-status error banner was removed; the surviving consumers are the
 // SandboxStatusChip (error tooltip) and the streaming gate below.
 type SandboxStatusBannerProps = { error: string | null; isStreaming: boolean };
-type SandboxExpiryBannerProps = ComponentProps<typeof SandboxExpiryBanner>;
 type AutoBackRestoreBannerProps = ComponentProps<typeof AutoBackRestoreBanner>;
 
 interface ChatScreenWorkspaceProps {
@@ -72,7 +70,6 @@ interface ChatScreenChatProps {
 
 interface ChatScreenBannerProps {
   sandboxStatusBannerProps: SandboxStatusBannerProps;
-  sandboxExpiryBannerProps: SandboxExpiryBannerProps | null;
   autoBackRestoreBannerProps?: AutoBackRestoreBannerProps | null;
 }
 
@@ -126,8 +123,7 @@ export function ChatScreen({
     drawerProps,
   } = shell;
   const { containerProps: chatContainerProps, inputProps: chatInputProps } = chat;
-  const { sandboxStatusBannerProps, sandboxExpiryBannerProps, autoBackRestoreBannerProps } =
-    banners;
+  const { sandboxStatusBannerProps, autoBackRestoreBannerProps } = banners;
 
   const resolvedAppearance = activeRepoAppearance ?? DEFAULT_REPO_APPEARANCE;
   const glowColor = getRepoAppearanceColorHex(resolvedAppearance.color);
@@ -316,8 +312,6 @@ export function ChatScreen({
         </header>
 
         {autoBackRestoreBannerProps && <AutoBackRestoreBanner {...autoBackRestoreBannerProps} />}
-
-        {sandboxExpiryBannerProps && <SandboxExpiryBanner {...sandboxExpiryBannerProps} />}
 
         {!isScratch &&
           activeRepo &&

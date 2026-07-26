@@ -46,8 +46,8 @@ Target end-state: the chip has exactly one visible state — error. All healthy 
 
 | # | Trigger | Copy | Bin | Verdict |
 |---|---|---|---|---|
-| B1 | T−5:00 countdown | "N:NN remaining · Download your work before this workspace runtime expires." | OPERATOR | DELETE — verified live **and false** (see Wave 0 findings) |
-| B2 | expired | "Workspace runtime expired · Restart runtime" | OPERATOR | DELETE with B1 — on the shipped provider this fires on a *healthy* runtime; "Restart runtime" would needlessly wipe a live workspace. Transparent restart-on-next-action is already the CF recovery model |
+| B1 | T−5:00 countdown | "N:NN remaining · Download your work before this workspace runtime expires." | OPERATOR | DELETE — verified live **and false** (see Wave 0 findings). **SHIPPED 2026-07-26 (this PR).** |
+| B2 | expired | "Workspace runtime expired · Restart runtime" | OPERATOR | DELETE with B1 — on the shipped provider this fires on a *healthy* runtime; "Restart runtime" would needlessly wipe a live workspace. Transparent restart-on-next-action is already the CF recovery model. **SHIPPED 2026-07-26 (this PR).** |
 
 **Wave 0 findings (2026-07-26).** The banner is *not* dead code: scratch sessions are
 reachable (`App.tsx` draft composer + no-repo conversation resume) and start real
@@ -156,7 +156,7 @@ duplicates the expiry banner's model with its own copy of the wrong constant
 
 | # | Trigger | Copy | Bin | Verdict |
 |---|---|---|---|---|
-| M1 | status `ready` | "Sandbox session active - N min left" (green, amber inside 5 min) | NARRATION | DELETE — false countdown on both providers, same grounds as B1/B2 |
+| M1 | status `ready` | "Sandbox session active - N min left" (green, amber inside 5 min) | NARRATION | DELETE — false countdown on both providers, same grounds as B1/B2. **SHIPPED 2026-07-26 (this PR).** |
 | M2 | status `creating` | "Sandbox is starting" | WAIT | ABSORB — aligns with A1; local-first entry removes the wait from view |
 | M3 | status `reconnecting` | "Reconnecting to your sandbox" | NARRATION | DEMOTE — aligns with A2 |
 | M4 | status `error` | "Sandbox needs attention before you continue" | CONSENT-adjacent | REWORD — error is the one state that earns pixels (A3); work vocabulary |
@@ -186,7 +186,7 @@ cuttable or rewritable without losing a single real decision.
 
 - **Wave 0 — verify: DONE 2026-07-26.** `SandboxExpiryBanner` is live on the scratch lane and factually wrong on **both** providers (findings under section B), and the launcher panel duplicates the same wrong constant (section M). Wave 2's first item is deleting both countdown surfaces, not a dead-code sweep.
 - **Wave 1 — copy (one PR):** every REWORD. Pure strings. Establishes the vocabulary rule; a lint-able convention ("sandbox" banned from user-facing literals) can pin it.
-- **Wave 2 — silence (small PRs):** DELETE/DEMOTE the narration set. Each deletion must first confirm its automation actually covers the case (per the self-review rule: execute the claim — kill a reconnect toast only after watching a reconnection heal silently). Structured logs gain what the UI loses.
+- **Wave 2 — silence (small PRs; FIRST PR DONE 2026-07-26):** B1/B2/M1 and the false T−5 expiry-checkpoint callback shipped in this PR. DELETE/DEMOTE the remaining narration set. Each deletion must first confirm its automation actually covers the case (per the self-review rule: execute the claim — kill a reconnect toast only after watching a reconnection heal silently). Structured logs gain what the UI loses.
 - **Wave 3 — queue-on-warm (medium):** C4 + L1. One shared "accept, warm, run" affordance replaces six refusal sites; the E-tab waits (E1/E2) die in Wave 4's local-first entry instead.
 - **Wave 4 — local-first entry (the big one, scoped separately):** hub Files/Diff/status paint from the native clone (backend seam) before any runtime exists; chat attaches when ready. Kills the A1 wait class at the root rather than restyling it.
 

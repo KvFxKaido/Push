@@ -149,7 +149,6 @@ export interface ChatRouteConversationProps {
   /** Durable Runs Phase 3: attach/viewer for a run that lived on (or
    * finished) server-side while this client was away. */
   runHostAttach: RunHostAttachHandle;
-  saveExpiryCheckpoint: (savedDiff: string) => void;
   ciStatus: CIStatus | null;
   diagnoseCIFailure: () => void;
 }
