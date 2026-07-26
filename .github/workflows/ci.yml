@@ -96,6 +96,42 @@ jobs:
       - name: Build
         run: pnpm run build
 
+  electron:
+    # The desktop platform project installs OUTSIDE the workspace
+    # (`pnpm install --ignore-workspace`, own committed pnpm-lock.yaml — see
+    # app/README.md "Desktop app"), so no other job's frozen install ever
+    # exercises it. Without this job, a Dependabot PR that bumps
+    # app/electron/package.json but misses its standalone lockfile
+    # (dependabot-core#14057 — it shipped twice on day one of electron
+    # coverage: #1601, #1602) wears a green check while being uninstallable.
+    # This is the documented standalone install plus the tsc build; it does
+    # NOT run electron-builder packaging (heavyweight, not the failure mode
+    # this job exists to catch).
+    name: Install, Build (electron)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app/electron
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: app/electron/pnpm-lock.yaml
+
+      - name: Install dependencies (standalone, frozen)
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Build
+        run: pnpm run build
+
   android-build:
     # Verifies the production Vite bundle survives a Capacitor Android build
     # end-to-end on a clean checkout. `app/android/` is committed source, so
