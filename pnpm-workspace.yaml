@@ -53,17 +53,21 @@ overrides:
   # once upstream declares >= 0.6.0.
   adm-zip: ^0.6.0
   # GHSA-f88m-g3jw-g9cj (Dependabot #101): libvips CVEs fixed in sharp 0.35.0.
-  # This override CANNOT go there yet, and it is worse than it looks: it also
-  # holds sharp *below* what its own parent asks for. @huggingface/transformers
-  # @4.2.0 declares `sharp: ^0.34.5` (i.e. 0.34.x — caret on a 0.x minor does
-  # not reach 0.35), so this line silently downgrades the native image pipeline
-  # a minor below the declared range while pinning it to the vulnerable set.
-  # Raising it to ^0.35.0 would clear the advisory but break that range from
-  # the other side. Both moves need transformers to declare 0.35 first; until
-  # then the honest options are "stay put" or "drop the override and land on
-  # 0.34.x" (still flagged, but at least in range). Tracked separately — do not
-  # bump this line without checking transformers' declared range first.
-  sharp: ^0.33.5
+  # Forced ABOVE @huggingface/transformers@4.2.0's declared `^0.34.5` on
+  # purpose (decision 2026-07-26, replacing the earlier below-range ^0.33.5
+  # pin): Push's only transformers usage is the text `feature-extraction`
+  # pipeline in cli/embedding-provider-local.ts — sharp is transformers'
+  # *image* path and is never invoked by it, so the out-of-range force risks
+  # only code Push cannot reach. Re-check this reasoning before adding any
+  # image/vision pipeline; drop the override once transformers declares 0.35+.
+  sharp: ^0.35.0
+  # GHSA (Dependabot #100): path traversal in `serve-static` on Windows, fixed
+  # in @hono/node-server 2.0.5. @modelcontextprotocol/sdk declares ^1.19.9, so
+  # this forces a major across that boundary — safe here because Push's MCP
+  # server (mcp/github-server) is stdio-only (StdioServerTransport at its sole
+  # entry point); the SDK's HTTP transports, the only consumers of
+  # @hono/node-server, never load at runtime. Drop when the SDK declares 2.x.
+  '@hono/node-server': ^2.0.5
   # GHSA-v2hh-gcrm-f6hx (Dependabot #102/#103): host confusion via a literal
   # backslash authority delimiter, fixed in 3.1.4. Transitive via ajv →
   # ajv-formats. Mirrored in app/electron/package.json, which installs with
