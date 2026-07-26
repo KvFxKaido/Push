@@ -16,15 +16,18 @@ const providerConfig = createRegistryModelProviderConfig('zen', {
 
 export const getZenKey = providerConfig.getKey;
 
-export function useZenConfig() {
+export function useZenConfig(goCatalogModels: readonly string[] | null = ZEN_GO_MODELS) {
   const { setModel, ...config } = providerConfig.useConfig();
   const [goMode, setGoModeState] = useState(() => getZenGoMode());
 
   useEffect(() => {
-    if (goMode && !ZEN_GO_MODELS.includes(config.model)) {
+    // A null catalog means the live Go listing has not loaded yet. Defer
+    // validation rather than resetting an upstream-only persisted selection
+    // against the smaller static fallback seed.
+    if (goMode && goCatalogModels && !goCatalogModels.includes(config.model)) {
       setModel(ZEN_GO_DEFAULT_MODEL);
     }
-  }, [config.model, goMode, setModel]);
+  }, [config.model, goCatalogModels, goMode, setModel]);
 
   const setGoMode = useCallback(
     (enabled: boolean) => {
@@ -33,12 +36,12 @@ export function useZenConfig() {
       // Only swap the model if the current one is incompatible with the
       // target tier — avoids silently overwriting an explicit user choice.
       const currentModel = config.model;
-      const compatibleWithTarget = enabled ? ZEN_GO_MODELS : ZEN_MODELS;
+      const compatibleWithTarget = enabled ? (goCatalogModels ?? ZEN_GO_MODELS) : ZEN_MODELS;
       if (!compatibleWithTarget.includes(currentModel)) {
         setModel(enabled ? ZEN_GO_DEFAULT_MODEL : ZEN_DEFAULT_MODEL);
       }
     },
-    [setModel, config.model],
+    [setModel, config.model, goCatalogModels],
   );
 
   return { ...config, setModel, goMode, setGoMode };

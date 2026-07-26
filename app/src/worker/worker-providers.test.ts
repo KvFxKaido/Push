@@ -13,6 +13,7 @@ import { PROVIDER_DEFINITIONS } from '@push/lib/provider-definition';
 import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from '@push/lib/gemini-thought-signature';
 import { ZAI_MODELS } from '@push/lib/provider-models';
 import { KIMI_MODELS } from '@push/lib/provider-models';
+import { ZEN_GO_MODELS } from '../lib/zen-go';
 import {
   handleAnthropicChat,
   handleAnthropicModels,
@@ -37,6 +38,7 @@ import {
   handleZenChat,
   handleZenModels,
   handleZenGoChat,
+  handleZenGoModels,
   handleSakanaChat,
   handleSakanaModels,
   handleFireworksChat,
@@ -478,6 +480,91 @@ describe('handleZenGoChat', () => {
     const text = await response.text();
     expect(text).toContain('"type":"content_block_delta"');
     expect(text).not.toContain('"choices"');
+  });
+});
+
+describe('handleZenGoModels', () => {
+  function makeModelsRequest(): Request {
+    return new Request('https://push.example.test/api/zen/go/models', {
+      method: 'GET',
+      headers: { Origin: 'https://push.example.test' },
+    });
+  }
+
+  it('serves the live upstream listing keyless and annotates the curated transport', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [
+              { id: 'glm-5.2', object: 'model' },
+              { id: 'minimax-m3', object: 'model' },
+              // Live-only id absent from the static seed — must pass through
+              // (membership comes from upstream) with the fail-open transport.
+              { id: 'hy3-preview', object: 'model' },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }),
+    );
+    const response = await handleZenGoModels(makeModelsRequest(), makeEnv());
+    expect(captured?.url).toBe('https://opencode.ai/zen/go/v1/models');
+    expect(captured?.init.headers).not.toHaveProperty('Authorization');
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toEqual([
+      { id: 'glm-5.2', object: 'model', transport: 'openai' },
+      { id: 'minimax-m3', object: 'model', transport: 'anthropic' },
+      { id: 'hy3-preview', object: 'model', transport: 'openai' },
+    ]);
+  });
+
+  it('falls back to the static seed when upstream errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('upstream broke', { status: 502 })),
+    );
+    const response = await handleZenGoModels(makeModelsRequest(), makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const ids = body.data.map((m: { id: string }) => m.id);
+    expect(ids).toEqual([...ZEN_GO_MODELS]);
+    expect(body.data.find((m: { id: string }) => m.id === 'minimax-m3')?.transport).toBe(
+      'anthropic',
+    );
+  });
+
+  it('falls back to the static seed when upstream returns an empty or malformed list', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ object: 'list', data: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ),
+    );
+    const response = await handleZenGoModels(makeModelsRequest(), makeEnv({ ZEN_API_KEY: 'k' }));
+    const body = await response.json();
+    expect(body.data.map((m: { id: string }) => m.id)).toEqual([...ZEN_GO_MODELS]);
+  });
+
+  it('falls back to the static seed when upstream fetch throws', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down');
+      }),
+    );
+    const response = await handleZenGoModels(makeModelsRequest(), makeEnv({ ZEN_API_KEY: 'k' }));
+    const body = await response.json();
+    expect(body.data.map((m: { id: string }) => m.id)).toEqual([...ZEN_GO_MODELS]);
   });
 });
 

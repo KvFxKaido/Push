@@ -125,6 +125,16 @@ export const PROVIDER_URLS: Record<AIProviderType, ProviderUrlPair> = {
 export const ZEN_GO_MODELS: string[] = [...SHARED_ZEN_GO_MODELS];
 export { ZEN_GO_DEFAULT_MODEL };
 
+// Go-tier model listing. Not part of PROVIDER_URLS because `zen` is one
+// provider id with two tiers — the pair there is the standard tier. Dev hits
+// the upstream keyless listing through the `/opencode` Vite proxy; prod goes
+// through the Worker route, which live-proxies the same listing with the
+// static ZEN_GO_MODELS seed as fallback.
+export const ZEN_GO_MODELS_URL: string = providerUrl(
+  '/opencode/zen/go/v1/models',
+  '/api/zen/go/models',
+);
+
 export const ZEN_GO_URLS = {
   chat: providerUrl('/opencode/zen/go/v1/chat/completions', '/api/zen/go/chat'),
 };

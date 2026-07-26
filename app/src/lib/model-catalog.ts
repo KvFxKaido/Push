@@ -22,6 +22,7 @@ import {
   SAKANA_MODELS,
   XAI_MODELS,
   ZEN_GO_MODELS,
+  ZEN_GO_MODELS_URL,
   ZEN_MODELS,
 } from './providers';
 import { asRecord } from './utils';
@@ -1337,6 +1338,43 @@ export async function fetchZenModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenCode Zen model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+// Go-tier listing. Unlike the standard tier there is no models.dev curation
+// pass: the Go catalog is already provider-curated and small, and its ids
+// (`glm-5.1`, `kimi-k3`, …) are a flat namespace models.dev does not cover.
+// The endpoint (Worker in prod, upstream via Vite proxy in dev) is
+// authoritative for membership only — transport stays in lib/zen-go.ts.
+export async function fetchZenGoModels(): Promise<string[]> {
+  const key = getZenKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(ZEN_GO_MODELS_URL, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`OpenCode Zen Go model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+    return normalizeModelList((await res.json()) as unknown);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `OpenCode Zen Go model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }
