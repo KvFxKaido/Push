@@ -1821,7 +1821,16 @@ export function WorkspaceHubSheet({
                 onSaveMemory={onScratchpadSaveMemory}
                 onLoadMemory={onScratchpadLoadMemory}
                 onDeleteMemory={onScratchpadDeleteMemory}
-                onExportToRepo={handleExportScratchpadToRepo}
+                onExportToRepo={
+                  // Capability, not readiness: chat/relay surfaces have no
+                  // workspace-start implementation (their ensureSandbox is
+                  // null by construction), so the action is absent there
+                  // rather than warm-and-fail. Cold scratch/repo workspaces
+                  // warm normally. (#1610 review — both bots converged.)
+                  workspaceMode === 'repo' || workspaceMode === 'scratch'
+                    ? handleExportScratchpadToRepo
+                    : undefined
+                }
                 exportingToRepo={warmExport.warming}
                 artifacts={pinnedArtifacts}
                 onUnpin={onUnpinArtifact}
