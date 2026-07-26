@@ -52,6 +52,28 @@ overrides:
   # the optional local-embeddings chain), which pins ^0.5.16 — drop the override
   # once upstream declares >= 0.6.0.
   adm-zip: ^0.6.0
+  # GHSA-f88m-g3jw-g9cj (Dependabot #101): libvips CVEs fixed in sharp 0.35.0.
+  # This override CANNOT go there yet, and it is worse than it looks: it also
+  # holds sharp *below* what its own parent asks for. @huggingface/transformers
+  # @4.2.0 declares `sharp: ^0.34.5` (i.e. 0.34.x — caret on a 0.x minor does
+  # not reach 0.35), so this line silently downgrades the native image pipeline
+  # a minor below the declared range while pinning it to the vulnerable set.
+  # Raising it to ^0.35.0 would clear the advisory but break that range from
+  # the other side. Both moves need transformers to declare 0.35 first; until
+  # then the honest options are "stay put" or "drop the override and land on
+  # 0.34.x" (still flagged, but at least in range). Tracked separately — do not
+  # bump this line without checking transformers' declared range first.
   sharp: ^0.33.5
-  tar: ^7.5.16
+  # GHSA-v2hh-gcrm-f6hx (Dependabot #102/#103): host confusion via a literal
+  # backslash authority delimiter, fixed in 3.1.4. Transitive via ajv →
+  # ajv-formats. Mirrored in app/electron/package.json, which installs with
+  # --ignore-workspace and so is NOT covered by this workspace-global block.
+  fast-uri: ^3.1.4
+  # GHSA (Dependabot #106): uncontrolled recursion in node-tar's mapHas/
+  # filesFilter allows an uncatchable stack-overflow DoS, fixed in 7.5.21.
+  # Transitive via @capacitor/cli. The floor was ^7.5.16, which already
+  # permitted the fix — the lockfile had simply resolved 7.5.20 before 7.5.21
+  # published. Pinned to the patched floor so a future re-resolution cannot
+  # silently walk back under it.
+  tar: ^7.5.21
   minimatch@10.2.5>brace-expansion: ^5.0.6

@@ -27,6 +27,27 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
+  # ── pnpm, standalone: app/electron ───────────────────────────────
+  # A SECOND entry is required here, and it is the exception the note above
+  # does not cover. app/electron carries its own pnpm-lock.yaml because it
+  # installs with --ignore-workspace (see app/README.md "Desktop app"), so it
+  # is not one of the workspace packages Dependabot reaches from the root
+  # manifest — it was invisible to every update and every security PR until
+  # this entry existed. Symptom that found it: alert #103 (fast-uri) had no
+  # PR and never would have, while its twin #102 in the root lockfile did.
+  # It cannot collide with the root entry: different lockfile, no overlap.
+  - package-ecosystem: "npm"
+    directory: "/app/electron"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      electron-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   # ── GitHub Actions: workflow action versions ─────────────────────
   - package-ecosystem: "github-actions"
     directory: "/"

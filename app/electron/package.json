@@ -15,5 +15,10 @@
     "electron": "^43.0.0",
     "electron-builder": "^26.0.12",
     "typescript": "^5.5.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-uri": "^3.1.4"
+    }
   }
 }
