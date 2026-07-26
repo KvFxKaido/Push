@@ -22,12 +22,12 @@
 # Don't trust this line — verify it. The version is a property of the base image,
 # not of anything we declare, so it moves without us. Ask node itself (the base's
 # ENTRYPOINT is the container server, so override it):
-#   docker run --rm --entrypoint node cloudflare/sandbox:0.12.3-python -v
+#   docker run --rm --entrypoint node cloudflare/sandbox:0.12.4-python -v
 #
 # Fallback, if your Docker cannot start containers — read the version string out of
 # the binary without running it. Note `docker cp <cid>:<path> -` writes a TAR STREAM
 # to stdout, so copy to a file, don't pipe it:
-#   cid=$(docker create cloudflare/sandbox:0.12.3-python)
+#   cid=$(docker create cloudflare/sandbox:0.12.4-python)
 #   docker cp "$cid:/usr/local/bin/node" ./node.bin && docker rm "$cid"
 #   strings ./node.bin | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$'
 # Don't substitute npm's version as a proxy — npm major does not track Node major
