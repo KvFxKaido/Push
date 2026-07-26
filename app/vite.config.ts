@@ -181,11 +181,7 @@ export default defineConfig({
           if (id.includes('node_modules/date-fns')) {
             return 'vendor-date';
           }
-          if (
-            id.includes('node_modules/zod') ||
-            id.includes('node_modules/react-hook-form') ||
-            id.includes('@hookform')
-          ) {
+          if (id.includes('node_modules/zod') || id.includes('node_modules/react-hook-form')) {
             return 'vendor-forms';
           }
           if (id.includes('@opentelemetry')) {
