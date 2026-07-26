@@ -221,7 +221,7 @@ export function useSnapshotManager(
           : null;
     }
     if (!targetSandboxId) {
-      toast.error('Sandbox is not ready');
+      toast.error('Workspace is not ready');
       return;
     }
 

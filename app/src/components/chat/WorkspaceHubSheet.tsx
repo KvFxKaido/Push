@@ -519,6 +519,7 @@ export function WorkspaceHubSheet({
     setHibernating(true);
     try {
       const ok = await onHibernateSandbox();
+      // eslint-disable-next-line no-restricted-syntax -- census row C1, removed in Wave 2
       if (ok) toast.success('Sandbox hibernated — workspace snapshot saved');
       else toast.error('Hibernate failed — please try again');
     } finally {
@@ -529,7 +530,7 @@ export function WorkspaceHubSheet({
   const handleForgetSnapshotClick = useCallback(() => {
     if (!onForgetSandboxSnapshot) return;
     onForgetSandboxSnapshot();
-    toast.success('Forgot sandbox snapshot — next start will be a clean clone');
+    toast.success('Snapshot dropped — next start will be a fresh clone');
   }, [onForgetSandboxSnapshot]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
@@ -675,6 +676,7 @@ export function WorkspaceHubSheet({
   // ---- Commit & Push flow ----
   const openCommitTargetSheet = useCallback(() => {
     if (!sandboxReady) {
+      // eslint-disable-next-line no-restricted-syntax -- census row C4, removed in Wave 3
       toast.error('Sandbox is not ready.');
       return;
     }
@@ -687,6 +689,7 @@ export function WorkspaceHubSheet({
 
   const handleExportScratchpadToRepo = useCallback(async () => {
     if (!sandboxId) {
+      // eslint-disable-next-line no-restricted-syntax -- census row C4, removed in Wave 3
       toast.error('Sandbox is not ready.');
       return;
     }
@@ -705,6 +708,7 @@ export function WorkspaceHubSheet({
   const runCommitAndPush = useCallback(
     async (target: CommitPushTarget) => {
       if (!sandboxId) {
+        // eslint-disable-next-line no-restricted-syntax -- census row C4, removed in Wave 3
         toast.error('Sandbox is not ready.');
         return;
       }
@@ -932,6 +936,7 @@ export function WorkspaceHubSheet({
 
   const suggestCommitMessage = useCallback(async () => {
     if (!sandboxId) {
+      // eslint-disable-next-line no-restricted-syntax -- census row C4, removed in Wave 3
       toast.error('Sandbox is not ready.');
       return;
     }
@@ -1158,7 +1163,7 @@ export function WorkspaceHubSheet({
             };
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : 'Unable to inspect sandbox changes.';
+          const message = err instanceof Error ? err.message : "Couldn't read workspace changes.";
           setSwitchProbe((current) => {
             if (!current || current.branch !== branch) return current;
             return {
@@ -1526,18 +1531,21 @@ export function WorkspaceHubSheet({
                     <span className="text-push-fg-dim">Reconnecting…</span>
                   )}
                   {sandboxStatus === 'creating' && (
+                    /* eslint-disable-next-line no-restricted-syntax -- census row A1, removed in Wave 4 */
                     <span className="text-push-fg-dim">Starting sandbox…</span>
                   )}
                   {sandboxStatus === 'idle' && (
                     <span className="text-push-fg-dim">
                       {snapshotInfo
                         ? `Sandbox hibernated · snapshot ${formatSnapshotAge(snapshotInfo.createdAt)}`
-                        : 'Sandbox not running'}
+                        : 'Workspace not running'}
                     </span>
                   )}
                   {sandboxStatus === 'error' && (
                     <span className="text-red-400">
-                      {sandboxError ? categorizeSandboxError(sandboxError).title : 'Sandbox error'}
+                      {sandboxError
+                        ? categorizeSandboxError(sandboxError).title
+                        : 'Workspace error'}
                     </span>
                   )}
                 </span>
@@ -1570,7 +1578,7 @@ export function WorkspaceHubSheet({
                     {sandboxStatus === 'error' ? (
                       <>
                         <Plus className="h-3 w-3" />
-                        <span>New</span>
+                        <span>Fresh workspace</span>
                       </>
                     ) : (
                       <span>{snapshotInfo ? 'Restore' : 'Start'}</span>
@@ -1588,6 +1596,7 @@ export function WorkspaceHubSheet({
             >
               <div className="min-w-0 flex items-center gap-2">
                 <SandboxCubeIcon className="h-3 w-3 flex-shrink-0 text-push-fg-dim" />
+                {/* eslint-disable-next-line no-restricted-syntax -- census row C1, removed in Wave 2 */}
                 <span className="min-w-0 truncate text-push-xs text-push-fg-dim">
                   Sandbox live — hibernate to preserve the working tree across sessions
                 </span>
@@ -1775,7 +1784,7 @@ export function WorkspaceHubSheet({
               <div className="space-y-2">
                 <div className="min-w-0">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-push-fg-dim">
-                    Sandbox Actions
+                    Workspace Actions
                   </p>
                   <p
                     className={`mt-1 truncate text-push-xs ${scratchActions.tone === 'stale' ? 'text-amber-300' : 'text-push-fg-dim'}`}
@@ -1814,7 +1823,7 @@ export function WorkspaceHubSheet({
                     onClick={scratchActions.onDownloadWorkspace}
                     disabled={!scratchActions.canDownloadWorkspace}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5 disabled:opacity-50`}
-                    title="Download sandbox workspace"
+                    title="Download workspace"
                   >
                     {scratchActions.downloadingWorkspace ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />

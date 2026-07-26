@@ -30,17 +30,20 @@ export function isDefinitivelyGoneError(err: unknown): boolean {
 export function categorizeSandboxError(raw: string): { title: string; detail: string } {
   const lower = raw.toLowerCase();
   if (lower.includes('clone') || lower.includes('git clone')) {
-    return { title: 'Repository clone failed', detail: 'Check repo access and try a new sandbox.' };
+    return {
+      title: 'Repository clone failed',
+      detail: 'Check repo access and try a fresh workspace.',
+    };
   }
   if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('inactivity')) {
-    return { title: 'Sandbox timed out', detail: 'The container stopped responding.' };
+    return { title: 'Workspace stopped responding', detail: 'The workspace stopped responding.' };
   }
   if (
     lower.includes('unreachable') ||
     lower.includes('connection refused') ||
     lower.includes('econnrefused')
   ) {
-    return { title: 'Sandbox unreachable', detail: 'Could not connect to the container.' };
+    return { title: 'Workspace unreachable', detail: 'Could not connect to the workspace.' };
   }
   // Sandbox session auth failures — check BEFORE the generic GitHub auth
   // match. The CF owner-token scheme surfaces errors like "Owner token does
@@ -54,7 +57,7 @@ export function categorizeSandboxError(raw: string): { title: string; detail: st
     lower.includes('sandbox_tokens')
   ) {
     return {
-      title: 'Sandbox session expired',
+      title: 'Workspace session expired',
       detail: 'Start a new sandbox to continue.',
     };
   }
@@ -67,10 +70,10 @@ export function categorizeSandboxError(raw: string): { title: string; detail: st
     return { title: 'Authentication error', detail: 'Check your GitHub token in Settings.' };
   }
   if (lower.includes('memory') || lower.includes('oom')) {
-    return { title: 'Out of memory', detail: 'The sandbox ran out of memory.' };
+    return { title: 'Out of memory', detail: 'The workspace ran out of memory.' };
   }
   return {
-    title: 'Sandbox error',
+    title: 'Workspace error',
     detail: raw.length < 120 ? raw : 'Something went wrong. Start a new sandbox to continue.',
   };
 }

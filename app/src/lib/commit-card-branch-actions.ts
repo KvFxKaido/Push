@@ -113,7 +113,7 @@ export async function runCommitSwitchDefaultAction({
       noSandbox: false,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unable to inspect sandbox changes.';
+    const message = err instanceof Error ? err.message : "Couldn't read workspace changes.";
     openConfirm(targetBranch, {
       branch: targetBranch,
       loading: false,

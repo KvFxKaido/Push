@@ -35,6 +35,36 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  // Runtime-silence vocabulary pin. Keep this deliberately narrow: only
+  // literal JSX copy and direct toast.*() copy are user-facing channels here.
+  // Runtime identifiers, protocols, logs, API paths, and tool names still use
+  // "sandbox" internally and must remain available to implementation code.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/worker/**', 'src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'JSXText[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'CallExpression[callee.type="MemberExpression"][callee.object.name="toast"] > Literal.arguments[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'CallExpression[callee.type="MemberExpression"][callee.object.name="toast"] > TemplateLiteral.arguments TemplateElement[value.raw=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+      ],
+    },
+  },
   // Containment guard for useChat.ts. The hook regrew from 770 -> 1,733
   // lines between 2026-03-25 and 2026-04-19 because new features kept
   // landing sibling modules *and* hook-level coordinators. This ceiling
@@ -173,6 +203,12 @@ export default defineConfig([
     files: ['src/components/cards/**/*.{ts,tsx}'],
     ignores: ['src/components/cards/**/*.test.{ts,tsx}'],
     rules: {
+      // Flat-config gotcha: this block MATCHES INSIDE the src/** vocabulary-pin
+      // block above, and a later block's rule config REPLACES (not merges) the
+      // earlier one for matching files. So this block must restate the
+      // vocabulary selectors alongside its own, or cards/** silently loses the
+      // "sandbox" copy pin — and cards is exactly where SandboxCard and the
+      // sandbox-console live. Keep both selector sets in sync.
       'no-restricted-syntax': [
         'error',
         {
@@ -184,6 +220,23 @@ export default defineConfig([
           selector: 'TemplateElement[value.raw=/shadow-push-(raised|inset)/]',
           message:
             'Neumorphic depth (shadow-push-raised / shadow-push-inset) is chrome-only — content cards stay flat (border + background contrast). See DESIGN.md → Shadows. For a card that floats off the page, use shadow-push-card*.',
+        },
+        {
+          selector: 'JSXText[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'CallExpression[callee.type="MemberExpression"][callee.object.name="toast"] > Literal.arguments[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'CallExpression[callee.type="MemberExpression"][callee.object.name="toast"] > TemplateLiteral.arguments TemplateElement[value.raw=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
         },
       ],
     },

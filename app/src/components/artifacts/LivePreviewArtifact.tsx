@@ -32,7 +32,7 @@ export function LivePreviewArtifact({ record }: LivePreviewArtifactProps) {
           build. Metadata is shown for transparency.
         </p>
         <dl className="mt-3 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-push-xs text-push-fg-dim">
-          <dt>Sandbox</dt>
+          <dt>Workspace</dt>
           <dd className="truncate text-push-fg-secondary">{record.sandboxId}</dd>
           <dt>Port</dt>
           <dd className="text-push-fg-secondary">{record.port}</dd>

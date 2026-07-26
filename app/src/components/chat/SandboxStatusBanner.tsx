@@ -13,7 +13,7 @@ interface SandboxStatusChipProps {
 export function SandboxStatusChip({ status, error, onOpenWorkspaceHub }: SandboxStatusChipProps) {
   if (status === 'ready') return null;
 
-  const errorTitle = error ? categorizeSandboxError(error).title : 'Sandbox needs attention';
+  const errorTitle = error ? categorizeSandboxError(error).title : 'Workspace needs attention';
   const config: {
     label: string;
     title: string;
@@ -36,7 +36,7 @@ export function SandboxStatusChip({ status, error, onOpenWorkspaceHub }: Sandbox
           }
         : status === 'error'
           ? {
-              label: 'Sandbox',
+              label: 'Workspace',
               title: errorTitle,
               className: 'text-red-300 hover:text-red-200',
               indicator: <span className="h-1.5 w-1.5 rounded-full bg-red-400" />,
