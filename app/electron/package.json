@@ -14,7 +14,7 @@
     "@capawesome/capacitor-electron": "^0.1.0",
     "electron": "^43.0.0",
     "electron-builder": "^26.0.12",
-    "typescript": "^5.5.0"
+    "typescript": "^7.0.2"
   },
   "pnpm": {
     "overrides": {
