@@ -51,17 +51,25 @@ Target end-state: the chip has exactly one visible state — error. All healthy 
 
 **Wave 0 findings (2026-07-26).** The banner is *not* dead code: scratch sessions are
 reachable (`App.tsx` draft composer + no-repo conversation resume) and start real
-sandboxes (`sandboxStart('', 'main')`), so `isScratch` passes non-null props. But the
-banner's model of the runtime is wrong twice on the shipped provider
-(`PUSH_SANDBOX_PROVIDER: "cloudflare"`): wrong number (hardcoded
-`SANDBOX_LIFETIME_MS = 30 min`, a Modal container policy, vs. CF's `sleepAfter: '1h'`)
-and wrong shape (fixed lifetime from `createdAt` vs. idle-based sleep — an active CF
-session can live for hours). At minute 25 of any scratch session it starts a countdown;
-at minute 30 it announces "Workspace runtime expired" about a container that is alive.
+sandboxes (`sandboxStart('', 'main')`), so `isScratch` passes non-null props. And its
+hardcoded `SANDBOX_LIFETIME_MS = 30 min` is wrong on **both** supported providers:
+
+- **Cloudflare** (shipped default): wrong *shape* — the policy is idle-based
+  `sleepAfter: '1h'`, not a fixed lifetime from `createdAt`; an active session can
+  live for hours. At minute 30 of a healthy session the banner announces "Workspace
+  runtime expired" about a container that is alive.
+- **Modal** (supported via the `PUSH_SANDBOX_PROVIDER` wrangler var): wrong *number* —
+  `sandbox/app.py` sets `SANDBOX_TIMEOUT_SECONDS = 7200` (a 2h hard deadline), so the
+  banner fires 90 minutes early. The component comment calling 30 minutes a "Modal
+  container policy" is itself stale. (Credit: the Modal half of this finding is from
+  Codex review on #1605 — the census originally repeated the stale comment.)
+
 The T−5 "expiry checkpoint" callback rests on the same false premise; the idle reaper
 snapshot and snapshot-on-hide (#1270) are the actual safety nets on CF. Verdict
-upgraded from VERIFY to DELETE (banner, both states, and the callback wiring); a
-resurrected Modal path would need a provider-aware policy, not a hardcoded constant.
+upgraded from VERIFY to DELETE (banner, both states, and the callback wiring). Any
+future lifetime display must derive from the provider's actual policy, not a constant —
+and note the same wrong constant is *duplicated* in `RepoLauncherPanel.tsx` (section M),
+two independent copies of a number that matches neither provider.
 
 ### C. Workspace hub sheet — `WorkspaceHubSheet.tsx`
 
@@ -140,18 +148,46 @@ resurrected Modal path would need a provider-aware policy, not a hardcoded const
 | L2 | Publish flow | "Wait for the current response to finish before publishing." | work wait | KEEP — it's about the work |
 | L3 | Publish flow | "Connect GitHub in Settings before publishing this workspace." | CONSENT | KEEP |
 
+### M. Repo launcher panel — `RepoLauncherPanel.tsx`
+
+Missed by the census's first pass; surfaced by Codex review on #1605. The launcher
+duplicates the expiry banner's model with its own copy of the wrong constant
+(`SANDBOX_SESSION_LIFETIME_MS = 30 min`) — a second, independent false countdown.
+
+| # | Trigger | Copy | Bin | Verdict |
+|---|---|---|---|---|
+| M1 | status `ready` | "Sandbox session active - N min left" (green, amber inside 5 min) | NARRATION | DELETE — false countdown on both providers, same grounds as B1/B2 |
+| M2 | status `creating` | "Sandbox is starting" | WAIT | ABSORB — aligns with A1; local-first entry removes the wait from view |
+| M3 | status `reconnecting` | "Reconnecting to your sandbox" | NARRATION | DEMOTE — aligns with A2 |
+| M4 | status `error` | "Sandbox needs attention before you continue" | CONSENT-adjacent | REWORD — error is the one state that earns pixels (A3); work vocabulary |
+
 ## Tallies
 
-34 moments: **KEEP 9** · **REWORD 10** · **QUEUE 3 surfaces (7 call sites)** · **ABSORB 5** · **DEMOTE/DELETE 10**.
+Each row is counted once, under its primary outcome (a "KEEP, REWORD" row counts as
+REWORD — the moment survives with new copy; E1's LOCAL-FIRST counts as ABSORB — the
+wait is absorbed by local reads).
 
-Roughly three-quarters of the runtime's speaking roles are cuttable without losing a single real decision.
+47 rows (A1–M4):
+
+| Outcome | Count | Rows |
+|---|---|---|
+| KEEP | 10 | A3, C10, F3, F4, I1, I5, I6, K1, L2, L3 |
+| REWORD | 14 | C3, C5, C6, C8, C9, D1, D2, D3, G1, G2, I2, I3, I7, M4 |
+| QUEUE | 2 (6 call sites) | C4 (5 sites), L1 |
+| ABSORB | 7 | A1, C7, E1, E2, H1, I4, M2 |
+| DEMOTE | 5 | A2, F1, F2, H2, M3 |
+| DELETE | 8 | A4, B1, B2, C1, C2, H3, H4, M1 |
+| FIX | 1 | J1 |
+
+37 of 47 rows — a little under four-fifths of the runtime's speaking roles — are
+cuttable or rewritable without losing a single real decision.
 
 ## Burn-down
 
-- **Wave 0 — verify: DONE 2026-07-26.** `SandboxExpiryBanner` is live on the scratch lane and factually wrong on the shipped provider (findings under section B). Deletion is Wave 2's first item, not a dead-code sweep.
+- **Wave 0 — verify: DONE 2026-07-26.** `SandboxExpiryBanner` is live on the scratch lane and factually wrong on **both** providers (findings under section B), and the launcher panel duplicates the same wrong constant (section M). Wave 2's first item is deleting both countdown surfaces, not a dead-code sweep.
 - **Wave 1 — copy (one PR):** every REWORD. Pure strings. Establishes the vocabulary rule; a lint-able convention ("sandbox" banned from user-facing literals) can pin it.
 - **Wave 2 — silence (small PRs):** DELETE/DEMOTE the narration set. Each deletion must first confirm its automation actually covers the case (per the self-review rule: execute the claim — kill a reconnect toast only after watching a reconnection heal silently). Structured logs gain what the UI loses.
-- **Wave 3 — queue-on-warm (medium):** the C4/E2/L1 family. One shared "accept, warm, run" affordance replaces seven refusals.
+- **Wave 3 — queue-on-warm (medium):** C4 + L1. One shared "accept, warm, run" affordance replaces six refusal sites; the E-tab waits (E1/E2) die in Wave 4's local-first entry instead.
 - **Wave 4 — local-first entry (the big one, scoped separately):** hub Files/Diff/status paint from the native clone (backend seam) before any runtime exists; chat attaches when ready. Kills the A1 wait class at the root rather than restyling it.
 
 ## Resolved questions (veto pass, 2026-07-26)
