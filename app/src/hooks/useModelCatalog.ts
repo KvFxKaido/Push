@@ -34,6 +34,7 @@ import {
   fetchZaiModels,
   fetchKimiModels,
   fetchHuggingFaceModels,
+  fetchZenGoModels,
   fetchZenModels,
   fetchFireworksModels,
   fetchSakanaModels,
@@ -428,13 +429,19 @@ export function buildModelControl(
 // ---------------------------------------------------------------------------
 
 export function useModelCatalog(): ModelCatalog {
+  // The Go catalog must exist before useZenConfig so its validation follows
+  // the live membership source. Until the first successful fetch, pass null to
+  // preserve upstream-only selections instead of rejecting them against the
+  // smaller static fallback seed.
+  const [zenGoModelList, setZenGoModelList] = useState<string[]>([]);
+
   // Provider key/model configs
   const ollamaCfg = useOllamaConfig();
   const openRouterCfg = useOpenRouterConfig();
   const zaiCfg = useZaiConfig();
   const kimiCfg = useKimiConfig();
   const huggingfaceCfg = useHuggingFaceConfig();
-  const zenCfg = useZenConfig();
+  const zenCfg = useZenConfig(zenGoModelList.length > 0 ? zenGoModelList : null);
   const fireworksCfg = useFireworksConfig();
   const sakanaCfg = useSakanaConfig();
   const deepseekCfg = useDeepSeekConfig();
@@ -842,15 +849,29 @@ export function useModelCatalog(): ModelCatalog {
     [providerCatalogAvailability.zen, zenLoading, refreshModels],
   );
 
+  const refreshZenGoModels = useCallback(async () => {
+    await refreshModels({
+      canFetch: providerCatalogAvailability.zen,
+      isLoading: zenLoading,
+      setLoading: setZenLoading,
+      setError: setZenError,
+      setModels: setZenGoModelList,
+      setUpdatedAt: setZenUpdatedAt,
+      fetchModels: fetchZenGoModels,
+      emptyMessage: 'No models returned by OpenCode Zen Go.',
+      failureMessage: 'Failed to load OpenCode Zen Go models.',
+    });
+  }, [providerCatalogAvailability.zen, zenLoading, refreshModels]);
+
   const refreshZenModels = useCallback(
     async (force = true) => {
       if (zenCfg.goMode) {
-        setZenError(null);
+        await refreshZenGoModels();
         return;
       }
       await refreshZenStandardModels(force);
     },
-    [refreshZenStandardModels, zenCfg.goMode],
+    [refreshZenGoModels, refreshZenStandardModels, zenCfg.goMode],
   );
 
   const refreshFireworksModels = useCallback(async () => {
@@ -1092,25 +1113,30 @@ export function useModelCatalog(): ModelCatalog {
   useEffect(
     () =>
       scheduleAutoFetch(
-        !zenCfg.goMode &&
-          shouldAutoFetchProviderModels({
-            canFetch: providerCatalogAvailability.zen,
-            modelCount: zenModelList.length,
-            loading: zenLoading,
-            error: zenError,
-          }),
+        shouldAutoFetchProviderModels({
+          canFetch: providerCatalogAvailability.zen,
+          modelCount: zenCfg.goMode ? zenGoModelList.length : zenModelList.length,
+          loading: zenLoading,
+          error: zenError,
+        }),
         activeProviderLabel === 'zen',
         () => {
-          void refreshZenStandardModels(false);
+          if (zenCfg.goMode) {
+            void refreshZenGoModels();
+          } else {
+            void refreshZenStandardModels(false);
+          }
         },
       ),
     [
       activeProviderLabel,
+      refreshZenGoModels,
       refreshZenStandardModels,
       zenCfg.goMode,
       providerCatalogAvailability.zen,
       zenError,
       zenLoading,
+      zenGoModelList.length,
       zenModelList.length,
     ],
   );
@@ -1445,11 +1471,11 @@ export function useModelCatalog(): ModelCatalog {
   }, [sakanaModelList, sakanaSelectedModel, setSakanaModel]);
 
   const activeZenModelList = useMemo(
-    () => (zenCfg.goMode ? [] : zenModelList),
-    [zenCfg.goMode, zenModelList],
+    () => (zenCfg.goMode ? zenGoModelList : zenModelList),
+    [zenCfg.goMode, zenGoModelList, zenModelList],
   );
-  const activeZenLoading = zenCfg.goMode ? false : zenLoading;
-  const activeZenError = zenCfg.goMode ? null : zenError;
+  const activeZenLoading = zenLoading;
+  const activeZenError = zenError;
   const activeZenUpdatedAt = zenCfg.goMode ? null : zenUpdatedAt;
 
   // Model option lists (ensure selected model is always included)

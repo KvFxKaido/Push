@@ -14,8 +14,11 @@ describe('zen-go', () => {
         'deepseek-v4-pro',
         'glm-5.1',
         'glm-5.2',
+        'grok-4.5',
+        'hy3',
         'kimi-k2.6',
         'kimi-k2.7-code',
+        'kimi-k3',
         'mimo-v2.5',
         'mimo-v2.5-pro',
         'minimax-m2.5',
@@ -26,7 +29,7 @@ describe('zen-go', () => {
         'qwen3.7-plus',
       ]),
     );
-    expect(ZEN_GO_MODELS).toHaveLength(14);
+    expect(ZEN_GO_MODELS).toHaveLength(17);
   });
 
   it('exposes an explicit default model', () => {
@@ -51,6 +54,11 @@ describe('zen-go', () => {
     expect(getZenGoTransport('deepseek-v4-flash')).toBe('openai');
     expect(getZenGoTransport('mimo-v2.5')).toBe('openai');
     expect(getZenGoTransport('mimo-v2.5-pro')).toBe('openai');
+    // 2026-07 additions — all three publish on the oa-compat endpoint per the
+    // docs AI SDK column (@ai-sdk/openai-compatible).
+    expect(getZenGoTransport('grok-4.5')).toBe('openai');
+    expect(getZenGoTransport('kimi-k3')).toBe('openai');
+    expect(getZenGoTransport('hy3')).toBe('openai');
   });
 
   it('fails open to the default OpenAI-compatible transport for unknown ids', () => {

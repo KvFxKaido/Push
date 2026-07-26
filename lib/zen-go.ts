@@ -19,16 +19,34 @@ const ZEN_GO_ANTHROPIC_MODELS = new Set([
   'qwen3.7-plus',
 ]);
 
-// Mirrors the live OpenCode Go catalog (opencode.ai/docs/go), refreshed
-// 2026-07-09. Keep this shared: provider routing and capability resolution both
+// Mirrors the documented OpenCode Go catalog (opencode.ai/docs/go), refreshed
+// 2026-07-26. Keep this shared: provider routing and capability resolution both
 // need the exact same model set.
+//
+// This static list is the SEED and FALLBACK, not the only source: the live
+// keyless listing at https://opencode.ai/zen/go/v1/models is authoritative for
+// membership, and the web catalog fetches it (Worker `/api/zen/go/models`
+// proxies it with this list as the offline fallback). The live listing is a
+// superset of the docs — it also serves legacy ids (`glm-5`, `kimi-k2.5`,
+// `qwen3.5-plus`, `mimo-v2-pro`, `mimo-v2-omni`, `hy3-preview`) that the docs
+// no longer advertise; those are deliberately not seeded here.
+//
+// What the live listing CANNOT provide is the transport axis above — the
+// payload has no such field, and the keyless probe that used to discriminate
+// (oa-compat ModelError-before-auth, #756) stopped working when the Go endpoint
+// began resolving every catalog model on both endpoints before auth
+// (verified 2026-07-26). Transport stays hand-curated in this file; refresh it
+// from the docs table's AI SDK column when the catalog moves.
 export const ZEN_GO_MODELS = [
   'deepseek-v4-flash',
   'deepseek-v4-pro',
   'glm-5.1',
   'glm-5.2',
+  'grok-4.5',
+  'hy3',
   'kimi-k2.6',
   'kimi-k2.7-code',
+  'kimi-k3',
   'mimo-v2.5',
   'mimo-v2.5-pro',
   'minimax-m2.5',
