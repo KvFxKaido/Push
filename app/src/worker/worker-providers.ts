@@ -1451,6 +1451,9 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   }
 }
 
+const ZEN_GO_MODELS_URL = 'https://opencode.ai/zen/go/v1/models';
+const ZEN_GO_MODELS_TIMEOUT_MS = 30_000;
+
 export async function handleZenGoModels(request: Request, env: Env): Promise<Response> {
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth('ZEN_API_KEY'),
@@ -1459,15 +1462,88 @@ export async function handleZenGoModels(request: Request, env: Env): Promise<Res
     needsBody: false,
   });
   if (preamble instanceof Response) return preamble;
+  const { requestId } = preamble;
 
-  return Response.json({
-    object: 'list',
-    data: ZEN_GO_MODELS.map((id) => ({
-      id,
-      object: 'model',
-      transport: getZenGoTransport(id),
-    })),
-  });
+  // The upstream Go listing is keyless and authoritative for MEMBERSHIP only —
+  // its payload carries no transport field, so each id is annotated from the
+  // hand-curated map in lib/zen-go.ts (see the transport note there). The
+  // static ZEN_GO_MODELS list is the fallback when upstream is unreachable.
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ZEN_GO_MODELS_TIMEOUT_MS);
+    let upstream: Response;
+    try {
+      upstream = await fetch(ZEN_GO_MODELS_URL, {
+        method: 'GET',
+        headers: { [REQUEST_ID_HEADER]: requestId },
+        signal: controller.signal,
+        // Skip the edge cache so each refresh reflects the live catalog (see
+        // the GET note in createJsonProxyHandler for the stale-list rationale).
+        cache: 'no-store',
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const body = await upstream.text().catch(() => '');
+      wlog('warn', 'upstream_error_fallback', {
+        requestId,
+        route: 'api/zen/go/models',
+        status: upstream.status,
+        body: body.slice(0, 300),
+      });
+      return staticZenGoModelsResponse(requestId);
+    }
+
+    const json = (await upstream.json().catch(() => null)) as {
+      data?: Array<{ id?: unknown }>;
+    } | null;
+    const upstreamData = Array.isArray(json?.data) ? json!.data : [];
+    const models = upstreamData
+      .map((entry) => (entry && typeof entry === 'object' ? entry.id : null))
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .map((id) => ({ id, object: 'model', transport: getZenGoTransport(id) }));
+
+    // Empty result is suspicious (upstream shape drift) — prefer the static
+    // list over an empty dropdown.
+    if (models.length === 0) {
+      wlog('warn', 'empty_after_filter_fallback', {
+        requestId,
+        route: 'api/zen/go/models',
+        upstreamCount: upstreamData.length,
+      });
+      return staticZenGoModelsResponse(requestId);
+    }
+
+    return Response.json(
+      { object: 'list', data: models },
+      { headers: { [REQUEST_ID_HEADER]: requestId } },
+    );
+  } catch (err) {
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('warn', isTimeout ? 'upstream_timeout_fallback' : 'unhandled_fallback', {
+      requestId,
+      route: 'api/zen/go/models',
+      message: err instanceof Error ? err.message : String(err),
+      timeout: isTimeout,
+    });
+    return staticZenGoModelsResponse(requestId);
+  }
+}
+
+function staticZenGoModelsResponse(requestId: string): Response {
+  return Response.json(
+    {
+      object: 'list',
+      data: ZEN_GO_MODELS.map((id) => ({
+        id,
+        object: 'model',
+        transport: getZenGoTransport(id),
+      })),
+    },
+    { headers: { [REQUEST_ID_HEADER]: requestId } },
+  );
 }
 
 // --- OpenRouter + OpenAI + xAI + Sakana + Fireworks (/v1/responses) ---
