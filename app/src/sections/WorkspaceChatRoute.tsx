@@ -535,7 +535,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
 
       const sandboxId = sandbox.sandboxId ?? (await ensureSandbox());
       if (!sandboxId) {
-        throw new Error('Sandbox is not ready yet. Try again in a moment.');
+        throw new Error('Workspace could not start. Try again in a moment.');
       }
 
       const result = await executeSandboxToolCall(

@@ -1,6 +1,6 @@
 # Runtime Silence Census
 
-**Status:** Current (partially implemented — Waves 0, 1, and 2 shipped; Waves 3 and 4 pending)
+**Status:** Current (partially implemented — Waves 0–3 shipped; Wave 4 pending)
 **Date:** 2026-07-26
 **Scope:** every user-visible moment where the web/native app makes the user aware of the runtime (sandbox, container, snapshot machinery, connectivity). CLI/TUI vocabulary and Worker-side card internals are out of scope. Component/file *names* (`SandboxStatusBanner.tsx` etc.) are out of scope — this census is about copy that reaches a user, not identifiers.
 
@@ -78,7 +78,7 @@ two independent copies of a number that matches neither provider.
 | C1 | Hibernate pressed | "Sandbox hibernated — workspace snapshot saved" | OPERATOR | ABSORB — snapshot-on-hide shipped; manual hibernate is a pre-automation vestige. Control deleted outright. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 | C2 | Hibernate failed | "Hibernate failed — please try again" | OPERATOR | died with C1. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 | C3 | Forget snapshot | "Forgot sandbox snapshot — next start will be a clean clone" / "Drop the saved snapshot so the next start is a clean clone" | OPERATOR w/ real intent | REWORD — the *intent* ("start clean") is legitimate work vocabulary. **SHIPPED 2026-07-26:** "Snapshot dropped — next start will be a fresh clone". |
-| C4 | Commit target sheet, scratchpad export, commit+push run, suggest-commit-message, commit flow (5 sites) | "Sandbox is not ready." | WAIT | QUEUE — never refuse a work action because the machine is cold |
+| C4 | Commit target sheet, scratchpad export, commit+push run, suggest-commit-message, commit flow (5 sites) | "Sandbox is not ready." | WAIT | QUEUE — never refuse a work action because the machine is cold. **SHIPPED 2026-07-26 (Wave 3):** all five sites accept-warm-run (`useWarmAction` over the controller's `ensureSandbox`, reservation before the first await); the dead-button `!sandboxReady` disables went with the toasts; failure copy is "Workspace could not start. Try again in a moment." |
 | C5 | Diff inspect fails | "Unable to inspect sandbox changes." | error | REWORD. **SHIPPED 2026-07-26:** "Couldn't read workspace changes." |
 | C6 | Status section | "Sandbox not running" / "Sandbox error" | NARRATION | **COPY SHIPPED 2026-07-26:** "Workspace not running" / "Workspace error". The structural collapse to one workspace status row remains an open behavioral item. |
 | C7 | Manual snapshot | "Save sandbox snapshot" | OPERATOR | ABSORB — autosave cadence + on-hide already cover it |
@@ -144,7 +144,7 @@ two independent copies of a number that matches neither provider.
 |---|---|---|---|---|
 | J1 | FileBrowser (native) | "Commit & Push from Files is not available for native workspaces yet." | capability gap narrated as topology | FIX — wire native commit/push (typed plugin methods exist); the copy dies with the gap |
 | K1 | Relay | "Could not reach the daemon to resume this session." | CONSENT (retry/pair) | KEEP — optional reword "your machine" |
-| L1 | Publish flow | "Sandbox is not ready yet. Try again in a moment." | WAIT | QUEUE |
+| L1 | Publish flow | "Sandbox is not ready yet. Try again in a moment." | WAIT | QUEUE. **Wave 3 finding:** already warmed via `ensureSandbox` — the message was the *failure* path wearing refusal copy; reworded 2026-07-26 |
 | L2 | Publish flow | "Wait for the current response to finish before publishing." | work wait | KEEP — it's about the work |
 | L3 | Publish flow | "Connect GitHub in Settings before publishing this workspace." | CONSENT | KEEP |
 
@@ -187,7 +187,7 @@ cuttable or rewritable without losing a single real decision.
 - **Wave 0 — verify: DONE 2026-07-26.** `SandboxExpiryBanner` is live on the scratch lane and factually wrong on **both** providers (findings under section B), and the launcher panel duplicates the same wrong constant (section M). Wave 2's first item is deleting both countdown surfaces, not a dead-code sweep.
 - **Wave 1 — copy: DONE 2026-07-26.** Every REWORD plus the A3/I1/I4/I6 law-compliance copy shipped, and `no-restricted-syntax` pins the user-copy channels. After a review finding that the initial pin (literal JSX + direct `toast.*()`) missed expression-based copy, the selectors were extended to JSX expression literals/templates, visible attributes (`title`/`aria-label`/`placeholder`/`alt`), and copy-bearing config properties (`title`/`label`/`detail`/`description`) — which surfaced and reworded ~24 further visible strings (BranchSwitchConfirm, WorkspacePatchCard, the chip tooltips, the E-tab buttons, the C4 refusals, and more). **Convention:** later-wave rows now carry law-compliant *wording* while keeping their scheduled fate — the census tables, not lint disables, track the burn-down. The only `eslint-disable` exemptions are annotated internals: tool names in model-facing guidance (tool identifiers are exempt from the pin by design). Internal enum/type literals were hoisted to module scope rather than exempted. C6's structural collapse and C9's error-recovery-only gating remain open behavioral items; Wave 1 changed their strings only.
 - **Wave 2 — silence: DONE 2026-07-26 (two PRs).** PR 1 shipped B1/B2/M1 and the false T−5 expiry-checkpoint callback. PR 2 shipped the remaining DELETE/DEMOTE narration set (A2/A4/C1/C2/F1/F2/H2/H3/H4/M3). The surviving manual C7 save keeps its success toast until that control is absorbed; autosave success is logged.
-- **Wave 3 — queue-on-warm (medium):** C4 + L1. One shared "accept, warm, run" affordance replaces six refusal sites; the E-tab waits (E1/E2) die in Wave 4's local-first entry instead.
+- **Wave 3 — queue-on-warm: DONE 2026-07-26.** C4's five sites run through `useWarmAction` (warm reserved before the first await, per-button progress affordance, honest failure copy — and the dead-button `!sandboxReady`/`!sandboxId` disables removed, which were refusals without even a message). L1 turned out to be already-warmed with mislabeled failure copy, now reworded. The E-tab waits (E1/E2) die in Wave 4's local-first entry instead.
 - **Wave 4 — local-first entry (the big one, scoped separately):** hub Files/Diff/status paint from the native clone (backend seam) before any runtime exists; chat attaches when ready. Kills the A1 wait class at the root rather than restyling it.
 
 ## Resolved questions (veto pass, 2026-07-26)

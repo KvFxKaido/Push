@@ -29,6 +29,7 @@ import {
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import { toast } from 'sonner';
+import { useWarmAction } from '@/hooks/useWarmAction';
 import {
   Sheet,
   SheetContent,
@@ -404,6 +405,8 @@ function normalizeSuggestedCommitMessage(raw: string): string {
 // Component
 // ---------------------------------------------------------------------------
 
+const WORKSPACE_START_FAILED = 'Workspace could not start. Try again in a moment.';
+
 export function WorkspaceHubSheet({
   open,
   onOpenChange,
@@ -517,6 +520,9 @@ export function WorkspaceHubSheet({
   }, [onForgetSandboxSnapshot]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
+  // Wave 3 (census): work actions accept-warm-run instead of refusing cold.
+  const warmCommitOpen = useWarmAction(ensureSandbox);
+  const warmExport = useWarmAction(ensureSandbox);
   const isDaemonMode = workspaceMode === 'relay';
   // The Settings tab depends on the parent passing the full settings
   // prop bundles. Daemon screens don't plumb these yet, so the tab is
@@ -658,41 +664,42 @@ export function WorkspaceHubSheet({
 
   // ---- Commit & Push flow ----
   const openCommitTargetSheet = useCallback(() => {
-    if (!sandboxReady) {
-      toast.error('Workspace is not ready.');
-      return;
-    }
-    setCommitTargetMode(blockedByProtectMain ? 'new' : 'current');
-    setCommitTargetError(null);
-    setNewBranchName((prev) => prev || fallbackBranchName);
-    branchSuggestionAttemptedRef.current = false;
-    setCommitTargetSheetOpen(true);
-  }, [sandboxReady, blockedByProtectMain, fallbackBranchName]);
+    void warmCommitOpen.run(
+      () => {
+        setCommitTargetMode(blockedByProtectMain ? 'new' : 'current');
+        setCommitTargetError(null);
+        setNewBranchName((prev) => prev || fallbackBranchName);
+        branchSuggestionAttemptedRef.current = false;
+        setCommitTargetSheetOpen(true);
+      },
+      () => toast.error(WORKSPACE_START_FAILED),
+    );
+  }, [warmCommitOpen, blockedByProtectMain, fallbackBranchName]);
 
   const handleExportScratchpadToRepo = useCallback(async () => {
-    if (!sandboxId) {
-      toast.error('Workspace is not ready.');
-      return;
-    }
-    try {
-      const result = await writeToSandbox(sandboxId, '/workspace/SCRATCHPAD.md', scratchpadContent);
-      if (result.ok) {
-        toast.success('Saved to /workspace/SCRATCHPAD.md');
-      } else {
-        toast.error(result.error ?? 'Failed to save scratchpad to repo.');
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save scratchpad to repo.');
-    }
-  }, [sandboxId, scratchpadContent]);
+    await warmExport.run(
+      async (workspaceId) => {
+        try {
+          const result = await writeToSandbox(
+            workspaceId,
+            '/workspace/SCRATCHPAD.md',
+            scratchpadContent,
+          );
+          if (result.ok) {
+            toast.success('Saved to /workspace/SCRATCHPAD.md');
+          } else {
+            toast.error(result.error ?? 'Failed to save scratchpad to repo.');
+          }
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Failed to save scratchpad to repo.');
+        }
+      },
+      () => toast.error(WORKSPACE_START_FAILED),
+    );
+  }, [warmExport, scratchpadContent]);
 
   const runCommitAndPush = useCallback(
     async (target: CommitPushTarget) => {
-      if (!sandboxId) {
-        toast.error('Workspace is not ready.');
-        return;
-      }
-
       const message = commitMessage.replace(/[\r\n]+/g, ' ').trim();
       if (!message) {
         toast.error('Commit message is required.');
@@ -718,7 +725,13 @@ export function WorkspaceHubSheet({
         // (forkBranchFromUI carries the working tree), and the auto-branch
         // namer needs it. Empty diff → nothing to commit.
         updateCommitPhase('fetching-diff');
-        const diffResult = await getSandboxDiff(sandboxId);
+        const workspaceId = await ensureSandbox();
+        if (!workspaceId) {
+          updateCommitPhase('error');
+          setCommitError(WORKSPACE_START_FAILED);
+          return;
+        }
+        const diffResult = await getSandboxDiff(workspaceId);
         if (!diffResult.diff) {
           updateCommitPhase('error');
           setCommitError('Nothing to commit — no changes detected.');
@@ -747,7 +760,7 @@ export function WorkspaceHubSheet({
           const escapedBranchName = shellEscape(target.branchName);
           const authPrefix = gitHubAuthCommandPrefix();
           const preflight = await execInSandbox(
-            sandboxId,
+            workspaceId,
             `cd /workspace && if git show-ref --verify --quiet refs/heads/${escapedBranchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ${authPrefix}ls-remote --exit-code --heads origin ${escapedBranchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi`,
           );
           if (preflight.exitCode === 10 || preflight.exitCode === 11) {
@@ -776,7 +789,7 @@ export function WorkspaceHubSheet({
           // allowed.)
           updateCommitPhase('branching');
           const auto = await ensureCommitTargetBranch({
-            sandboxId,
+            sandboxId: workspaceId,
             currentBranch: branchProps.currentBranch,
             defaultBranch: branchProps.defaultBranch,
             diff: diffResult.diff,
@@ -801,7 +814,7 @@ export function WorkspaceHubSheet({
           try {
             const filePaths = parseDiffStats(diffResult.diff).fileNames;
             fileContexts = await fetchAuditorFileContexts(filePaths, async (path) => {
-              const result = await readFromSandbox(sandboxId, `/workspace/${path}`);
+              const result = await readFromSandbox(workspaceId, `/workspace/${path}`);
               if (result.error) return null;
               return { content: result.content, truncated: result.truncated };
             });
@@ -842,10 +855,10 @@ export function WorkspaceHubSheet({
         // secret-scan only holds if every push is gated). The commit is local
         // (doctrinally fine); the push is the boundary the scan defends.
         updateCommitPhase('committing');
-        const pushGit = createSandboxPushGit(sandboxId, { secretScan: true });
+        const pushGit = createSandboxPushGit(workspaceId, { secretScan: true });
         const commit = await pushGit.commit({ message });
         if (!commit.ok) {
-          notifyWorkspaceMutation(sandboxId);
+          notifyWorkspaceMutation(workspaceId);
           const detail =
             commit.result?.stderr || commit.result?.stdout || commit.reason || 'Unknown git error';
           updateCommitPhase('error');
@@ -877,7 +890,7 @@ export function WorkspaceHubSheet({
 
         // Refresh diff data
         try {
-          const freshDiff = await getSandboxDiff(sandboxId);
+          const freshDiff = await getSandboxDiff(workspaceId);
           if (freshDiff.diff) {
             const stats = parseDiffStats(freshDiff.diff);
             setDiffData({
@@ -899,7 +912,7 @@ export function WorkspaceHubSheet({
       }
     },
     [
-      sandboxId,
+      ensureSandbox,
       commitMessage,
       blockedByProtectMain,
       branchProps,
@@ -915,11 +928,6 @@ export function WorkspaceHubSheet({
   );
 
   const suggestCommitMessage = useCallback(async () => {
-    if (!sandboxId) {
-      toast.error('Workspace is not ready.');
-      return;
-    }
-
     const activeProvider = getActiveProvider();
     if (activeProvider === 'demo') {
       toast.error('No AI provider configured. Add an API key in Settings.');
@@ -928,7 +936,12 @@ export function WorkspaceHubSheet({
 
     setSuggestingCommitMessage(true);
     try {
-      const diffResult = await getSandboxDiff(sandboxId);
+      const workspaceId = await ensureSandbox();
+      if (!workspaceId) {
+        toast.error(WORKSPACE_START_FAILED);
+        return;
+      }
+      const diffResult = await getSandboxDiff(workspaceId);
       if (!diffResult.diff) {
         toast.error('No local changes to summarize.');
         return;
@@ -983,17 +996,18 @@ export function WorkspaceHubSheet({
     } finally {
       setSuggestingCommitMessage(false);
     }
-  }, [sandboxId]);
+  }, [ensureSandbox]);
 
   const suggestBranchName = useCallback(async () => {
     setSuggestingBranchName(true);
     setCommitTargetError(null);
     try {
-      if (!sandboxId) {
-        throw new Error('Workspace is not ready.');
+      const workspaceId = await ensureSandbox();
+      if (!workspaceId) {
+        throw new Error(WORKSPACE_START_FAILED);
       }
 
-      const diffResult = await getSandboxDiff(sandboxId);
+      const diffResult = await getSandboxDiff(workspaceId);
       if (!diffResult.diff) {
         setNewBranchName(fallbackBranchName);
         return;
@@ -1056,7 +1070,7 @@ export function WorkspaceHubSheet({
     } finally {
       setSuggestingBranchName(false);
     }
-  }, [sandboxId, branchSuggestionPrefix, commitMessage, currentBranchName, fallbackBranchName]);
+  }, [ensureSandbox, branchSuggestionPrefix, commitMessage, currentBranchName, fallbackBranchName]);
 
   const handleCommitTargetConfirm = useCallback(() => {
     const message = commitMessage.replace(/[\r\n]+/g, ' ').trim();
@@ -1638,10 +1652,7 @@ export function WorkspaceHubSheet({
                   onClick={() => void suggestCommitMessage()}
                   disabled={
                     suggestingCommitMessage ||
-                    (commitPhase !== 'idle' &&
-                      commitPhase !== 'success' &&
-                      commitPhase !== 'error') ||
-                    !sandboxReady
+                    (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error')
                   }
                   title="Suggest commit message from current diff"
                   className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
@@ -1663,10 +1674,8 @@ export function WorkspaceHubSheet({
                     openCommitTargetSheet();
                   }}
                   disabled={
-                    (commitPhase !== 'idle' &&
-                      commitPhase !== 'success' &&
-                      commitPhase !== 'error') ||
-                    !sandboxReady
+                    warmCommitOpen.warming ||
+                    (commitPhase !== 'idle' && commitPhase !== 'success' && commitPhase !== 'error')
                   }
                   className={`relative flex h-8 items-center gap-1.5 rounded-full border px-3 text-push-xs transition-all disabled:opacity-50 ${
                     commitPhase === 'success'
@@ -1676,9 +1685,10 @@ export function WorkspaceHubSheet({
                         : `${HUB_MATERIAL_BUTTON_CLASS} text-push-fg-dim`
                   }`}
                 >
-                  {commitPhase !== 'idle' &&
-                  commitPhase !== 'success' &&
-                  commitPhase !== 'error' ? (
+                  {warmCommitOpen.warming ||
+                  (commitPhase !== 'idle' &&
+                    commitPhase !== 'success' &&
+                    commitPhase !== 'error') ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : commitPhase === 'success' ? (
                     <Check className="h-3.5 w-3.5" />
@@ -1812,7 +1822,7 @@ export function WorkspaceHubSheet({
                 onLoadMemory={onScratchpadLoadMemory}
                 onDeleteMemory={onScratchpadDeleteMemory}
                 onExportToRepo={handleExportScratchpadToRepo}
-                sandboxId={sandboxId}
+                exportingToRepo={warmExport.warming}
                 artifacts={pinnedArtifacts}
                 onUnpin={onUnpinArtifact}
                 onUpdateLabel={onUpdateArtifactLabel}
