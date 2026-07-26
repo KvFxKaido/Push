@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import { Check, Download, Maximize2, Trash2 } from 'lucide-react';
+import { Check, Download, Loader2, Maximize2, Trash2 } from 'lucide-react';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { PinnedArtifact } from '@/hooks/usePinnedArtifacts';
 import type { TodoItem } from '@/lib/todo-tools';
@@ -46,7 +46,8 @@ interface HubNotesTabProps {
   onLoadMemory: (id: string | null) => void;
   onDeleteMemory: (id: string) => void;
   onExportToRepo?: () => void;
-  sandboxId: string | null;
+  /** Warm-in-progress affordance for the export button (census Wave 3). */
+  exportingToRepo?: boolean;
   artifacts: PinnedArtifact[];
   onUnpin: (id: string) => void;
   onUpdateLabel: (id: string, label: string) => void;
@@ -71,7 +72,7 @@ export function HubNotesTab({
   onLoadMemory,
   onDeleteMemory,
   onExportToRepo,
-  sandboxId,
+  exportingToRepo,
   artifacts,
   onUnpin,
   onUpdateLabel,
@@ -190,11 +191,15 @@ export function HubNotesTab({
                   <button
                     type="button"
                     onClick={onExportToRepo}
-                    disabled={!scratchpadContent.trim() || !sandboxId}
+                    disabled={!scratchpadContent.trim() || exportingToRepo}
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
                     aria-label="Save notes to repo"
                   >
-                    <Download className="h-3.5 w-3.5" />
+                    {exportingToRepo ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
                     <span>Save to repo</span>
                   </button>
                 ) : null}
