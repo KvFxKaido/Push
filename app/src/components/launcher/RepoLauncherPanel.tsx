@@ -232,13 +232,13 @@ export function RepoLauncherPanel({
     }
     if (sandboxSession.status === 'creating') {
       return {
-        detail: 'Sandbox is starting',
+        detail: 'Workspace is starting',
         detailClass: 'text-push-fg-secondary',
       };
     }
     if (sandboxSession.status === 'reconnecting') {
       return {
-        detail: 'Reconnecting to your sandbox',
+        detail: 'Reconnecting to your workspace',
         detailClass: 'text-push-fg-secondary',
       };
     }

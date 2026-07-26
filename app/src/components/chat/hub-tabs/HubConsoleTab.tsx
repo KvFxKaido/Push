@@ -71,7 +71,7 @@ function parseExitCodeFromPreview(preview: string): number | null {
 function ConsoleSandboxItem({ item }: { item: ConsoleSandboxPayload }) {
   return (
     <Sandbox defaultOpen={item.state !== 'completed'}>
-      <SandboxHeader title={item.command || 'sandbox_exec'} state={item.state} />
+      <SandboxHeader title={item.command || SANDBOX_EXEC_TOOL_NAME} state={item.state} />
       <SandboxContent>
         {/* On failure, open straight to the Console tab so the error output is
             visible without an extra click (the command is still one tab away). */}
@@ -115,6 +115,11 @@ function ConsoleSandboxItem({ item }: { item: ConsoleSandboxPayload }) {
 function getTaskGraphTaskLabel(agent: 'explorer' | 'coder', taskId: string): string {
   return `Task Graph · ${getRoleDisplay(agent).phase ?? 'Working'} · ${taskId}`;
 }
+
+// Tool name + internal log discriminator (not user copy) — hoisted for the
+// vocabulary lint pin; the console legitimately shows real tool names.
+const SANDBOX_EXEC_TOOL_NAME = 'sandbox_exec';
+const SANDBOX_LOG_TYPE = 'sandbox';
 
 export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTabProps) {
   const [copied, setCopied] = useState(false);
@@ -374,7 +379,7 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
           const detail = log.detail ? ` — ${log.detail}` : '';
           return `[${date}] [${getSourceLabel(log.source)}] ${log.content}${detail}`;
         }
-        if (log.type === 'sandbox' && log.sandbox) {
+        if (log.type === SANDBOX_LOG_TYPE && log.sandbox) {
           const { command, output, state, durationMs } = log.sandbox;
           const dur = durationMs !== undefined ? ` (${formatSandboxDuration(durationMs)})` : '';
           const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
@@ -459,7 +464,7 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
       <div className="flex-1 overflow-y-auto bg-push-surface-inset p-3 font-mono text-xs leading-relaxed text-push-fg-secondary shadow-push-inset">
         <div className="space-y-2">
           {logs.map((log, idx) =>
-            log.type === 'sandbox' && log.sandbox ? (
+            log.type === SANDBOX_LOG_TYPE && log.sandbox ? (
               <ConsoleSandboxItem key={`${log.timestamp}-${idx}`} item={log.sandbox} />
             ) : (
               <div

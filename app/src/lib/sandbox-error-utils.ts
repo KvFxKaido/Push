@@ -58,7 +58,7 @@ export function categorizeSandboxError(raw: string): { title: string; detail: st
   ) {
     return {
       title: 'Workspace session expired',
-      detail: 'Start a new sandbox to continue.',
+      detail: 'Start a fresh workspace to continue.',
     };
   }
   if (
@@ -74,6 +74,6 @@ export function categorizeSandboxError(raw: string): { title: string; detail: st
   }
   return {
     title: 'Workspace error',
-    detail: raw.length < 120 ? raw : 'Something went wrong. Start a new sandbox to continue.',
+    detail: raw.length < 120 ? raw : 'Something went wrong. Start a fresh workspace to continue.',
   };
 }

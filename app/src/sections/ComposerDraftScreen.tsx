@@ -465,8 +465,8 @@ export function ComposerDraftScreen({
                       {mode === 'repo'
                         ? 'Work on a GitHub repository'
                         : mode === 'chat'
-                          ? 'Lightweight chat, no sandbox'
-                          : 'Sandbox without a repo'}
+                          ? 'Lightweight chat, no workspace'
+                          : 'Workspace without a repo'}
                     </p>
                   </div>
                   {active && <Check className="h-4 w-4 text-push-link" />}

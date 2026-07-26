@@ -31,14 +31,14 @@ export function BranchSwitchConfirm({
       </p>
       <p className="mt-1.5 text-push-xs text-push-fg-dim">
         {probe?.noSandbox
-          ? 'No sandbox is running, so the next start will open this branch.'
+          ? 'No workspace is running, so the next start will open this branch.'
           : probe?.loading
-            ? 'Checking sandbox changes...'
+            ? 'Checking workspace changes...'
             : probe?.dirty
               ? probe.unknown
-                ? 'Sandbox changes could not be verified. Treating the tree as dirty.'
+                ? 'Workspace changes could not be verified. Treating the tree as dirty.'
                 : `${probe.changedFiles} changed file${probe.changedFiles === 1 ? '' : 's'} will carry into the switch.`
-              : 'Sandbox is clean. The warm switch preserves the running workspace.'}
+              : 'Workspace is clean. The warm switch keeps it running.'}
       </p>
       {probe?.errorMessage && (
         <p className="mt-1 text-push-xs text-red-300">{probe.errorMessage}</p>

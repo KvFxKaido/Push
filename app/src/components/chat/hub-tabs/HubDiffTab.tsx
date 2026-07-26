@@ -71,8 +71,7 @@ export function HubDiffTab({
     setStartingSandbox(true);
     try {
       const id = await ensureSandbox();
-      // eslint-disable-next-line no-restricted-syntax -- census row E1, removed in Wave 4
-      if (!id) toast.error('Sandbox is not ready yet.');
+      if (!id) toast.error('Workspace is not ready yet.');
       return id;
     } finally {
       setStartingSandbox(false);
@@ -217,8 +216,7 @@ export function HubDiffTab({
   if (!diffData && !sandboxReady) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-        {/* eslint-disable-next-line no-restricted-syntax -- census row E2, removed in Wave 4 */}
-        <p className="text-sm text-push-fg-secondary">Start a sandbox to view diff.</p>
+        <p className="text-sm text-push-fg-secondary">Start a workspace to view diff.</p>
         <button
           onClick={() => {
             void ensureHubSandbox().then((id) => {
@@ -233,8 +231,8 @@ export function HubDiffTab({
           )}
           <span>
             {startingSandbox || sandboxStatus === 'creating'
-              ? 'Starting sandbox...'
-              : 'Start sandbox'}
+              ? 'Starting workspace...'
+              : 'Start workspace'}
           </span>
         </button>
       </div>

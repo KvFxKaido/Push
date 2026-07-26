@@ -605,7 +605,7 @@ export function SettingsSectionContent({
                 ? 'The model asks before mutating actions. Best for careful, step-by-step work.'
                 : workspace.approvalMode === 'autonomous'
                   ? 'The model acts decisively, only asking when genuinely ambiguous. Faster flow.'
-                  : 'No confirmations, no questions. Errors auto-retry. Maximum speed, sandbox-safe.'}
+                  : 'No confirmations, no questions. Errors auto-retry. Maximum speed, workspace-safe.'}
             </p>
           </div>
 

@@ -23,14 +23,14 @@ export function SandboxStatusChip({ status, error, onOpenWorkspaceHub }: Sandbox
     status === 'creating'
       ? {
           label: 'Starting',
-          title: 'Sandbox is starting',
+          title: 'Workspace is starting',
           className: 'text-push-fg-dim hover:text-push-fg-secondary',
           indicator: <Loader2 className="h-3 w-3 animate-spin" />,
         }
       : status === 'reconnecting'
         ? {
             label: 'Reconnecting',
-            title: 'Reconnecting to sandbox',
+            title: 'Reconnecting to workspace',
             className: 'text-amber-300/85 hover:text-amber-200',
             indicator: <Loader2 className="h-3 w-3 animate-spin" />,
           }
@@ -43,7 +43,7 @@ export function SandboxStatusChip({ status, error, onOpenWorkspaceHub }: Sandbox
             }
           : {
               label: 'Idle',
-              title: 'Sandbox is idle',
+              title: 'Workspace is idle',
               className: 'text-push-fg-dim hover:text-push-fg-secondary',
               indicator: <SandboxCubeIcon className="h-3 w-3" />,
             };

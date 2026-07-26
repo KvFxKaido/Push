@@ -62,6 +62,34 @@ export default defineConfig([
           message:
             'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
         },
+        {
+          selector: 'JSXExpressionContainer Literal[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector: 'JSXExpressionContainer TemplateElement[value.raw=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'JSXAttribute[name.name=/^(title|aria-label|aria-description|placeholder|alt)$/] > Literal[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'Property[key.name=/^(title|label|detail|description)$/] Literal[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'Property[key.name=/^(title|label|detail|description)$/] TemplateLiteral TemplateElement[value.raw=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
       ],
     },
   },
@@ -235,6 +263,34 @@ export default defineConfig([
         {
           selector:
             'CallExpression[callee.type="MemberExpression"][callee.object.name="toast"] > TemplateLiteral.arguments TemplateElement[value.raw=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector: 'JSXExpressionContainer Literal[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector: 'JSXExpressionContainer TemplateElement[value.raw=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'JSXAttribute[name.name=/^(title|aria-label|aria-description|placeholder|alt)$/] > Literal[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'Property[key.name=/^(title|label|detail|description)$/] Literal[value=/sandbox/i]',
+          message:
+            'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
+        },
+        {
+          selector:
+            'Property[key.name=/^(title|label|detail|description)$/] TemplateLiteral TemplateElement[value.raw=/sandbox/i]',
           message:
             'Use work vocabulary in user copy: "workspace" is a place, and "sandbox" is internal runtime vocabulary. See docs/decisions/Runtime Silence Census.md.',
         },

@@ -9,21 +9,21 @@ describe('categorizeSandboxError', () => {
       // because `AUTH_FAILURE` contains the substring "auth".
       expect(categorizeSandboxError('Owner token does not match (AUTH_FAILURE)')).toEqual({
         title: 'Workspace session expired',
-        detail: 'Start a new sandbox to continue.',
+        detail: 'Start a fresh workspace to continue.',
       });
     });
 
     it('routes owner-token mismatch message to the sandbox-session branch', () => {
       expect(categorizeSandboxError('Owner token does not match')).toEqual({
         title: 'Workspace session expired',
-        detail: 'Start a new sandbox to continue.',
+        detail: 'Start a fresh workspace to continue.',
       });
     });
 
     it('routes stale sandbox lookups to the sandbox-session branch', () => {
       expect(categorizeSandboxError('Sandbox not found or expired')).toEqual({
         title: 'Workspace session expired',
-        detail: 'Start a new sandbox to continue.',
+        detail: 'Start a fresh workspace to continue.',
       });
     });
 
@@ -32,7 +32,7 @@ describe('categorizeSandboxError', () => {
         categorizeSandboxError('SANDBOX_TOKENS KV binding not configured (NOT_CONFIGURED)'),
       ).toEqual({
         title: 'Workspace session expired',
-        detail: 'Start a new sandbox to continue.',
+        detail: 'Start a fresh workspace to continue.',
       });
     });
   });
@@ -86,7 +86,7 @@ describe('categorizeSandboxError', () => {
       const longError = 'x'.repeat(200);
       expect(categorizeSandboxError(longError)).toEqual({
         title: 'Workspace error',
-        detail: 'Something went wrong. Start a new sandbox to continue.',
+        detail: 'Something went wrong. Start a fresh workspace to continue.',
       });
     });
   });

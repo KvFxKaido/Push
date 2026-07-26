@@ -13,6 +13,10 @@ import {
   RepoLedgerIcon,
 } from '@/components/icons/push-custom-icons';
 
+// Internal action id (not user copy) — hoisted so the vocabulary lint pin
+// only has to reason about literals in rendering positions.
+const REFRESH_ACTION_TYPE = 'sandbox-state-refresh';
+
 interface SandboxStateCardProps {
   data: SandboxStateCardData;
   messageId?: string;
@@ -41,7 +45,7 @@ export function SandboxStateCard({ data, messageId, cardIndex, onAction }: Sandb
               type="button"
               onClick={() =>
                 onAction({
-                  type: 'sandbox-state-refresh',
+                  type: REFRESH_ACTION_TYPE,
                   messageId,
                   cardIndex,
                   sandboxId: data.sandboxId,
