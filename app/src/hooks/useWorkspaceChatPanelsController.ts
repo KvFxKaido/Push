@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { restoreResumeBranchIfNeeded } from '@/lib/resume-branch-restore';
-import { fetchSandboxDiff } from '@/lib/sandbox-client';
 import type { ChatRouteProps } from '@/sections/workspace-chat-route-types';
 
 type PanelsControllerArgs = Pick<
@@ -19,7 +18,6 @@ type PanelsControllerArgs = Pick<
   | 'handleDisconnect'
   | 'ensureSandbox'
   | 'sendMessage'
-  | 'saveExpiryCheckpoint'
   | 'isStreaming'
 > & {
   isScratch: boolean;
@@ -41,7 +39,6 @@ export function useWorkspaceChatPanelsController({
   handleDisconnect,
   ensureSandbox,
   sendMessage,
-  saveExpiryCheckpoint,
   isStreaming,
   isScratch,
   isChat,
@@ -96,16 +93,6 @@ export function useWorkspaceChatPanelsController({
       branch: activeRepo?.current_branch ?? activeRepo?.default_branch ?? null,
     });
   }, [activeRepo, handleOpenDraftComposer, isChat, isScratch]);
-
-  const handleExpiryWarningReached = useCallback(async () => {
-    if (!sandbox.sandboxId) return;
-    try {
-      const diff = await fetchSandboxDiff(sandbox.sandboxId);
-      saveExpiryCheckpoint(diff);
-    } catch {
-      saveExpiryCheckpoint('');
-    }
-  }, [sandbox.sandboxId, saveExpiryCheckpoint]);
 
   const handleFixReviewFinding = useCallback(
     async (prompt: string) => {
@@ -209,7 +196,6 @@ export function useWorkspaceChatPanelsController({
     openWorkspaceHub,
     openLauncher,
     handleCreateNewChatRequest,
-    handleExpiryWarningReached,
     handleFixReviewFinding,
     handleResumeConversationFromLauncher,
     handleStartWorkspaceRequest,

@@ -121,7 +121,6 @@ const chatCheckpoint = vi.hoisted(() => ({
       pullHostRunLocal: vi.fn(),
       dismissHostRun: vi.fn(),
     },
-    saveExpiryCheckpoint: vi.fn(),
     updateAgentStatus: vi.fn(),
     flushCheckpoint: vi.fn(),
     checkpointRefs: {},
@@ -300,7 +299,6 @@ describe('useChat — public API surface', () => {
       'abortStream',
       'resumeInterruptedRun',
       'dismissResume',
-      'saveExpiryCheckpoint',
       'diagnoseCIFailure',
     ] as const) {
       expect(typeof hook[key]).toBe('function');

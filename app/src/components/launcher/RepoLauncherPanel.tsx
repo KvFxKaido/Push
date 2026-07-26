@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Globe, Lock, MessageSquare, Palette, Plus, Search, Loader2 } from 'lucide-react';
 import {
   BranchWaveIcon,
@@ -49,25 +49,14 @@ type RepoBranchOption = {
 const LAUNCHER_CARD_CLASS = `${HUB_PANEL_SUBTLE_SURFACE_CLASS} p-3.5 transition-all duration-200 hover:border-push-edge-hover`;
 
 const LAUNCHER_ACTION_BUTTON_CLASS = `${HUB_MATERIAL_PILL_BUTTON_CLASS} h-8 flex-1 justify-center px-2.5`;
-const SANDBOX_SESSION_LIFETIME_MS = 30 * 60 * 1000;
-const SANDBOX_SESSION_WARNING_MS = 5 * 60 * 1000;
 
 function timeAgoWithAgo(timestamp: number): string {
   const compact = timeAgoCompact(timestamp);
   return compact === 'just now' ? compact : `${compact} ago`;
 }
 
-function formatRemainingDuration(ms: number): string {
-  if (ms <= 0) return '0:00';
-  const totalSeconds = Math.ceil(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
-
 export interface LauncherSandboxSession {
   status: SandboxStatus;
-  createdAt: number | null;
 }
 
 interface RepoLauncherPanelProps {
@@ -127,26 +116,8 @@ export function RepoLauncherPanel({
     {},
   );
   const [branchCreateRepo, setBranchCreateRepo] = useState<RepoWithActivity | null>(null);
-  const [sandboxRemainingMs, setSandboxRemainingMs] = useState<number | null>(null);
   const [appearanceRepo, setAppearanceRepoState] = useState<RepoWithActivity | null>(null);
   const [publishSheetOpen, setPublishSheetOpen] = useState(false);
-
-  useEffect(() => {
-    if (!sandboxSession?.createdAt || sandboxSession.status !== 'ready') {
-      setSandboxRemainingMs(null);
-      return;
-    }
-    const createdAt = sandboxSession.createdAt;
-
-    const tick = () => {
-      const remaining = SANDBOX_SESSION_LIFETIME_MS - (Date.now() - createdAt);
-      setSandboxRemainingMs(remaining);
-    };
-
-    tick();
-    const intervalId = window.setInterval(tick, 1000);
-    return () => window.clearInterval(intervalId);
-  }, [sandboxSession?.createdAt, sandboxSession?.status]);
 
   const loadBranchesForRepo = useCallback(
     async (repoFullName: string, force: boolean = false) => {
@@ -256,17 +227,8 @@ export function RepoLauncherPanel({
   }, [activeRepo, branchCreateRepo]);
 
   const sandboxResumeMeta = useMemo(() => {
-    if (!sandboxSession || sandboxSession.status === 'idle') return null;
-    if (sandboxSession.status === 'ready') {
-      const isWarning =
-        sandboxRemainingMs !== null && sandboxRemainingMs <= SANDBOX_SESSION_WARNING_MS;
-      return {
-        detail:
-          sandboxRemainingMs !== null
-            ? `Sandbox session active - ${formatRemainingDuration(Math.max(sandboxRemainingMs, 0))} left`
-            : 'Sandbox session active',
-        detailClass: isWarning ? 'text-amber-300' : 'text-emerald-300',
-      };
+    if (!sandboxSession || sandboxSession.status === 'idle' || sandboxSession.status === 'ready') {
+      return null;
     }
     if (sandboxSession.status === 'creating') {
       return {
@@ -284,7 +246,7 @@ export function RepoLauncherPanel({
       detail: 'Sandbox needs attention before you continue',
       detailClass: 'text-red-300',
     };
-  }, [sandboxRemainingMs, sandboxSession]);
+  }, [sandboxSession]);
 
   const renderRepoButton = useCallback(
     (repo: RepoWithActivity) => {
@@ -544,20 +506,25 @@ export function RepoLauncherPanel({
         )}
 
         {/* ---- Default-mode: sandbox + latest repo conversation ---- */}
-        {mode !== 'chat' && sandboxResumeMeta && onResumeSandbox && (
-          <button
-            onClick={onResumeSandbox}
-            className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
-          >
-            <SandboxCubeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-push-fg">Resume sandbox</p>
-              <p className={`mt-0.5 truncate text-xs ${sandboxResumeMeta.detailClass}`}>
-                {sandboxResumeMeta.detail}
-              </p>
-            </div>
-          </button>
-        )}
+        {mode !== 'chat' &&
+          sandboxSession &&
+          sandboxSession.status !== 'idle' &&
+          onResumeSandbox && (
+            <button
+              onClick={onResumeSandbox}
+              className={`${HUB_PANEL_SURFACE_CLASS} flex w-full items-start gap-3 p-3.5 text-left transition-all duration-200 hover:border-push-edge-hover`}
+            >
+              <SandboxCubeIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-push-fg">Resume sandbox</p>
+                {sandboxResumeMeta && (
+                  <p className={`mt-0.5 truncate text-xs ${sandboxResumeMeta.detailClass}`}>
+                    {sandboxResumeMeta.detail}
+                  </p>
+                )}
+              </div>
+            </button>
+          )}
 
         {mode !== 'chat' && latestRepoConversation && latestRepoConversationRepo && (
           <button

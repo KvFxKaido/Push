@@ -108,7 +108,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     resumeInterruptedRun,
     dismissResume,
     runHostAttach,
-    saveExpiryCheckpoint,
     ciStatus,
     diagnoseCIFailure,
     repos,
@@ -130,7 +129,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleExitWorkspace,
     handleOpenDraftComposer,
     handleDisconnect,
-    handleSandboxRestart,
     handleSandboxDownload,
     sandboxDownloading,
     selectedChatProvider,
@@ -337,7 +335,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     openWorkspaceHub,
     openLauncher,
     handleCreateNewChatRequest,
-    handleExpiryWarningReached,
     handleFixReviewFinding,
     handleResumeConversationFromLauncher,
     handleStartWorkspaceRequest,
@@ -356,7 +353,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleDisconnect,
     ensureSandbox,
     sendMessage,
-    saveExpiryCheckpoint,
     isStreaming,
     isScratch,
     isChat: false,
@@ -683,7 +679,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleResumeConversationFromLauncher,
     isScratch,
     sandboxStatus: sandbox.status,
-    sandboxCreatedAt: sandbox.createdAt,
     handleStartWorkspace: handleStartWorkspace ? handleStartWorkspaceRequest : undefined,
     handleStartChat,
     handleStartRelay,
@@ -757,17 +752,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
       error: sandbox.error,
       isStreaming,
     },
-    sandboxExpiryBannerProps: isScratch
-      ? {
-          createdAt: sandbox.createdAt,
-          sandboxId: sandbox.sandboxId,
-          sandboxStatus: sandbox.status,
-          onRestart: handleSandboxRestart,
-          onWarningThresholdReached: () => {
-            void handleExpiryWarningReached();
-          },
-        }
-      : null,
     autoBackRestoreBannerProps:
       !isScratch && activeRepo && autoBackRestore?.available
         ? {

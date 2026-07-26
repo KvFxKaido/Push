@@ -307,7 +307,6 @@ export function buildRepoLauncherSheetProps(args: {
   handleResumeConversationFromLauncher: (chatId: string) => void;
   isScratch: boolean;
   sandboxStatus: ChatRouteProps['sandbox']['status'];
-  sandboxCreatedAt: ChatRouteProps['sandbox']['createdAt'];
   handleStartWorkspace?: () => void;
   handleStartChat?: () => void;
   handleStartRelay?: () => void;
@@ -328,9 +327,7 @@ export function buildRepoLauncherSheetProps(args: {
     clearRepoAppearance: args.clearRepoAppearance,
     onSelectRepo: args.handleSelectRepoFromDrawer,
     onResumeConversation: args.handleResumeConversationFromLauncher,
-    sandboxSession: args.isScratch
-      ? { status: args.sandboxStatus, createdAt: args.sandboxCreatedAt }
-      : null,
+    sandboxSession: args.isScratch ? { status: args.sandboxStatus } : null,
     onStartWorkspace: args.handleStartWorkspace,
     onStartChat: args.handleStartChat,
     onStartRelay: args.handleStartRelay,

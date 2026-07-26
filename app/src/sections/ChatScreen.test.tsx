@@ -21,9 +21,6 @@ vi.mock('@/components/chat/SandboxStatusBanner', () => ({
     <div data-testid="sandbox-status-chip">chip:{status}</div>
   ),
 }));
-vi.mock('@/components/chat/SandboxExpiryBanner', () => ({
-  SandboxExpiryBanner: () => <div data-testid="sandbox-expiry-banner">expiry</div>,
-}));
 vi.mock('@/hooks/usePerfMark', () => ({ usePerfMark: () => {} }));
 
 const { ChatScreen } = await import('./ChatScreen');
@@ -91,7 +88,6 @@ function baseBanners(): Props['banners'] {
       error: null,
       isStreaming: false,
     } as Props['banners']['sandboxStatusBannerProps'],
-    sandboxExpiryBannerProps: null,
   };
 }
 
@@ -167,25 +163,6 @@ describe('ChatScreen', () => {
     expect(html).toContain('No AGENTS.md found');
     expect(html).toContain('Create with AI');
     expect(html).toContain('Create Template');
-  });
-
-  it('renders the sandbox expiry banner when expiry props are provided', () => {
-    const html = renderToStaticMarkup(
-      <ChatScreen
-        workspace={baseWorkspace()}
-        shell={baseShell()}
-        chat={baseChat()}
-        banners={{
-          sandboxStatusBannerProps: {
-            error: null,
-            isStreaming: false,
-          } as Props['banners']['sandboxStatusBannerProps'],
-          sandboxExpiryBannerProps: {} as Props['banners']['sandboxExpiryBannerProps'],
-        }}
-      />,
-    );
-
-    expect(html).toContain('sandbox-expiry-banner');
   });
 
   it('renders the background glow active when no repo appearance is set (default true)', () => {

@@ -360,55 +360,6 @@ export function useChatCheckpoint({
     ],
   );
 
-  // --- saveExpiryCheckpoint ---
-
-  const saveExpiryCheckpoint = useCallback(
-    (savedDiff: string) => {
-      const chatId = activeChatId;
-      if (!chatId) return;
-      const engineState = runEngineStateRef.current;
-      // Skip if no agent work has happened this session (round 0, no diff).
-      if (engineState.round === 0 && !savedDiff) return;
-
-      const checkpoint = buildRunCheckpoint({
-        chatId,
-        round: engineState.round,
-        phase: toLoopPhase(engineState.phase),
-        baseMessageCount: engineState.baseMessageCount,
-        apiMessages: checkpointApiMessagesRef.current,
-        accumulated: '',
-        thinkingAccumulated: '',
-        lastCoderState: readLatestCoderState(),
-        provider: engineState.provider as AIProviderType,
-        model: engineState.model,
-        sandboxSessionId: sandboxIdRef.current || '',
-        activeBranch:
-          branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || '',
-        repoId: repoRef.current || '',
-        workspaceSessionId: workspaceSessionIdRef.current || undefined,
-        savedDiff: savedDiff || undefined,
-        reason: 'expiry',
-      });
-
-      saveRunCheckpoint(checkpoint);
-      captureV1Checkpoint(chatId, 'expiry', {
-        accumulated: '',
-        thinkingAccumulated: '',
-        savedDiff: savedDiff || undefined,
-      });
-    },
-    [
-      activeChatId,
-      branchInfoRef,
-      captureV1Checkpoint,
-      readLatestCoderState,
-      repoRef,
-      runEngineStateRef,
-      sandboxIdRef,
-      workspaceSessionIdRef,
-    ],
-  );
-
   // --- flushCheckpoint ---
 
   const flushCheckpoint = useCallback(
@@ -737,7 +688,6 @@ export function useChatCheckpoint({
     // Durable Runs Phase 3 attach/viewer
     runHostAttach,
     // Checkpoint I/O
-    saveExpiryCheckpoint,
     flushCheckpoint,
     // Ref bundles
     checkpointRefs,
