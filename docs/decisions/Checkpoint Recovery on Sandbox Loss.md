@@ -32,11 +32,19 @@ follow-up below (PR2).
 
 ## Implementation status
 
+**2026-07-26 update (Runtime Silence Census Wave 2, rows C1/C2):** the manual
+Hibernate control and its `useSandbox.hibernate()` callback are **deleted on all
+platforms** — hibernation now happens only through the idle keep-warm path and
+snapshot-on-hide automation. References below to gating or hiding the *manual*
+hibernate affordance describe the pre-deletion state and remain accurate as
+history; the idle-path and restore guidance is unchanged.
+
 **PR1 — landed + validated (cloud snapshots off on native, local is the only recovery):**
 the `nativeCheckpointsActive()` predicate (native shell + flag, the same switch
 `selectCheckpointStore` uses) gates every cloud-snapshot path in `useSandbox`:
 idle keep-warm hibernation (activity bookkeeping preserved, only the snapshot
-skipped), manual `hibernate()`, and `attemptSnapshotRestore` on reconnect. The
+skipped), manual `hibernate()` (since deleted — see the 2026-07-26 update note
+under Implementation status), and `attemptSnapshotRestore` on reconnect. The
 liveness probe stays. Loss no longer strands on a dead id: `refresh`'s
 definitively-gone branch and the tool-path `markUnreachable` (via a silent probe)
 retire the id → idle so the next `ensureSandbox` cold-starts and the on-device
@@ -106,6 +114,10 @@ recovery path. So **local always wins** — there is no second reservoir to lose
   button + the snapshot **Restore** affordance, `WorkspaceHubSheet.tsx` ~1474 /
   ~1525, `WorkspaceChatRoute.tsx` ~784). Idle alone isn't enough — a hand-tapped
   hibernate still ships WIP to Modal. Hide those affordances on the native shell.
+  *(2026-07-26 update: the manual half of this bullet is now moot — the Hibernate
+  control and `useSandbox.hibernate()` were deleted on ALL platforms by the
+  Runtime Silence Census Wave 2 (C1/C2); only the idle-timer gating remains
+  live guidance. The snapshot Restore affordance is unaffected.)*
 - **Loss → retire the dead id, then cold-start.** Gating off `restoreFromSnapshot`
   is **not sufficient** — a lost sandbox today leaves the dead `sandboxId` in
   place (`refresh`/`markUnreachable` keep it, `ensureSandbox` returns it without a

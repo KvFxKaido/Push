@@ -186,6 +186,15 @@ export function useSnapshotManager(
         await refreshLatestSnapshot();
         if (reason === 'manual') {
           toast.success('Snapshot saved');
+        } else {
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'snapshot_autosave_saved',
+              reason,
+              sessionId,
+            }),
+          );
         }
         return true;
       } catch (err) {
@@ -296,7 +305,14 @@ export function useSnapshotManager(
       if (age > SNAPSHOT_HARD_CAP_MS) {
         if (!snapshotHardCapNotifiedRef.current) {
           snapshotHardCapNotifiedRef.current = true;
-          toast.message('Snapshot autosave paused after 4 hours');
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'snapshot_autosave_paused',
+              reason: 'hard_cap',
+              sessionId,
+            }),
+          );
         }
         return;
       }
@@ -313,7 +329,7 @@ export function useSnapshotManager(
     }, 15_000);
 
     return () => window.clearInterval(timer);
-  }, [isScratch, sandbox.status, sandbox.sandboxId, captureSnapshot]);
+  }, [isScratch, sandbox.status, sandbox.sandboxId, captureSnapshot, sessionId]);
 
   return {
     latestSnapshot,

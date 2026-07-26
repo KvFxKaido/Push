@@ -66,8 +66,8 @@ const RepoLauncherSheet = lazy(() =>
 
 export function WorkspaceChatRoute(props: ChatRouteProps) {
   // Native shell recovers from the on-device checkpoint, not a cloud snapshot —
-  // so the hub's hibernate/restore/forget affordances are hidden there (the
-  // useSandbox cloud-snapshot paths are gated off by the same predicate).
+  // so the hub's restore/forget affordances are hidden there (the useSandbox
+  // cloud-snapshot paths are gated off by the same predicate).
   const cloudSnapshotsHidden = nativeCheckpointsActive();
   const {
     activeRepo,
@@ -795,7 +795,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
               void sandbox.refresh();
             }}
             onNewSandbox={restartCurrentSandbox}
-            onHibernateSandbox={cloudSnapshotsHidden ? undefined : sandbox.hibernate}
             onForgetSandboxSnapshot={cloudSnapshotsHidden ? undefined : sandbox.forgetSnapshot}
             snapshotInfo={cloudSnapshotsHidden ? null : sandbox.snapshotInfo}
             reviewProviders={catalog.availableProviders}

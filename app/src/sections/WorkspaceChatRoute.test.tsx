@@ -112,7 +112,6 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
       stop: vi.fn(async () => {}),
       refresh: vi.fn(async () => false),
       markUnreachable: vi.fn(),
-      hibernate: vi.fn(async () => false),
       forgetSnapshot: vi.fn(),
       snapshotInfo: null,
     },

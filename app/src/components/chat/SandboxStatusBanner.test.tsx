@@ -5,23 +5,35 @@ import { SandboxStatusChip } from './SandboxStatusBanner';
 
 const noop = vi.fn();
 
-// The red top-of-chat SandboxStatusBanner was removed; the compact chip is the
-// only surviving sandbox-status surface (error now lives in its tooltip).
+// The red top-of-chat SandboxStatusBanner was removed; the compact chip keeps
+// only the creating and error states until local-first entry absorbs creating.
 describe('SandboxStatusChip', () => {
-  it('renders a compact ambient status for non-ready states', () => {
+  it('renders the creating state', () => {
     const html = renderToStaticMarkup(
-      <SandboxStatusChip status="reconnecting" error={null} onOpenWorkspaceHub={noop} />,
+      <SandboxStatusChip status="creating" error={null} onOpenWorkspaceHub={noop} />,
     );
 
-    expect(html).toContain('Reconnecting');
+    expect(html).toContain('Starting');
     expect(html).toContain('Open workspace');
   });
 
-  it('stays hidden when the sandbox is ready', () => {
+  it.each(['ready', 'reconnecting', 'idle'] as const)(
+    'stays hidden when status is %s',
+    (status) => {
+      const html = renderToStaticMarkup(
+        <SandboxStatusChip status={status} error={null} onOpenWorkspaceHub={noop} />,
+      );
+
+      expect(html).toBe('');
+    },
+  );
+
+  it('renders the error state', () => {
     const html = renderToStaticMarkup(
-      <SandboxStatusChip status="ready" error={null} onOpenWorkspaceHub={noop} />,
+      <SandboxStatusChip status="error" error="connection refused" onOpenWorkspaceHub={noop} />,
     );
 
-    expect(html).toBe('');
+    expect(html).toContain('Sandbox');
+    expect(html).toContain('Open workspace');
   });
 });

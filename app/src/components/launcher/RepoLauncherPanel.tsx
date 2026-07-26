@@ -227,18 +227,17 @@ export function RepoLauncherPanel({
   }, [activeRepo, branchCreateRepo]);
 
   const sandboxResumeMeta = useMemo(() => {
-    if (!sandboxSession || sandboxSession.status === 'idle' || sandboxSession.status === 'ready') {
+    if (
+      !sandboxSession ||
+      sandboxSession.status === 'idle' ||
+      sandboxSession.status === 'ready' ||
+      sandboxSession.status === 'reconnecting'
+    ) {
       return null;
     }
     if (sandboxSession.status === 'creating') {
       return {
         detail: 'Sandbox is starting',
-        detailClass: 'text-push-fg-secondary',
-      };
-    }
-    if (sandboxSession.status === 'reconnecting') {
-      return {
-        detail: 'Reconnecting to your sandbox',
         detailClass: 'text-push-fg-secondary',
       };
     }
