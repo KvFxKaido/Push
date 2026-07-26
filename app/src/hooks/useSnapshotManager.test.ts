@@ -13,7 +13,6 @@ const snapshotLib = vi.hoisted(() => ({
 const toast = vi.hoisted(() => ({
   success: vi.fn<(msg: string) => void>(),
   error: vi.fn<(msg: string) => void>(),
-  message: vi.fn<(msg: string) => void>(),
 }));
 
 vi.mock('@/lib/snapshot-manager', () => snapshotLib);
@@ -122,7 +121,6 @@ beforeEach(() => {
   Object.values(snapshotLib).forEach((m) => m.mockReset());
   toast.success.mockReset();
   toast.error.mockReset();
-  toast.message.mockReset();
   reactState.cells = [];
   reactState.index = 0;
   reactState.refs = [];
@@ -255,6 +253,28 @@ describe('useSnapshotManager.captureSnapshot', () => {
     expect(snapshotLib.createSnapshot).toHaveBeenCalledWith('/workspace', 'sbx-1');
     expect(snapshotLib.saveSnapshotToIndexedDB).toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith('Snapshot saved');
+  });
+
+  it('logs autosave success without showing the manual success toast', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    snapshotLib.createSnapshot.mockResolvedValue(new Blob(['x']));
+    snapshotLib.saveSnapshotToIndexedDB.mockResolvedValue(undefined);
+    snapshotLib.getLatestSnapshotMeta.mockResolvedValue({ createdAt: 1000 });
+
+    const mgr = render();
+    const ok = await mgr.captureSnapshot('interval');
+
+    expect(ok).toBe(true);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      JSON.stringify({
+        level: 'info',
+        event: 'snapshot_autosave_saved',
+        reason: 'interval',
+        sessionId: 'session-1',
+      }),
+    );
+    log.mockRestore();
   });
 
   it('toasts on manual failure and stays silent on interval failure', async () => {

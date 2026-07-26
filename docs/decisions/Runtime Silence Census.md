@@ -1,6 +1,6 @@
 # Runtime Silence Census
 
-**Status:** Current (partially implemented — Wave 0 verify + Wave 1 copy + Wave 2's first PR shipped; Waves 3, 4 and the rest of Wave 2 pending)
+**Status:** Current (partially implemented — Waves 0, 1, and 2 shipped; Waves 3 and 4 pending)
 **Date:** 2026-07-26
 **Scope:** every user-visible moment where the web/native app makes the user aware of the runtime (sandbox, container, snapshot machinery, connectivity). CLI/TUI vocabulary and Worker-side card internals are out of scope. Component/file *names* (`SandboxStatusBanner.tsx` etc.) are out of scope — this census is about copy that reaches a user, not identifiers.
 
@@ -36,9 +36,9 @@ Verdicts: **KEEP** · **REWORD** (work vocabulary) · **QUEUE** (accept-and-run-
 | # | Trigger | Copy | Bin | Verdict |
 |---|---|---|---|---|
 | A1 | status `creating` | "Starting" / "Sandbox is starting" | WAIT | ABSORB — local-first entry removes the wait from view; until then REWORD ("Preparing workspace") |
-| A2 | status `reconnecting` | "Reconnecting" / "Reconnecting to sandbox" | NARRATION | DEMOTE — reconnection self-heals (#1270); log line, no chip state |
+| A2 | status `reconnecting` | "Reconnecting" / "Reconnecting to sandbox" | NARRATION | DEMOTE — reconnection self-heals (#1270); log line, no chip state. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 | A3 | status `error` | "Sandbox" + categorized title | CONSENT-adjacent | KEEP as the *single* runtime presence surface; titles reworded (see I). **WAVE 1 COPY SHIPPED 2026-07-26:** visible label "Workspace"; fallback title "Workspace needs attention". |
-| A4 | status `idle` | "Idle" / "Sandbox is idle" | NARRATION | DELETE — auto-start on demand already exists; idleness is not the user's problem |
+| A4 | status `idle` | "Idle" / "Sandbox is idle" | NARRATION | DELETE — auto-start on demand already exists; idleness is not the user's problem. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 
 Target end-state: the chip has exactly one visible state — error. All healthy states render nothing.
 
@@ -46,8 +46,8 @@ Target end-state: the chip has exactly one visible state — error. All healthy 
 
 | # | Trigger | Copy | Bin | Verdict |
 |---|---|---|---|---|
-| B1 | T−5:00 countdown | "N:NN remaining · Download your work before this workspace runtime expires." | OPERATOR | DELETE — verified live **and false** (see Wave 0 findings). **SHIPPED 2026-07-26 (this PR).** |
-| B2 | expired | "Workspace runtime expired · Restart runtime" | OPERATOR | DELETE with B1 — on the shipped provider this fires on a *healthy* runtime; "Restart runtime" would needlessly wipe a live workspace. Transparent restart-on-next-action is already the CF recovery model. **SHIPPED 2026-07-26 (this PR).** |
+| B1 | T−5:00 countdown | "N:NN remaining · Download your work before this workspace runtime expires." | OPERATOR | DELETE — verified live **and false** (see Wave 0 findings). **SHIPPED 2026-07-26 (Wave 2 PR 1).** |
+| B2 | expired | "Workspace runtime expired · Restart runtime" | OPERATOR | DELETE with B1 — on the shipped provider this fires on a *healthy* runtime; "Restart runtime" would needlessly wipe a live workspace. Transparent restart-on-next-action is already the CF recovery model. **SHIPPED 2026-07-26 (Wave 2 PR 1).** |
 
 **Wave 0 findings (2026-07-26).** The banner is *not* dead code: scratch sessions are
 reachable (`App.tsx` draft composer + no-repo conversation resume) and start real
@@ -75,8 +75,8 @@ two independent copies of a number that matches neither provider.
 
 | # | Trigger | Copy | Bin | Verdict |
 |---|---|---|---|---|
-| C1 | Hibernate pressed | "Sandbox hibernated — workspace snapshot saved" | OPERATOR | ABSORB — snapshot-on-hide shipped; manual hibernate is a pre-automation vestige. Delete the control (or park behind a debug flag) |
-| C2 | Hibernate failed | "Hibernate failed — please try again" | OPERATOR | dies with C1 |
+| C1 | Hibernate pressed | "Sandbox hibernated — workspace snapshot saved" | OPERATOR | ABSORB — snapshot-on-hide shipped; manual hibernate is a pre-automation vestige. Control deleted outright. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
+| C2 | Hibernate failed | "Hibernate failed — please try again" | OPERATOR | died with C1. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 | C3 | Forget snapshot | "Forgot sandbox snapshot — next start will be a clean clone" / "Drop the saved snapshot so the next start is a clean clone" | OPERATOR w/ real intent | REWORD — the *intent* ("start clean") is legitimate work vocabulary. **SHIPPED 2026-07-26:** "Snapshot dropped — next start will be a fresh clone". |
 | C4 | Commit target sheet, scratchpad export, commit+push run, suggest-commit-message, commit flow (5 sites) | "Sandbox is not ready." | WAIT | QUEUE — never refuse a work action because the machine is cold |
 | C5 | Diff inspect fails | "Unable to inspect sandbox changes." | error | REWORD. **SHIPPED 2026-07-26:** "Couldn't read workspace changes." |
@@ -105,8 +105,8 @@ two independent copies of a number that matches neither provider.
 
 | # | Copy | Bin | Verdict |
 |---|---|---|---|
-| F1 | "Snapshot autosave paused after 4 hours" | NARRATION | DEMOTE to log |
-| F2 | "Snapshot saved" | NARRATION | DEMOTE (or inline tick if a manual save control survives C7) |
+| F1 | "Snapshot autosave paused after 4 hours" | NARRATION | DEMOTE to log. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
+| F2 | "Snapshot saved" | NARRATION | DEMOTE autosave success to log; retain the existing manual-save toast while C7 survives. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 | F3 | "Snapshot restored (N files)" | CONSENT result | KEEP |
 | F4 | "No snapshot found" / "Restore failed" | error on user action | KEEP, work vocabulary |
 
@@ -122,9 +122,9 @@ two independent copies of a number that matches neither provider.
 | # | Copy | Bin | Verdict |
 |---|---|---|---|
 | H1 | "Sandbox needs attention" + "Open the workspace status for retry and restart options." | OPERATOR | ABSORB — auto-retry; only terminal failure surfaces, as a workspace error |
-| H2 | "Reconnecting to sandbox..." | NARRATION | DEMOTE |
-| H3 | "Sandbox reconnected" | NARRATION | DELETE — success is silence |
-| H4 | "Sandbox idle. Code tools will start it again when needed." | NARRATION | DELETE — the second clause proves the first needs no announcement |
+| H2 | "Reconnecting to sandbox..." | NARRATION | DEMOTE. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
+| H3 | "Sandbox reconnected" | NARRATION | DELETE — success is silence. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
+| H4 | "Sandbox idle. Code tools will start it again when needed." | NARRATION | DELETE — the second clause proves the first needs no announcement. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 
 ### I. Error taxonomy — `sandbox-error-utils.ts` (feeds chip + hub)
 
@@ -156,9 +156,9 @@ duplicates the expiry banner's model with its own copy of the wrong constant
 
 | # | Trigger | Copy | Bin | Verdict |
 |---|---|---|---|---|
-| M1 | status `ready` | "Sandbox session active - N min left" (green, amber inside 5 min) | NARRATION | DELETE — false countdown on both providers, same grounds as B1/B2. **SHIPPED 2026-07-26 (this PR).** |
+| M1 | status `ready` | "Sandbox session active - N min left" (green, amber inside 5 min) | NARRATION | DELETE — false countdown on both providers, same grounds as B1/B2. **SHIPPED 2026-07-26 (Wave 2 PR 1).** |
 | M2 | status `creating` | "Sandbox is starting" | WAIT | ABSORB — aligns with A1; local-first entry removes the wait from view |
-| M3 | status `reconnecting` | "Reconnecting to your sandbox" | NARRATION | DEMOTE — aligns with A2 |
+| M3 | status `reconnecting` | "Reconnecting to your sandbox" | NARRATION | DEMOTE — aligns with A2. **SHIPPED 2026-07-26 (Wave 2 PR 2).** |
 | M4 | status `error` | "Sandbox needs attention before you continue" | CONSENT-adjacent | **REWORD SHIPPED 2026-07-26:** "Workspace needs attention before you continue". Error remains the one state that earns pixels (A3). |
 
 ## Tallies
@@ -186,7 +186,7 @@ cuttable or rewritable without losing a single real decision.
 
 - **Wave 0 — verify: DONE 2026-07-26.** `SandboxExpiryBanner` is live on the scratch lane and factually wrong on **both** providers (findings under section B), and the launcher panel duplicates the same wrong constant (section M). Wave 2's first item is deleting both countdown surfaces, not a dead-code sweep.
 - **Wave 1 — copy: DONE 2026-07-26.** Every REWORD plus the A3/I1/I4/I6 law-compliance copy shipped, and `no-restricted-syntax` pins the user-copy channels. After a review finding that the initial pin (literal JSX + direct `toast.*()`) missed expression-based copy, the selectors were extended to JSX expression literals/templates, visible attributes (`title`/`aria-label`/`placeholder`/`alt`), and copy-bearing config properties (`title`/`label`/`detail`/`description`) — which surfaced and reworded ~24 further visible strings (BranchSwitchConfirm, WorkspacePatchCard, the chip tooltips, the E-tab buttons, the C4 refusals, and more). **Convention:** later-wave rows now carry law-compliant *wording* while keeping their scheduled fate — the census tables, not lint disables, track the burn-down. The only `eslint-disable` exemptions are annotated internals: tool names in model-facing guidance (tool identifiers are exempt from the pin by design). Internal enum/type literals were hoisted to module scope rather than exempted. C6's structural collapse and C9's error-recovery-only gating remain open behavioral items; Wave 1 changed their strings only.
-- **Wave 2 — silence (small PRs; FIRST PR DONE 2026-07-26):** B1/B2/M1 and the false T−5 expiry-checkpoint callback shipped in this PR. DELETE/DEMOTE the remaining narration set. Each deletion must first confirm its automation actually covers the case (per the self-review rule: execute the claim — kill a reconnect toast only after watching a reconnection heal silently). Structured logs gain what the UI loses.
+- **Wave 2 — silence: DONE 2026-07-26 (two PRs).** PR 1 shipped B1/B2/M1 and the false T−5 expiry-checkpoint callback. PR 2 shipped the remaining DELETE/DEMOTE narration set (A2/A4/C1/C2/F1/F2/H2/H3/H4/M3). The surviving manual C7 save keeps its success toast until that control is absorbed; autosave success is logged.
 - **Wave 3 — queue-on-warm (medium):** C4 + L1. One shared "accept, warm, run" affordance replaces six refusal sites; the E-tab waits (E1/E2) die in Wave 4's local-first entry instead.
 - **Wave 4 — local-first entry (the big one, scoped separately):** hub Files/Diff/status paint from the native clone (backend seam) before any runtime exists; chat attaches when ready. Kills the A1 wait class at the root rather than restyling it.
 
