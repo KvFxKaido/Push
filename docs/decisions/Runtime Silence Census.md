@@ -1,6 +1,6 @@
 # Runtime Silence Census
 
-**Status:** Current (partially implemented — Waves 0–3 shipped; Wave 4 pending)
+**Status:** Current (partially implemented — Waves 0–3 shipped; Waves 4 and 5 scoped, pending)
 **Date:** 2026-07-26
 **Scope:** every user-visible moment where the web/native app makes the user aware of the runtime (sandbox, container, snapshot machinery, connectivity). CLI/TUI vocabulary and Worker-side card internals are out of scope. Component/file *names* (`SandboxStatusBanner.tsx` etc.) are out of scope — this census is about copy that reaches a user, not identifiers.
 
@@ -98,8 +98,76 @@ two independent copies of a number that matches neither provider.
 
 | # | Trigger | Copy | Bin | Verdict |
 |---|---|---|---|---|
-| E1 | Runtime cold | "Sandbox is not ready yet." | WAIT | LOCAL-FIRST — native reads from the on-device clone (backend seam); web shows last-known + refresh |
+| E1 | Runtime cold | "Sandbox is not ready yet." | WAIT | LOCAL-FIRST — native reads from the on-device clone (backend seam); web reads GitHub's pushed state via the read tier (see Wave 4 findings) |
 | E2 | Runtime cold | "Starting sandbox..." / **"Start sandbox"** button | WAIT | ABSORB — the census's prime exhibit: the user manually boots a machine to look at their own files. Auto-start on tab open; local-first on native |
+
+**Wave 4 findings (2026-07-27).** Four things the one-line burn-down entry did not
+account for. Each changes what Wave 4 has to build. Findings 2 and 3 were corrected in
+review (#1612) after both bots converged on the same passages — the corrections are
+marked inline, since the errors are instructive: each one made Wave 4 look *smaller*
+than it is.
+
+1. **The seam exists; it stops one layer short.** `resolveNativeFs` →
+   `NativeFsBackend` already routes read / write / batch-write / list / search /
+   symbols / diff for the **tool** layer (`app/src/lib/sandbox-tools.ts`, #1356), plus
+   native `PushGit` and branch ops. But both file UIs — `HubFilesTab` and the
+   full-screen `FileBrowser` section — go through `useFileBrowser(sandboxId)` →
+   `sandbox-client.listDirectory` → HTTP. On a flag-on native session the *agent*
+   reads the on-device clone while the *file browser* reads the cloud sandbox: two
+   views of one session. Wave 4's native arm promotes an existing seam up one layer;
+   it does not build one.
+2. **The `isNativeWorkingCopyEnabled` doc comment is stale — but the flag's caution is
+   not.** The comment claims "the non-git tools (exec, file read/write) still route to
+   the cloud sandbox by `sandboxId`", written in #1353 (2026-07-06); #1356
+   (2026-07-08) native-routed read/write/list/diff/search, so on *file ops* it is
+   simply wrong. What survives is larger than the comment's framing and larger than
+   this finding first claimed (**corrected in review, #1612** — the original text said
+   "only `sandbox_exec` remains", which was the conclusion that made flipping the flag
+   look cheap): seven tools return `NATIVE_TOOL_UNSUPPORTED` on a native session —
+   `sandbox_exec`, `sandbox_run_tests`, `sandbox_check_types`,
+   `sandbox_verify_workspace`, `sandbox_show_commit`, `sandbox_download`, and
+   `sandbox_find_references` (`sandbox-tools.ts`; pinned by
+   `sandbox-tools-native-fs.test.ts`). These are *designed* refusals, not wiring gaps —
+   the native shell has no command runtime and the symbol extractor is a Python script
+   that runs inside the sandbox — but they are a real capability delta: a flag-on
+   session loses the entire verification class. So the comment needs correcting on
+   facts while the flag's posture stands on better grounds than it states. Wave 4
+   rewrites the comment to name the seven; flipping the default stays its own decision,
+   and this finding makes it a heavier one, not a lighter one.
+3. **The web arm's substrate already shipped — it is the read tier, not a cache.**
+   This row previously read "web shows last-known + refresh", but there is no
+   last-known to show: hub `diffData` is `useState` in `WorkspaceHubSheet` and dies
+   with the sheet. `mapSandboxReadToGitHubCall` + the read-tier fallback (Agent
+   Runtime Decisions §11) already serve `read_file` and `list_directory` from the
+   branch's pushed state, annotated as not reflecting dirty edits. The web Files tab
+   *can* paint from that cold once 4a wires it — a real read, no new persistence. It is
+   not wired today: `useFileBrowser.loadDirectory` early-returns without a `sandboxId`
+   and calls `sandbox-client.listDirectory` directly, and the fallback mapper has no
+   importer in any UI. **Two boundaries on that substrate.** (a) `search_files` is
+   *excluded on feature branches* — `tryGitHubReadFallback` declines the mapping when
+   `currentBranch !== defaultBranch` because GitHub code search is not branch-aware, so
+   there is no cold search source off the default branch and 4a must not imply one.
+   (b) GitHub is the *degraded* tier by contract, never the preferred one: pushed state
+   omits uncommitted edits, so it may only be read when the working-tree source is
+   unavailable (see the 4a routing rule).
+4. **Files and Diff do not split the same way.** Files has a cold source on both
+   surfaces (local clone / GitHub pushed state). Diff has one only on native:
+   uncommitted working-tree changes exist nowhere but the sandbox on web. So web Diff
+   is *silent auto-warm*, not local-first, and saying "Files/Diff paint from the
+   native clone" flattens two different mechanisms into one.
+
+**And a defect in the surface Wave 4 rewrites — confirmed by execution, 2026-07-27.**
+`HubDiffTab` has no initial load. `refreshDiff` fires only on the Refresh button;
+`WorkspaceHubSheet`'s "Auto-load diff when opening diff tab" effect has an **empty
+body** and a comment asserting the tab handles it, which it does not. Rendering the
+tab with `sandboxStatus: 'ready'` and `diffData: null` produces:
+
+> main · Refresh · **No working tree changes.**
+
+The runtime states a fact about the user's work without having looked. This is not a
+narration nit — the law owes honesty about *the work*, and this is the failure mode
+the law exists to prevent. Wave 4b opens with the regression test (there are currently
+no tests on `HubDiffTab` or `HubFilesTab` at all).
 
 ### F. Snapshot manager toasts — `useSnapshotManager.ts`
 
@@ -188,7 +256,15 @@ cuttable or rewritable without losing a single real decision.
 - **Wave 1 — copy: DONE 2026-07-26.** Every REWORD plus the A3/I1/I4/I6 law-compliance copy shipped, and `no-restricted-syntax` pins the user-copy channels. After a review finding that the initial pin (literal JSX + direct `toast.*()`) missed expression-based copy, the selectors were extended to JSX expression literals/templates, visible attributes (`title`/`aria-label`/`placeholder`/`alt`), and copy-bearing config properties (`title`/`label`/`detail`/`description`) — which surfaced and reworded ~24 further visible strings (BranchSwitchConfirm, WorkspacePatchCard, the chip tooltips, the E-tab buttons, the C4 refusals, and more). **Convention:** later-wave rows now carry law-compliant *wording* while keeping their scheduled fate — the census tables, not lint disables, track the burn-down. The only `eslint-disable` exemptions are annotated internals: tool names in model-facing guidance (tool identifiers are exempt from the pin by design). Internal enum/type literals were hoisted to module scope rather than exempted. C6's structural collapse and C9's error-recovery-only gating remain open behavioral items; Wave 1 changed their strings only.
 - **Wave 2 — silence: DONE 2026-07-26 (two PRs).** PR 1 shipped B1/B2/M1 and the false T−5 expiry-checkpoint callback. PR 2 shipped the remaining DELETE/DEMOTE narration set (A2/A4/C1/C2/F1/F2/H2/H3/H4/M3). The surviving manual C7 save keeps its success toast until that control is absorbed; autosave success is logged.
 - **Wave 3 — queue-on-warm: DONE 2026-07-26.** C4's five sites run through `useWarmAction` (warm reserved before the first await, per-button progress affordance, honest failure copy — and the dead-button `!sandboxReady`/`!sandboxId` disables removed, which were refusals without even a message). L1 turned out to be already-warmed with mislabeled failure copy, now reworded. The E-tab waits (E1/E2) die in Wave 4's local-first entry instead. **Boundary note (from #1610 review, both bots converging):** accept-warm-run applies only where a workspace *can* warm — chat/relay surfaces have no workspace-start implementation, so their work actions are *absent* (capability), never warmed-and-failed; the scratchpad export gates on `workspaceMode`.
-- **Wave 4 — local-first entry (the big one, scoped separately):** hub Files/Diff/status paint from the native clone (backend seam) before any runtime exists; chat attaches when ready. Kills the A1 wait class at the root rather than restyling it.
+- **Wave 4 — local-first entry (the big one): SCOPED 2026-07-27.** Rows A1, E1, E2, M2. Kills the A1 wait class at the root rather than restyling it. Three PRs, and the order is load-bearing:
+  - **4a — Files, both surfaces.** A UI-level read seam behind `useFileBrowser`, so `HubFilesTab` and the `FileBrowser` section inherit it together. Retires E1/E2's refusal copy and Start-workspace button, and closes the native split-brain (finding 1).
+    - **Routing is state-dependent, not a fixed precedence** (corrected in review, #1612 — both bots converged; the original "native clone → GitHub → sandbox" read as unconditional and would have shown *stale* files on a warm web session after in-sandbox edits). The rule: a flag-on native session reads the on-device clone, always — it is the working tree. A web session reads the cloud sandbox whenever one is ready, and GitHub pushed state **only while the sandbox is cold or unreachable**, matching the read-tier contract. Cold GitHub reads carry the same "last pushed state" annotation the tool tier already applies; a warm sandbox is never bypassed.
+    - **Scope is the whole read path, not just the listing.** Changing `useFileBrowser` alone reroutes directory listings and nothing else: `HubFilesTab.loadFilePreview` calls `readFromSandbox` directly, and `WorkspaceSessionScreen.tsx:566` gates the full-screen browser on `showFileBrowser && sandbox.sandboxId` — a render gate *above* the hook, so a cold session never reaches it. 4a covers all three: listing, content read, and the parent render gate.
+    - **Mutations are explicitly out.** Upload / delete / rename / `FileEditor` writes stay on the HTTP client in 4a. On native that leaves writes cloud-bound while reads are local, so the native file browser is **read-only by construction in 4a** — the mutation controls are *absent*, not refused, per the Wave 3 capability boundary. Wiring native mutations joins J1 in Wave 5.
+  - **4b — Diff: auto-warm, and the load that was never there.** Silent warm on tab open through Wave 3's `useWarmAction`; native diff via `nativeFs.diff()`; delete the Start-workspace button. Opens with the regression test for the confirmed "No working tree changes." defect above, written against the tab (the production entry point), not a helper.
+  - **4c — Chip and launcher end-state.** A1 + M2 render nothing while `creating`; the chip reaches its target end-state of error-only (resolved question 3). **Must land after 4a and 4b** — deleting the starting affordance while the tabs still require a manual warm leaves a blank surface with nothing explaining it, which trades a narration violation for a worse one.
+  - **Native posture:** the web arm ships unflagged (the read tier is already live for tools); the native arm wires behind the existing `VITE_NATIVE_WORKING_COPY` flag and rewrites its stale comment to name the seven unsupported tools (finding 2). Flipping the default is a separate and *heavier* decision than the flag comment implies — a flag-on session loses the whole verification class (`run_tests`, `check_types`, `verify_workspace`) along with `exec`, `show_commit`, `download`, and `find_references`.
+- **Wave 5 — the residue (scoped 2026-07-27).** Six rows that belong to no earlier wave, all open in code: C6 (status section collapses to one workspace row), C7 (manual snapshot absorbed by autosave + on-hide), C9 ("Fresh workspace" demoted to error-recovery-only, per resolved question 2), H1 (auto-retry; only terminal failure surfaces), I4 (transparent restart on expired session), J1 (wire native commit/push in the file browser; the copy dies with the gap). Plus one enforcement bug, not a census row: **the Wave 1 lint pin has an uncovered channel.** Its property selector is `Property[key.name=/^(title|label|detail|description)$/]`, so `message:` is not pinned — and `sandbox-connectivity-notifications.ts` ships `message: 'Sandbox needs attention'` straight into `toast.error(...)` at `WorkspaceChatRoute.tsx`. Banned vocabulary reaching a user through a hole in the ban. Extend the selector and re-sweep; H1's own reword then rides its Wave 5 absorption.
 
 ## Resolved questions (veto pass, 2026-07-26)
 
