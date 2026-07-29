@@ -363,10 +363,12 @@ export function useWorkspaceSandboxController({
   // On-device working-copy trigger (native/APK only, flag-gated). Clones the
   // repo session to a local working copy so git ops resolve the on-device clone
   // via git-session's native binding. Dormant on web and until the flag is on.
-  // Runs alongside — NOT in place of — the cloud sandbox: the non-git tools
-  // still route by `sandboxId`, so this is the git-read half of the native
-  // workspace until the HTTP surface is native-routed (see the flag doc). The
-  // clone is registry-deduped, so re-runs on re-render collapse to a reused hit.
+  // Tool-layer file reads, writes, listings, searches, symbols, and diffs route
+  // to that clone. The native shell has no command runtime, so `sandbox_exec`,
+  // `sandbox_run_tests`, `sandbox_check_types`, `sandbox_verify_workspace`,
+  // `sandbox_show_commit`, `sandbox_download`, and `sandbox_find_references`
+  // return NATIVE_TOOL_UNSUPPORTED (see the flag doc). The clone is
+  // registry-deduped, so re-runs on re-render collapse to a reused hit.
   // Depends on the durable scope primitives (not the `workspaceRepo` identity)
   // so it fires once per (repo, branch), not on every render.
   const repoFullName = workspaceRepo?.full_name;

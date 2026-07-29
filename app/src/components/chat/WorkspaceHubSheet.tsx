@@ -45,7 +45,6 @@ import {
   ensureCommitTargetBranch,
 } from '@/lib/ensure-commit-target-branch';
 import { createSandboxPushGit, gitHubAuthCommandPrefix } from '@/lib/git-backend';
-import { nativeFsScopeFrom, resolveNativeFs } from '@/lib/native-fs';
 import type {
   ForkBranchInWorkspaceResult,
   SwitchBranchInWorkspaceResult,
@@ -158,6 +157,15 @@ interface ReviewDiffSelection {
   data: DiffPreviewCardData;
   label: string;
   mode: Exclude<DiffViewMode, 'working-tree'>;
+}
+
+interface WorkspaceDiffState {
+  repoFullName: string | undefined;
+  branch: string | undefined;
+  generation: number;
+  data: DiffPreviewCardData | null;
+  loading: boolean;
+  error: string | null;
 }
 
 interface CommitPushTarget {
@@ -468,11 +476,37 @@ export function WorkspaceHubSheet({
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Diff state (shared between diff tab and commit flow)
-  const [diffData, setDiffData] = useState<DiffPreviewCardData | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
-  const [diffError, setDiffError] = useState<string | null>(null);
+  const [diffState, setDiffState] = useState<WorkspaceDiffState>({
+    repoFullName,
+    branch: branchProps.currentBranch,
+    generation: 0,
+    data: null,
+    loading: false,
+    error: null,
+  });
   const [reviewDiffSelection, setReviewDiffSelection] = useState<ReviewDiffSelection | null>(null);
   const [diffJumpTarget, setDiffJumpTarget] = useState<DiffJumpTarget | null>(null);
+  /**
+   * Diff state lives in this sheet, so its base and invalidation token live in
+   * the same state cell. React's prop-adjustment pattern rerenders this parent
+   * before its children see the new base, closing the gap where a child effect
+   * could otherwise publish before a parent effect advanced the generation.
+   * The numeric token distinguishes A→B→A; branch-name equality cannot.
+   */
+  if (diffState.repoFullName !== repoFullName || diffState.branch !== branchProps.currentBranch) {
+    setDiffState({
+      repoFullName,
+      branch: branchProps.currentBranch,
+      generation: diffState.generation + 1,
+      data: null,
+      loading: false,
+      error: null,
+    });
+  }
+  const diffGeneration = diffState.generation;
+  const diffData = diffState.data;
+  const diffLoading = diffState.loading;
+  const diffError = diffState.error;
 
   // Commit flow state (replaces old hand-rolled commit/push)
   const [commitPhase, setCommitPhase] = useState<CommitPhase>('idle');
@@ -555,17 +589,7 @@ export function WorkspaceHubSheet({
   const showActionBar =
     activeTab === 'files' ||
     (activeTab === 'diff' && reviewDiffSelection?.mode !== 'review-github');
-  // A resolved on-device clone is the working tree the Diff tab now reads, but
-  // this sheet's commit flow is hardcoded to the cloud backend
-  // (`createSandboxPushGit`). Showing both would let the user commit a change
-  // set they are not looking at — a clean cloud clone reports nothing to
-  // commit while native changes are on screen, and a stale one commits
-  // something else entirely. Absent, not refused: the same capability boundary
-  // the full-screen browser already applies to native commit (J1, Wave 5),
-  // which is where the two paths get reunited.
-  const nativeWorkingCopyActive =
-    resolveNativeFs(nativeFsScopeFrom(repoFullName, branchProps.currentBranch)) !== null;
-  const showCommitBar = showActionBar && capabilities.canCommitAndPush && !nativeWorkingCopyActive;
+  const showCommitBar = showActionBar && capabilities.canCommitAndPush;
   const showScratchActionBar =
     showActionBar && workspaceMode === 'scratch' && Boolean(scratchActions);
 
@@ -586,13 +610,41 @@ export function WorkspaceHubSheet({
   const sanitizedNewBranchName = sanitizeBranchName(newBranchName);
 
   // ---- Diff callbacks for HubDiffTab ----
-  const handleDiffUpdate = useCallback((data: DiffPreviewCardData | null, error: string | null) => {
-    setDiffData(data);
-    setDiffError(error);
-  }, []);
+  const handleDiffUpdate = useCallback(
+    (generation: number, data: DiffPreviewCardData | null, error: string | null) => {
+      setDiffState((current) => {
+        if (current.generation !== generation) {
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'hub_diff_discarded_stale',
+              generation,
+              stage: 'state_update',
+            }),
+          );
+          return current;
+        }
+        return { ...current, data, error };
+      });
+    },
+    [],
+  );
 
-  const handleDiffLoadingChange = useCallback((loading: boolean) => {
-    setDiffLoading(loading);
+  const handleDiffLoadingChange = useCallback((generation: number, loading: boolean) => {
+    setDiffState((current) => {
+      if (current.generation !== generation) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'hub_diff_discarded_stale',
+            generation,
+            stage: loading ? 'loading_start' : 'loading_release',
+          }),
+        );
+        return current;
+      }
+      return { ...current, loading };
+    });
   }, []);
 
   const handleOpenReviewDiff = useCallback(
@@ -904,15 +956,18 @@ export function WorkspaceHubSheet({
           const freshDiff = await getSandboxDiff(workspaceId);
           if (freshDiff.diff) {
             const stats = parseDiffStats(freshDiff.diff);
-            setDiffData({
-              diff: freshDiff.diff,
-              filesChanged: stats.filesChanged,
-              additions: stats.additions,
-              deletions: stats.deletions,
-              truncated: freshDiff.truncated,
-            });
+            setDiffState((current) => ({
+              ...current,
+              data: {
+                diff: freshDiff.diff,
+                filesChanged: stats.filesChanged,
+                additions: stats.additions,
+                deletions: stats.deletions,
+                truncated: freshDiff.truncated,
+              },
+            }));
           } else {
-            setDiffData(null);
+            setDiffState((current) => ({ ...current, data: null }));
           }
         } catch {
           // Best effort
@@ -1864,8 +1919,7 @@ export function WorkspaceHubSheet({
               <div className="flex h-full min-h-0 flex-col">
                 <HubDiffTab
                   ensureSandbox={ensureSandbox}
-                  repoFullName={repoFullName}
-                  currentBranch={branchProps.currentBranch}
+                  diffGeneration={diffGeneration}
                   diffData={reviewDiffSelection?.data ?? diffData}
                   diffLoading={reviewDiffSelection ? false : diffLoading}
                   diffError={reviewDiffSelection ? null : diffError}

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const reactState = vi.hoisted(() => ({
   cells: [] as Array<{ value: unknown }>,
@@ -10,7 +10,6 @@ const reactState = vi.hoisted(() => ({
 
 const dependencies = vi.hoisted(() => ({
   getSandboxDiff: vi.fn(),
-  nativeFs: null as null | { diff: ReturnType<typeof vi.fn> },
 }));
 
 vi.mock('react', () => ({
@@ -44,50 +43,45 @@ vi.mock('@/lib/sandbox-client', () => ({
   getSandboxDiff: dependencies.getSandboxDiff,
 }));
 
-vi.mock('@/lib/native-fs', () => ({
-  nativeFsScopeFrom: (repoFullName?: string, branch?: string) =>
-    repoFullName && branch ? { repoFullName, branch } : undefined,
-  resolveNativeFs: () => dependencies.nativeFs,
-}));
-
 const { HubDiffTab } = await import('./HubDiffTab');
 
 type HubDiffTabProps = Parameters<typeof HubDiffTab>[0];
 
-function mountTab(overrides: Partial<HubDiffTabProps> = {}) {
-  reactState.index = 0;
-  reactState.refIndex = 0;
-  reactState.effects = [];
-
-  const props: HubDiffTabProps = {
+function createTabHarness(initial: Partial<HubDiffTabProps> = {}) {
+  let activeGeneration = initial.diffGeneration ?? 0;
+  const stable = {
     ensureSandbox: vi.fn(async () => 'sbx-1'),
-    repoFullName: 'owner/repo',
-    currentBranch: 'main',
+    onDiffUpdate: vi.fn(),
+    onDiffLoadingChange: vi.fn(),
+  };
+  let props: HubDiffTabProps = {
+    ...stable,
+    diffGeneration: activeGeneration,
     diffData: null,
     diffLoading: false,
     diffError: null,
     diffLabel: 'main',
     diffMode: 'working-tree',
     jumpTarget: null,
-    onDiffUpdate: vi.fn(),
-    onDiffLoadingChange: vi.fn(),
-    ...overrides,
+    ...initial,
   };
 
-  HubDiffTab(props);
-  // Effect order in the component: [0] diff-base scope guard, [1] initial load,
-  // [2] jump-target. Named rather than indexed at each call site so a new effect
-  // shows up as one harness edit instead of silently shifting every test.
-  return {
-    props,
-    scopeEffect: reactState.effects[0],
-    initialLoadEffect: reactState.effects[1],
-  };
-}
+  const render = (overrides: Partial<HubDiffTabProps> = {}) => {
+    if (overrides.diffGeneration !== undefined) activeGeneration = overrides.diffGeneration;
+    props = { ...props, ...overrides };
+    reactState.index = 0;
+    reactState.refIndex = 0;
+    reactState.effects = [];
 
-/** Re-render with new props, preserving hook cells/refs (a real re-render). */
-function rerenderTab(overrides: Partial<HubDiffTabProps> = {}) {
-  return mountTab(overrides);
+    HubDiffTab(props);
+    return {
+      props,
+      // Effect order in the component: initial load, then jump target.
+      initialLoadEffect: reactState.effects[0],
+    };
+  };
+
+  return { render, stable };
 }
 
 beforeEach(() => {
@@ -96,24 +90,30 @@ beforeEach(() => {
   reactState.effects = [];
   reactState.index = 0;
   reactState.refIndex = 0;
-  dependencies.nativeFs = null;
   dependencies.getSandboxDiff.mockReset();
   dependencies.getSandboxDiff.mockResolvedValue({
     diff: '',
     truncated: false,
   });
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('HubDiffTab initial load', () => {
   it('warms and reads the working-tree diff when the tab mounts', async () => {
-    const { props, initialLoadEffect } = mountTab();
+    const harness = createTabHarness();
+    const { initialLoadEffect } = harness.render();
 
     initialLoadEffect();
 
     await vi.waitFor(() => {
-      expect(props.ensureSandbox).toHaveBeenCalledTimes(1);
+      expect(harness.stable.ensureSandbox).toHaveBeenCalledTimes(1);
       expect(dependencies.getSandboxDiff).toHaveBeenCalledWith('sbx-1');
-      expect(props.onDiffUpdate).toHaveBeenCalledWith(
+      expect(harness.stable.onDiffUpdate).toHaveBeenCalledWith(
+        0,
         {
           diff: '',
           filesChanged: 0,
@@ -129,7 +129,8 @@ describe('HubDiffTab initial load', () => {
   it('reserves the load before warming so duplicate effects cannot start twice', async () => {
     let release!: (id: string) => void;
     const ensureSandbox = vi.fn(() => new Promise<string | null>((resolve) => (release = resolve)));
-    const { initialLoadEffect } = mountTab({ ensureSandbox });
+    const harness = createTabHarness({ ensureSandbox });
+    const { initialLoadEffect } = harness.render();
 
     initialLoadEffect();
     initialLoadEffect();
@@ -141,55 +142,24 @@ describe('HubDiffTab initial load', () => {
 
   it('does not auto-load an externally supplied review snapshot', () => {
     const ensureSandbox = vi.fn(async () => 'sbx-1');
-    const { initialLoadEffect } = mountTab({
-      ensureSandbox,
-      diffMode: 'review-github',
-    });
+    const harness = createTabHarness({ ensureSandbox, diffMode: 'review-github' });
 
-    initialLoadEffect();
+    harness.render().initialLoadEffect();
 
     expect(ensureSandbox).not.toHaveBeenCalled();
     expect(dependencies.getSandboxDiff).not.toHaveBeenCalled();
-  });
-
-  it('reads and sanitizes the native clone without warming a cloud workspace', async () => {
-    const nativeDiff = vi.fn(async () => ({
-      diff:
-        'diff --git a/a.ts b/a.ts\n+file body\n' +
-        'diff --git a/.env b/.env\n+API_KEY=super-secret-value\n',
-      truncated: false,
-      git_status: ' M a.ts\n?? .env',
-    }));
-    const ensureSandbox = vi.fn(async () => 'sbx-1');
-    const onDiffUpdate = vi.fn();
-    const { initialLoadEffect } = mountTab({ ensureSandbox, onDiffUpdate });
-    // Resolve at action time: the clone may become ready after the tab render
-    // but before its first effect runs.
-    dependencies.nativeFs = { diff: nativeDiff };
-
-    initialLoadEffect();
-
-    await vi.waitFor(() => expect(onDiffUpdate).toHaveBeenCalledTimes(1));
-    const data = onDiffUpdate.mock.calls[0][0];
-    expect(nativeDiff).toHaveBeenCalledTimes(1);
-    expect(ensureSandbox).not.toHaveBeenCalled();
-    expect(dependencies.getSandboxDiff).not.toHaveBeenCalled();
-    expect(data.diff).toContain('diff --git a/a.ts b/a.ts');
-    expect(data.diff).toContain('1 sensitive file diff hidden');
-    expect(data.diff).not.toContain('super-secret-value');
   });
 
   it('shows the honest workspace-start failure when warming is unavailable', async () => {
-    const onDiffUpdate = vi.fn();
-    const { initialLoadEffect } = mountTab({
+    const harness = createTabHarness({
       ensureSandbox: vi.fn(async () => null),
-      onDiffUpdate,
     });
 
-    initialLoadEffect();
+    harness.render().initialLoadEffect();
 
     await vi.waitFor(() => {
-      expect(onDiffUpdate).toHaveBeenCalledWith(
+      expect(harness.stable.onDiffUpdate).toHaveBeenCalledWith(
+        0,
         null,
         'Workspace could not start. Try again in a moment.',
       );
@@ -199,57 +169,65 @@ describe('HubDiffTab initial load', () => {
 
   it('keeps infrastructure detail out of a diff-read failure', async () => {
     dependencies.getSandboxDiff.mockRejectedValue(new Error('Sandbox transport exploded'));
-    const onDiffUpdate = vi.fn();
-    const { initialLoadEffect } = mountTab({ onDiffUpdate });
+    const harness = createTabHarness();
 
-    initialLoadEffect();
+    harness.render().initialLoadEffect();
 
     await vi.waitFor(() => {
-      expect(onDiffUpdate).toHaveBeenCalledWith(null, "Couldn't read workspace changes.");
+      expect(harness.stable.onDiffUpdate).toHaveBeenCalledWith(
+        0,
+        null,
+        "Couldn't read workspace changes.",
+      );
     });
   });
 });
 
-describe('HubDiffTab diff base', () => {
-  it('drops a read that completes after the branch changed under it', async () => {
-    let releaseRead: (value: { diff: string; truncated: boolean }) => void = () => {};
-    dependencies.getSandboxDiff.mockReturnValue(
-      new Promise<{ diff: string; truncated: boolean }>((resolve) => {
-        releaseRead = resolve;
-      }),
-    );
+describe('HubDiffTab diff generation', () => {
+  it('retries the current A generation after an A→B→A load reservation settles', async () => {
+    let releaseFirstRead: (value: { diff: string; truncated: boolean }) => void = () => {};
+    dependencies.getSandboxDiff
+      .mockReturnValueOnce(
+        new Promise<{ diff: string; truncated: boolean }>((resolve) => {
+          releaseFirstRead = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({
+        diff: 'diff --git a/current.ts b/current.ts\n',
+        truncated: false,
+      });
+    const harness = createTabHarness();
 
-    const first = mountTab({ currentBranch: 'feature-a' });
-    first.initialLoadEffect();
+    harness.render({ diffGeneration: 0 }).initialLoadEffect();
     await vi.waitFor(() => expect(dependencies.getSandboxDiff).toHaveBeenCalledTimes(1));
+    harness.stable.onDiffUpdate.mockClear();
+    harness.stable.onDiffLoadingChange.mockClear();
 
-    // Branch switches in place (warm switch) while the read is still in flight.
-    const second = rerenderTab({ currentBranch: 'feature-b' });
-    second.scopeEffect();
-    expect(second.props.onDiffUpdate).toHaveBeenCalledWith(null, null);
-    // The base change must also release the loading flag, or the load effect
-    // can never fire again for the new branch.
-    expect(second.props.onDiffLoadingChange).toHaveBeenLastCalledWith(false);
+    harness.render({ diffGeneration: 1 }).initialLoadEffect();
+    harness.render({ diffGeneration: 2 }).initialLoadEffect();
+    releaseFirstRead({ diff: 'diff --git a/stale.ts b/stale.ts\n', truncated: false });
+    await vi.waitFor(() => {
+      expect(harness.stable.onDiffUpdate).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ diff: 'diff --git a/stale.ts b/stale.ts\n' }),
+        null,
+      );
+    });
+    harness.stable.onDiffUpdate.mockClear();
+    harness.stable.onDiffLoadingChange.mockClear();
 
-    vi.mocked(second.props.onDiffUpdate).mockClear();
-    releaseRead({ diff: 'diff --git a/a.ts b/a.ts\n', truncated: false });
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // feature-a's diff must never be published into feature-b.
-    expect(second.props.onDiffUpdate).not.toHaveBeenCalled();
-  });
-
-  it('reloads for the new base after a branch change', async () => {
-    const first = mountTab({ currentBranch: 'feature-a' });
-    first.initialLoadEffect();
-    await vi.waitFor(() => expect(dependencies.getSandboxDiff).toHaveBeenCalledTimes(1));
-
-    const second = rerenderTab({ currentBranch: 'feature-b' });
-    second.scopeEffect();
-    const third = rerenderTab({ currentBranch: 'feature-b' });
-    third.initialLoadEffect();
-
-    await vi.waitFor(() => expect(dependencies.getSandboxDiff).toHaveBeenCalledTimes(2));
+    // The old `useWarmAction` reservation releases itself on settlement. Its
+    // observable warming=false transition lets the current generation retry;
+    // the sheet separately generation-guards these callbacks.
+    harness.render({ diffGeneration: 2 }).initialLoadEffect();
+    await vi.waitFor(() => {
+      expect(dependencies.getSandboxDiff).toHaveBeenCalledTimes(2);
+      expect(harness.stable.onDiffUpdate).toHaveBeenCalledWith(
+        2,
+        expect.objectContaining({ diff: 'diff --git a/current.ts b/current.ts\n' }),
+        null,
+      );
+      expect(harness.stable.onDiffLoadingChange).toHaveBeenLastCalledWith(2, false);
+    });
   });
 });

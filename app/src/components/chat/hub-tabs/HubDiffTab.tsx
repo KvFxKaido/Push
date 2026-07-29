@@ -3,9 +3,7 @@ import { ChevronDown, ChevronRight, CornerDownRight, Loader2, RefreshCw } from '
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats, parseDiffIntoFiles, type FileDiff } from '@/lib/diff-utils';
 import { useWarmAction } from '@/hooks/useWarmAction';
-import { nativeFsScopeFrom, resolveNativeFs, type NativeFsDiffResult } from '@/lib/native-fs';
-import { sanitizeNativeDiff } from '@/lib/native-diff';
-import { getSandboxDiff, type DiffResult } from '@/lib/sandbox-client';
+import { getSandboxDiff } from '@/lib/sandbox-client';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS, HUB_TAG_CLASS } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData } from '@/types';
 
@@ -26,8 +24,8 @@ interface HubDiffTabProps {
    * unread surface a future caller might mistake for a gate.
    */
   ensureSandbox: () => Promise<string | null>;
-  repoFullName?: string;
-  currentBranch?: string;
+  /** Monotonic token owned by the sheet that owns the diff state. */
+  diffGeneration: number;
   /** Externally-managed diff data (so the hub shell can trigger refreshes after commit). */
   diffData: DiffPreviewCardData | null;
   diffLoading: boolean;
@@ -36,8 +34,12 @@ interface HubDiffTabProps {
   diffMode: 'working-tree' | 'review-github' | 'review-sandbox';
   jumpTarget: DiffJumpTarget | null;
   onClearReviewDiff?: () => void;
-  onDiffUpdate: (data: DiffPreviewCardData | null, error: string | null) => void;
-  onDiffLoadingChange: (loading: boolean) => void;
+  onDiffUpdate: (
+    generation: number,
+    data: DiffPreviewCardData | null,
+    error: string | null,
+  ) => void;
+  onDiffLoadingChange: (generation: number, loading: boolean) => void;
 }
 
 interface DiffRenderLine {
@@ -51,20 +53,9 @@ interface ParsedFileDiff extends FileDiff {
   lineKeyByNewLine: Map<number, string>;
 }
 
-function normalizeNativeDiff(result: NativeFsDiffResult): DiffResult {
-  const sanitized = sanitizeNativeDiff(result);
-  return {
-    diff: sanitized.diff,
-    truncated: sanitized.truncated,
-    ...(sanitized.git_status !== undefined ? { git_status: sanitized.git_status } : {}),
-    ...(sanitized.error !== undefined ? { error: sanitized.error } : {}),
-  };
-}
-
 export function HubDiffTab({
   ensureSandbox,
-  repoFullName,
-  currentBranch,
+  diffGeneration,
   diffData,
   diffLoading,
   diffError,
@@ -80,125 +71,77 @@ export function HubDiffTab({
   const [highlightedLineKey, setHighlightedLineKey] = useState<string | null>(null);
   const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const lineRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const diffLoadInFlightRef = useRef(false);
   const { warming: diffWarming, run: runWarmedDiff } = useWarmAction(ensureSandbox);
-  const nativeFsScope = useMemo(
-    () => nativeFsScopeFrom(repoFullName, currentBranch),
-    [repoFullName, currentBranch],
-  );
   const showingReviewDiff = diffMode !== 'working-tree';
   const jumpTargetPath = jumpTarget?.path ?? null;
   const jumpTargetLine = jumpTarget?.line;
   const jumpTargetRequestKey = jumpTarget?.requestKey ?? null;
 
-  /**
-   * The diff base. Branch is *mutable session state* that changes in place on a
-   * warm switch, and the parent's `diffData` is unscoped, so without this the
-   * previous branch's diff stays on screen (the load effect sees non-null data
-   * and exits) and a read still in flight across the switch publishes the old
-   * branch's diff into the new one.
-   */
-  const diffScopeKey = `${repoFullName ?? ''}::${currentBranch ?? ''}`;
-  const diffScopeRef = useRef(diffScopeKey);
-
-  useEffect(() => {
-    if (diffScopeRef.current === diffScopeKey) return;
-    diffScopeRef.current = diffScopeKey;
-    // Any in-flight read now belongs to the previous base. Release BOTH the
-    // reservation and the loading flag here: the stale read will decline to
-    // touch them on completion (it no longer owns them), so if this effect
-    // left `diffLoading` set, the load effect would never fire again and the
-    // tab would spin forever on the new branch.
-    diffLoadInFlightRef.current = false;
-    onDiffLoadingChange(false);
-    onDiffUpdate(null, null);
-  }, [diffScopeKey, onDiffLoadingChange, onDiffUpdate]);
-
   const refreshDiff = useCallback(async () => {
-    if (diffLoadInFlightRef.current || diffLoading) return;
-    diffLoadInFlightRef.current = true;
-    onDiffLoadingChange(true);
-    const nativeFs = resolveNativeFs(nativeFsScope);
-    let readStarted = nativeFs !== null;
-    const readScope = diffScopeKey;
-    /** Drop a completion whose base is no longer the active one. */
-    const stale = () => diffScopeRef.current !== readScope;
-
-    const applyDiff = (result: DiffResult) => {
-      if (result.error) throw new Error(result.error);
-      if (stale()) {
-        console.log(
-          JSON.stringify({ level: 'info', event: 'hub_diff_discarded_stale', scope: readScope }),
-        );
-        return;
-      }
-      const stats = parseDiffStats(result.diff);
-      onDiffUpdate(
-        {
-          diff: result.diff,
-          filesChanged: stats.filesChanged,
-          additions: stats.additions,
-          deletions: stats.deletions,
-          truncated: result.truncated,
-        },
-        null,
-      );
-    };
+    const generation = diffGeneration;
+    let readStarted = false;
 
     // The user-facing copy is deliberately generic (upstream detail never
     // reaches the UI), so the cause only survives in these logs. Three paired
     // branches, one per way a load can end without a diff.
-    const surface = nativeFs ? 'native' : 'sandbox';
     try {
-      if (nativeFs) {
-        applyDiff(normalizeNativeDiff(await nativeFs.diff()));
-      } else {
-        await runWarmedDiff(
-          async (workspaceId) => {
-            readStarted = true;
-            applyDiff(await getSandboxDiff(workspaceId));
-          },
-          () => {
-            console.log(
-              JSON.stringify({ level: 'warn', event: 'hub_diff_warm_unavailable', surface }),
+      await runWarmedDiff(
+        async (workspaceId) => {
+          readStarted = true;
+          onDiffLoadingChange(generation, true);
+          try {
+            const result = await getSandboxDiff(workspaceId);
+            if (result.error) throw new Error(result.error);
+            const stats = parseDiffStats(result.diff);
+            onDiffUpdate(
+              generation,
+              {
+                diff: result.diff,
+                filesChanged: stats.filesChanged,
+                additions: stats.additions,
+                deletions: stats.deletions,
+                truncated: result.truncated,
+              },
+              null,
             );
-            if (!stale()) onDiffUpdate(null, WORKSPACE_START_FAILED);
-          },
-        );
-      }
+          } finally {
+            onDiffLoadingChange(generation, false);
+          }
+        },
+        () => {
+          console.log(
+            JSON.stringify({
+              level: 'warn',
+              event: 'hub_diff_warm_unavailable',
+              generation,
+            }),
+          );
+          onDiffUpdate(generation, null, WORKSPACE_START_FAILED);
+        },
+      );
     } catch (err) {
       console.log(
         JSON.stringify({
           level: 'warn',
           event: readStarted ? 'hub_diff_read_failed' : 'hub_diff_warm_failed',
-          surface,
+          generation,
           error: err instanceof Error ? err.message : String(err),
         }),
       );
-      if (!stale()) onDiffUpdate(null, readStarted ? DIFF_READ_FAILED : WORKSPACE_START_FAILED);
-    } finally {
-      // A scope change already released the reservation for the new base; don't
-      // clear it a second time and stomp a load that started after the switch.
-      if (!stale()) {
-        diffLoadInFlightRef.current = false;
-        onDiffLoadingChange(false);
-      }
+      onDiffUpdate(generation, null, readStarted ? DIFF_READ_FAILED : WORKSPACE_START_FAILED);
     }
-  }, [diffLoading, diffScopeKey, nativeFsScope, onDiffLoadingChange, onDiffUpdate, runWarmedDiff]);
+  }, [diffGeneration, onDiffLoadingChange, onDiffUpdate, runWarmedDiff]);
 
   useEffect(() => {
-    if (showingReviewDiff || diffData || diffError || diffLoading) return;
+    if (showingReviewDiff || diffData || diffError || diffLoading || diffWarming) return;
     void refreshDiff();
-  }, [diffData, diffError, diffLoading, refreshDiff, showingReviewDiff]);
+  }, [diffData, diffError, diffLoading, diffWarming, refreshDiff, showingReviewDiff]);
 
   const diffText = diffData?.diff ?? '';
   const fileDiffs: FileDiff[] = useMemo(
     () => (diffText ? parseDiffIntoFiles(diffText) : []),
     [diffText],
   );
-  /** Diff text the file parser found nothing in — sanitizer notes, typically. */
-  const unparsedDiffText = fileDiffs.length === 0 ? diffText.trim() : '';
-
   const parsedFileDiffs: ParsedFileDiff[] = useMemo(() => {
     return fileDiffs.map((fd) => {
       const renderLines: DiffRenderLine[] = [];
@@ -438,14 +381,6 @@ export function HubDiffTab({
               </div>
             )}
           </div>
-        ) : unparsedDiffText ? (
-          // Diff text that parses to zero file blocks is still evidence of
-          // change — the sanitizer replaces sensitive blocks with a bare note
-          // (`[1 sensitive file diff hidden]`), and reporting that as a clean
-          // tree is the same false claim this tab was fixed to stop making.
-          <p className="whitespace-pre-wrap p-3 font-mono text-push-xs text-push-fg-dim">
-            {unparsedDiffText}
-          </p>
         ) : (
           <p className="p-3 text-xs text-push-fg-dim">No working tree changes.</p>
         )}
