@@ -1282,13 +1282,6 @@ export function WorkspaceHubSheet({
     void suggestBranchName();
   }, [commitTargetSheetOpen, commitTargetMode, suggestBranchName]);
 
-  // Auto-load diff when opening diff tab
-  useEffect(() => {
-    if (open && activeTab === 'diff' && sandboxReady && !diffLoading && !diffData && !diffError) {
-      // Diff tab will handle its own initial load via its ensureSandbox
-    }
-  }, [open, activeTab, sandboxReady, diffLoading, diffData, diffError]);
-
   // ---- Swipe navigation ----
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     if (event.touches.length !== 1) return;
@@ -1859,9 +1852,9 @@ export function WorkspaceHubSheet({
             {activeTab === 'diff' && (
               <div className="flex h-full min-h-0 flex-col">
                 <HubDiffTab
-                  sandboxId={sandboxId}
-                  sandboxStatus={sandboxStatus}
                   ensureSandbox={ensureSandbox}
+                  repoFullName={repoFullName}
+                  currentBranch={branchProps.currentBranch}
                   diffData={reviewDiffSelection?.data ?? diffData}
                   diffLoading={reviewDiffSelection ? false : diffLoading}
                   diffError={reviewDiffSelection ? null : diffError}
