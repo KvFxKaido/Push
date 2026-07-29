@@ -527,20 +527,32 @@ function unquoteDiffPath(raw: string | undefined): string {
  * on directory context as well as basename (`/.ssh/`, `/.aws/credentials`),
  * so stripping `a/` off `a/.ssh/known_hosts` would lose the match that the
  * unstripped form still makes. Checking both costs one array entry.
+ *
+ * Sources are ranked, because they are not equally trustworthy. `---`/`+++`
+ * and rename/copy lines carry exactly one path each and cannot be misread.
+ * The header carries two with only whitespace between them, and git does not
+ * quote a path merely for containing a space — so `.env b/foo.txt` (a
+ * directory named `.env b`) splits into a spurious `a/.env` and hides a file
+ * whose real basename is `foo.txt` (Codex P2 on #1614). The header is
+ * therefore consulted only when no unambiguous source yielded anything, which
+ * in practice means mode-only and binary blocks — the ones with no content to
+ * leak either way.
  */
 function diffBlockPaths(block: string): string[] {
   const paths = new Set<string>();
-  const add = (raw: string | undefined) => {
+  const headerFallback = new Set<string>();
+  const addTo = (target: Set<string>, raw: string | undefined) => {
     const cleaned = unquoteDiffPath(raw);
     if (!cleaned || cleaned === '/dev/null') return;
-    paths.add(cleaned);
+    target.add(cleaned);
     // `a/ b/` by default; `i/ w/ c/ o/` under diff.mnemonicPrefix. A real
     // top-level dir with one of those names loses a segment here, which is
     // harmless: this value is only ever fed to a sensitivity predicate, and
     // the unstripped form is in the set too.
     const stripped = cleaned.replace(/^[abciwo]\//, '');
-    if (stripped && stripped !== cleaned) paths.add(stripped);
+    if (stripped && stripped !== cleaned) target.add(stripped);
   };
+  const add = (raw: string | undefined) => addTo(paths, raw);
 
   for (const line of block.split('\n')) {
     // Metadata ends at the first hunk header; everything after it is content,
@@ -568,27 +580,29 @@ function diffBlockPaths(block: string): string[] {
     if (!header) continue;
     const operands = header[1].trim();
     if (!operands) continue;
-    // Both sides quoted — unambiguous, so split on the quote boundary.
+    // Both sides quoted — the quote boundary is unambiguous, so this one is
+    // as trustworthy as a marker line and goes straight into the main set.
     const quoted = /^("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/.exec(operands);
     if (quoted) {
       add(quoted[1]);
       add(quoted[2]);
       continue;
     }
-    // Standard prefixed form. Anchoring the split on ` b/` (rather than any
-    // space) keeps unquoted paths containing spaces intact; git does not quote
-    // those in the header, which is what makes a naive space-split wrong.
+    // Standard prefixed form. Anchoring the split on ` b/` rather than any
+    // space keeps most unquoted paths-with-spaces intact, but it cannot be
+    // made exact: a path containing ` b/` is indistinguishable from the
+    // separator. Fallback-only for that reason.
     const prefixed = /^"?([abciwo]\/.+?)"? "?([abciwo]\/.+?)"?$/.exec(operands);
     if (prefixed) {
-      add(prefixed[1]);
-      add(prefixed[2]);
+      addTo(headerFallback, prefixed[1]);
+      addTo(headerFallback, prefixed[2]);
       continue;
     }
     // Unprefixed / unrecognized: contribute nothing here. A block with content
     // still resolves through its ---/+++ lines; one without them falls to the
     // fail-closed branch, which is the intended outcome.
   }
-  return [...paths];
+  return paths.size > 0 ? [...paths] : [...headerFallback];
 }
 
 /**

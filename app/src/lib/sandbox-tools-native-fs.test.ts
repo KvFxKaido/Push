@@ -741,6 +741,47 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).not.toContain('hidden');
   });
 
+  // Codex P2 on #1614 (second round). A directory named `.env b` puts the
+  // literal ` b/` inside a path, so the header `diff --git a/.env b/foo.txt
+  // b/.env b/foo.txt` splits into the spurious `a/.env` — sensitive-looking,
+  // for a file whose real basename is `foo.txt`. The header is ambiguous by
+  // construction; ---/+++ and rename lines are not, so the header is now only
+  // consulted when no reliable source produced a path at all.
+  it('prefers unambiguous marker paths over a splittable header', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/.env b/foo.txt b/.env b/foo.txt\n' +
+        '--- a/.env b/foo.txt\n' +
+        '+++ b/.env b/foo.txt\n' +
+        '@@ -1 +1 @@\n' +
+        '+canary-prefix-like-name\n',
+      truncated: false,
+      git_status: ' M ".env b/foo.txt"',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('canary-prefix-like-name');
+    expect(result.text).not.toContain('hidden');
+  });
+
+  // Demoting the header to a fallback leaves it reachable only for blocks with
+  // no ---/+++ and no rename lines: mode-only and binary changes. Without this,
+  // that branch ships unexercised — reachable but untested, which is how a
+  // fallback quietly becomes dead code.
+  it('still classifies a mode-only change through the header fallback', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff: 'diff --git a/.env b/.env\nold mode 100644\nnew mode 100755\n',
+      truncated: false,
+      git_status: ' M .env',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('1 sensitive file diff hidden');
+    expect(result.text).not.toContain('unparseable');
+  });
+
   it('refuses sandbox_find_references on-device with a typed error', async () => {
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_find_references', args: { symbol: 'hello' } },
