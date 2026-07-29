@@ -951,24 +951,39 @@ export function WorkspaceHubSheet({
           branchProps.onRefreshBranches();
         }
 
-        // Refresh diff data
+        // Refresh diff data.
+        //
+        // This is the second writer into the diff cell, and it races the tab's
+        // auto-load: a new-branch commit moves `currentBranch` *before* the
+        // commit runs, which invalidates the base and lets the visible tab
+        // start a read against the still-dirty tree. Sharing a generation with
+        // that read means whichever resolves last wins, so a slow pre-commit
+        // read could overwrite this clean result and report work as
+        // uncommitted after it was committed.
+        //
+        // Advancing the generation makes this refresh the sole owner: the
+        // in-flight read's data *and* its loading release are both rejected as
+        // stale. Clearing `loading` here is what keeps that from deadlocking —
+        // the rejected read can no longer turn it off.
         try {
           const freshDiff = await getSandboxDiff(workspaceId);
-          if (freshDiff.diff) {
-            const stats = parseDiffStats(freshDiff.diff);
-            setDiffState((current) => ({
-              ...current,
-              data: {
-                diff: freshDiff.diff,
-                filesChanged: stats.filesChanged,
-                additions: stats.additions,
-                deletions: stats.deletions,
-                truncated: freshDiff.truncated,
-              },
-            }));
-          } else {
-            setDiffState((current) => ({ ...current, data: null }));
-          }
+          const stats = parseDiffStats(freshDiff.diff);
+          setDiffState((current) => ({
+            ...current,
+            generation: current.generation + 1,
+            loading: false,
+            error: null,
+            // An empty post-commit diff is *checked* data, not absent data —
+            // same convention the tab uses, so a clean tree does not re-arm
+            // the auto-load into a redundant read.
+            data: {
+              diff: freshDiff.diff,
+              filesChanged: stats.filesChanged,
+              additions: stats.additions,
+              deletions: stats.deletions,
+              truncated: freshDiff.truncated,
+            },
+          }));
         } catch {
           // Best effort
         }
