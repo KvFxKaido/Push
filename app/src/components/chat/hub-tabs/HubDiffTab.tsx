@@ -91,15 +91,47 @@ export function HubDiffTab({
   const jumpTargetLine = jumpTarget?.line;
   const jumpTargetRequestKey = jumpTarget?.requestKey ?? null;
 
+  /**
+   * The diff base. Branch is *mutable session state* that changes in place on a
+   * warm switch, and the parent's `diffData` is unscoped, so without this the
+   * previous branch's diff stays on screen (the load effect sees non-null data
+   * and exits) and a read still in flight across the switch publishes the old
+   * branch's diff into the new one.
+   */
+  const diffScopeKey = `${repoFullName ?? ''}::${currentBranch ?? ''}`;
+  const diffScopeRef = useRef(diffScopeKey);
+
+  useEffect(() => {
+    if (diffScopeRef.current === diffScopeKey) return;
+    diffScopeRef.current = diffScopeKey;
+    // Any in-flight read now belongs to the previous base. Release BOTH the
+    // reservation and the loading flag here: the stale read will decline to
+    // touch them on completion (it no longer owns them), so if this effect
+    // left `diffLoading` set, the load effect would never fire again and the
+    // tab would spin forever on the new branch.
+    diffLoadInFlightRef.current = false;
+    onDiffLoadingChange(false);
+    onDiffUpdate(null, null);
+  }, [diffScopeKey, onDiffLoadingChange, onDiffUpdate]);
+
   const refreshDiff = useCallback(async () => {
     if (diffLoadInFlightRef.current || diffLoading) return;
     diffLoadInFlightRef.current = true;
     onDiffLoadingChange(true);
     const nativeFs = resolveNativeFs(nativeFsScope);
     let readStarted = nativeFs !== null;
+    const readScope = diffScopeKey;
+    /** Drop a completion whose base is no longer the active one. */
+    const stale = () => diffScopeRef.current !== readScope;
 
     const applyDiff = (result: DiffResult) => {
       if (result.error) throw new Error(result.error);
+      if (stale()) {
+        console.log(
+          JSON.stringify({ level: 'info', event: 'hub_diff_discarded_stale', scope: readScope }),
+        );
+        return;
+      }
       const stats = parseDiffStats(result.diff);
       onDiffUpdate(
         {
@@ -130,7 +162,7 @@ export function HubDiffTab({
             console.log(
               JSON.stringify({ level: 'warn', event: 'hub_diff_warm_unavailable', surface }),
             );
-            onDiffUpdate(null, WORKSPACE_START_FAILED);
+            if (!stale()) onDiffUpdate(null, WORKSPACE_START_FAILED);
           },
         );
       }
@@ -143,12 +175,16 @@ export function HubDiffTab({
           error: err instanceof Error ? err.message : String(err),
         }),
       );
-      onDiffUpdate(null, readStarted ? DIFF_READ_FAILED : WORKSPACE_START_FAILED);
+      if (!stale()) onDiffUpdate(null, readStarted ? DIFF_READ_FAILED : WORKSPACE_START_FAILED);
     } finally {
-      diffLoadInFlightRef.current = false;
-      onDiffLoadingChange(false);
+      // A scope change already released the reservation for the new base; don't
+      // clear it a second time and stomp a load that started after the switch.
+      if (!stale()) {
+        diffLoadInFlightRef.current = false;
+        onDiffLoadingChange(false);
+      }
     }
-  }, [diffLoading, nativeFsScope, onDiffLoadingChange, onDiffUpdate, runWarmedDiff]);
+  }, [diffLoading, diffScopeKey, nativeFsScope, onDiffLoadingChange, onDiffUpdate, runWarmedDiff]);
 
   useEffect(() => {
     if (showingReviewDiff || diffData || diffError || diffLoading) return;
@@ -160,6 +196,8 @@ export function HubDiffTab({
     () => (diffText ? parseDiffIntoFiles(diffText) : []),
     [diffText],
   );
+  /** Diff text the file parser found nothing in — sanitizer notes, typically. */
+  const unparsedDiffText = fileDiffs.length === 0 ? diffText.trim() : '';
 
   const parsedFileDiffs: ParsedFileDiff[] = useMemo(() => {
     return fileDiffs.map((fd) => {
@@ -400,8 +438,14 @@ export function HubDiffTab({
               </div>
             )}
           </div>
-        ) : diffData ? (
-          <p className="p-3 text-xs text-push-fg-dim">No working tree changes.</p>
+        ) : unparsedDiffText ? (
+          // Diff text that parses to zero file blocks is still evidence of
+          // change — the sanitizer replaces sensitive blocks with a bare note
+          // (`[1 sensitive file diff hidden]`), and reporting that as a clean
+          // tree is the same false claim this tab was fixed to stop making.
+          <p className="whitespace-pre-wrap p-3 font-mono text-push-xs text-push-fg-dim">
+            {unparsedDiffText}
+          </p>
         ) : (
           <p className="p-3 text-xs text-push-fg-dim">No working tree changes.</p>
         )}

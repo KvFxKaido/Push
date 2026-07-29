@@ -75,7 +75,19 @@ function mountTab(overrides: Partial<HubDiffTabProps> = {}) {
   };
 
   HubDiffTab(props);
-  return { props, initialLoadEffect: reactState.effects[0] };
+  // Effect order in the component: [0] diff-base scope guard, [1] initial load,
+  // [2] jump-target. Named rather than indexed at each call site so a new effect
+  // shows up as one harness edit instead of silently shifting every test.
+  return {
+    props,
+    scopeEffect: reactState.effects[0],
+    initialLoadEffect: reactState.effects[1],
+  };
+}
+
+/** Re-render with new props, preserving hook cells/refs (a real re-render). */
+function rerenderTab(overrides: Partial<HubDiffTabProps> = {}) {
+  return mountTab(overrides);
 }
 
 beforeEach(() => {
@@ -195,5 +207,49 @@ describe('HubDiffTab initial load', () => {
     await vi.waitFor(() => {
       expect(onDiffUpdate).toHaveBeenCalledWith(null, "Couldn't read workspace changes.");
     });
+  });
+});
+
+describe('HubDiffTab diff base', () => {
+  it('drops a read that completes after the branch changed under it', async () => {
+    let releaseRead: (value: { diff: string; truncated: boolean }) => void = () => {};
+    dependencies.getSandboxDiff.mockReturnValue(
+      new Promise<{ diff: string; truncated: boolean }>((resolve) => {
+        releaseRead = resolve;
+      }),
+    );
+
+    const first = mountTab({ currentBranch: 'feature-a' });
+    first.initialLoadEffect();
+    await vi.waitFor(() => expect(dependencies.getSandboxDiff).toHaveBeenCalledTimes(1));
+
+    // Branch switches in place (warm switch) while the read is still in flight.
+    const second = rerenderTab({ currentBranch: 'feature-b' });
+    second.scopeEffect();
+    expect(second.props.onDiffUpdate).toHaveBeenCalledWith(null, null);
+    // The base change must also release the loading flag, or the load effect
+    // can never fire again for the new branch.
+    expect(second.props.onDiffLoadingChange).toHaveBeenLastCalledWith(false);
+
+    vi.mocked(second.props.onDiffUpdate).mockClear();
+    releaseRead({ diff: 'diff --git a/a.ts b/a.ts\n', truncated: false });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // feature-a's diff must never be published into feature-b.
+    expect(second.props.onDiffUpdate).not.toHaveBeenCalled();
+  });
+
+  it('reloads for the new base after a branch change', async () => {
+    const first = mountTab({ currentBranch: 'feature-a' });
+    first.initialLoadEffect();
+    await vi.waitFor(() => expect(dependencies.getSandboxDiff).toHaveBeenCalledTimes(1));
+
+    const second = rerenderTab({ currentBranch: 'feature-b' });
+    second.scopeEffect();
+    const third = rerenderTab({ currentBranch: 'feature-b' });
+    third.initialLoadEffect();
+
+    await vi.waitFor(() => expect(dependencies.getSandboxDiff).toHaveBeenCalledTimes(2));
   });
 });

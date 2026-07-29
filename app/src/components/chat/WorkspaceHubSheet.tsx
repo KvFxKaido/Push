@@ -45,6 +45,7 @@ import {
   ensureCommitTargetBranch,
 } from '@/lib/ensure-commit-target-branch';
 import { createSandboxPushGit, gitHubAuthCommandPrefix } from '@/lib/git-backend';
+import { nativeFsScopeFrom, resolveNativeFs } from '@/lib/native-fs';
 import type {
   ForkBranchInWorkspaceResult,
   SwitchBranchInWorkspaceResult,
@@ -554,7 +555,17 @@ export function WorkspaceHubSheet({
   const showActionBar =
     activeTab === 'files' ||
     (activeTab === 'diff' && reviewDiffSelection?.mode !== 'review-github');
-  const showCommitBar = showActionBar && capabilities.canCommitAndPush;
+  // A resolved on-device clone is the working tree the Diff tab now reads, but
+  // this sheet's commit flow is hardcoded to the cloud backend
+  // (`createSandboxPushGit`). Showing both would let the user commit a change
+  // set they are not looking at — a clean cloud clone reports nothing to
+  // commit while native changes are on screen, and a stale one commits
+  // something else entirely. Absent, not refused: the same capability boundary
+  // the full-screen browser already applies to native commit (J1, Wave 5),
+  // which is where the two paths get reunited.
+  const nativeWorkingCopyActive =
+    resolveNativeFs(nativeFsScopeFrom(repoFullName, branchProps.currentBranch)) !== null;
+  const showCommitBar = showActionBar && capabilities.canCommitAndPush && !nativeWorkingCopyActive;
   const showScratchActionBar =
     showActionBar && workspaceMode === 'scratch' && Boolean(scratchActions);
 
