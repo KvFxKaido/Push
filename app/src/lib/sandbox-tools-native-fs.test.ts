@@ -577,6 +577,97 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).toContain('1 sensitive file diff hidden');
   });
 
+  // The block filter used to read only the source-side `a/` path, so a rename
+  // INTO a sensitive destination kept the block and printed the new file's
+  // body. The git_status filter in the same function already split on ` -> `
+  // and checked both sides; these cases close the gap on the diff body.
+  //
+  // Each canary is a plain token with no `KEY=value` shape, so a pass proves
+  // the block was dropped rather than `redactSensitiveText` masking the body.
+  it('hides a rename-with-edit whose destination is sensitive', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/safe.txt b/.env\n' +
+        'similarity index 85%\n' +
+        'rename from safe.txt\n' +
+        'rename to .env\n' +
+        '--- a/safe.txt\n' +
+        '+++ b/.env\n' +
+        '@@ -1 +1 @@\n' +
+        '+canary-rename-destination\n',
+      truncated: false,
+      git_status: ' R  safe.txt -> .env',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-rename-destination');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // Git quotes paths containing spaces / non-ASCII. The old regex expected a
+  // bare `a/` immediately after `diff --git `, so a quoted header matched
+  // nothing, `header` was null, and the block fell through the `header &&`
+  // guard into the kept set.
+  it('hides a sensitive path that git quoted in the header', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git "a/my key.pem" "b/my key.pem"\n' +
+        'new file mode 100644\n' +
+        '--- /dev/null\n' +
+        '+++ "b/my key.pem"\n' +
+        '@@ -0,0 +1 @@\n' +
+        '+canary-quoted-path\n',
+      truncated: false,
+      git_status: '?? "my key.pem"',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-quoted-path');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // `diff.noprefix` / `diff.mnemonicPrefix` drop or rename the a//b/ prefixes.
+  // The paths are still recoverable from the ---/+++ lines, so this is a
+  // parse-widening case rather than a fail-closed one.
+  it('hides a sensitive destination when the header carries no a//b/ prefix', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git safe.txt .env\n' +
+        '--- safe.txt\n' +
+        '+++ .env\n' +
+        '@@ -1 +1 @@\n' +
+        '+canary-noprefix\n',
+      truncated: false,
+      git_status: ' M safe.txt',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-noprefix');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // The old guard failed OPEN: an unparseable header meant `header` was null,
+  // which skipped the sensitivity check entirely and kept the block. A
+  // sanitizer that cannot identify what it is looking at must drop it.
+  it('drops a block whose paths cannot be parsed at all', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff: 'diff --git \n@@ -1 +1 @@\n+canary-unparseable\n',
+      truncated: false,
+      git_status: '',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-unparseable');
+    // Counted as unparseable, not sensitive — the note has to say which fact
+    // it is reporting, or a parser gap reads as a policy decision.
+    expect(result.text).toContain('1 unparseable file diff hidden');
+    expect(result.text).not.toContain('sensitive file diff hidden');
+  });
+
   it('refuses sandbox_find_references on-device with a typed error', async () => {
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_find_references', args: { symbol: 'hello' } },
