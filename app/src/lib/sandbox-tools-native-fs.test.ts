@@ -577,6 +577,211 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).toContain('1 sensitive file diff hidden');
   });
 
+  // The block filter used to read only the source-side `a/` path, so a rename
+  // INTO a sensitive destination kept the block and printed the new file's
+  // body. The git_status filter in the same function already split on ` -> `
+  // and checked both sides; these cases close the gap on the diff body.
+  //
+  // Each canary is a plain token with no `KEY=value` shape, so a pass proves
+  // the block was dropped rather than `redactSensitiveText` masking the body.
+  it('hides a rename-with-edit whose destination is sensitive', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/safe.txt b/.env\n' +
+        'similarity index 85%\n' +
+        'rename from safe.txt\n' +
+        'rename to .env\n' +
+        '--- a/safe.txt\n' +
+        '+++ b/.env\n' +
+        '@@ -1 +1 @@\n' +
+        '+canary-rename-destination\n',
+      truncated: false,
+      git_status: ' R  safe.txt -> .env',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-rename-destination');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // Git quotes paths containing spaces / non-ASCII. The old regex expected a
+  // bare `a/` immediately after `diff --git `, so a quoted header matched
+  // nothing, `header` was null, and the block fell through the `header &&`
+  // guard into the kept set.
+  it('hides a sensitive path that git quoted in the header', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git "a/my key.pem" "b/my key.pem"\n' +
+        'new file mode 100644\n' +
+        '--- /dev/null\n' +
+        '+++ "b/my key.pem"\n' +
+        '@@ -0,0 +1 @@\n' +
+        '+canary-quoted-path\n',
+      truncated: false,
+      git_status: '?? "my key.pem"',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-quoted-path');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // `diff.noprefix` / `diff.mnemonicPrefix` drop or rename the a//b/ prefixes.
+  // The paths are still recoverable from the ---/+++ lines, so this is a
+  // parse-widening case rather than a fail-closed one.
+  it('hides a sensitive destination when the header carries no a//b/ prefix', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git safe.txt .env\n' +
+        '--- safe.txt\n' +
+        '+++ .env\n' +
+        '@@ -1 +1 @@\n' +
+        '+canary-noprefix\n',
+      truncated: false,
+      git_status: ' M safe.txt',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-noprefix');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // The old guard failed OPEN: an unparseable header meant `header` was null,
+  // which skipped the sensitivity check entirely and kept the block. A
+  // sanitizer that cannot identify what it is looking at must drop it.
+  it('drops a block whose paths cannot be parsed at all', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff: 'diff --git \n@@ -1 +1 @@\n+canary-unparseable\n',
+      truncated: false,
+      git_status: '',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-unparseable');
+    // Counted as unparseable, not sensitive — the note has to say which fact
+    // it is reporting, or a parser gap reads as a policy decision.
+    expect(result.text).toContain('1 unparseable file diff hidden');
+    expect(result.text).not.toContain('sensitive file diff hidden');
+  });
+
+  // The other direction. Git does NOT quote a header path that merely contains
+  // a space, so `diff --git a/my notes.md b/my notes.md` is ambiguous to any
+  // space-split — and a fail-closed filter that mis-parses it would silently
+  // swallow an ordinary diff. Over-dropping recreates the same lie as
+  // under-dropping: a tab that shows nothing while the work exists.
+  it('keeps an ordinary diff whose path contains a space', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/my notes.md b/my notes.md\n' +
+        '--- a/my notes.md\n' +
+        '+++ b/my notes.md\n' +
+        '@@ -1 +1 @@\n' +
+        '+ordinary-body\n',
+      truncated: false,
+      git_status: ' M my notes.md',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('ordinary-body');
+    expect(result.text).toContain('my notes.md');
+    expect(result.text).not.toContain('hidden');
+  });
+
+  // Codex P2 on #1614. Git C-quotes control characters in a path, so a file
+  // named `.env` + newline arrives as the literal 6-char token `.env\n`.
+  // Decoding only `\"` and `\\` left that undecoded, the basename regex missed
+  // it, and the block was kept — a fail-OPEN hole inside a change whose whole
+  // point was to fail closed.
+  it('hides a sensitive path whose control characters git escaped', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git "a/.env\\n" "b/.env\\n"\n' +
+        'new file mode 100644\n' +
+        '--- /dev/null\n' +
+        '+++ "b/.env\\n"\n' +
+        '@@ -0,0 +1 @@\n' +
+        '+canary-escaped-control\n',
+      truncated: false,
+      git_status: '?? ".env\\n"',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-escaped-control');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // Codex P2 on #1614, and the sharper of the two. Deleting a line whose
+  // content is `-- .env` emits the patch line `--- .env`, which the marker
+  // regex read as a file header. The block was dropped and reported as a
+  // sensitive file — over-dropping AND a false claim, from ordinary content.
+  it('does not mistake hunk content for a file-header path', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/notes.md b/notes.md\n' +
+        '--- a/notes.md\n' +
+        '+++ b/notes.md\n' +
+        '@@ -1,3 +1,2 @@\n' +
+        ' canary-hunk-context\n' +
+        '--- .env\n' +
+        '+++ .env.example\n',
+      truncated: false,
+      git_status: ' M notes.md',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('canary-hunk-context');
+    expect(result.text).toContain('notes.md');
+    expect(result.text).not.toContain('hidden');
+  });
+
+  // Codex P2 on #1614 (second round). A directory named `.env b` puts the
+  // literal ` b/` inside a path, so the header `diff --git a/.env b/foo.txt
+  // b/.env b/foo.txt` splits into the spurious `a/.env` — sensitive-looking,
+  // for a file whose real basename is `foo.txt`. The header is ambiguous by
+  // construction; ---/+++ and rename lines are not, so the header is now only
+  // consulted when no reliable source produced a path at all.
+  it('prefers unambiguous marker paths over a splittable header', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/.env b/foo.txt b/.env b/foo.txt\n' +
+        '--- a/.env b/foo.txt\n' +
+        '+++ b/.env b/foo.txt\n' +
+        '@@ -1 +1 @@\n' +
+        '+canary-prefix-like-name\n',
+      truncated: false,
+      git_status: ' M ".env b/foo.txt"',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('canary-prefix-like-name');
+    expect(result.text).not.toContain('hidden');
+  });
+
+  // Demoting the header to a fallback leaves it reachable only for blocks with
+  // no ---/+++ and no rename lines: mode-only and binary changes. Without this,
+  // that branch ships unexercised — reachable but untested, which is how a
+  // fallback quietly becomes dead code.
+  it('still classifies a mode-only change through the header fallback', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff: 'diff --git a/.env b/.env\nold mode 100644\nnew mode 100755\n',
+      truncated: false,
+      git_status: ' M .env',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('1 sensitive file diff hidden');
+    expect(result.text).not.toContain('unparseable');
+  });
+
   it('refuses sandbox_find_references on-device with a typed error', async () => {
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_find_references', args: { symbol: 'hello' } },

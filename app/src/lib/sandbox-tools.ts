@@ -477,6 +477,134 @@ function nativeFileDiffHunks(
   };
 }
 
+const GIT_C_ESCAPES: Readonly<Record<string, string>> = {
+  a: '\x07',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  v: '\v',
+  '"': '"',
+  '\\': '\\',
+};
+
+/**
+ * Strip git's C-style quoting from one path token, if it carries any.
+ *
+ * Every escape git emits has to be decoded, not just `\"` and `\\`: a path
+ * ending in a control character (`.env` + newline) is quoted as `".env\n"`,
+ * and leaving that as the literal two-character `\n` hides the trailing
+ * whitespace that `isSensitivePath`'s trim would otherwise strip — so the
+ * basename never matches and the block survives (Codex P2 on #1614).
+ *
+ * Octal escapes encode UTF-8 *bytes*, decoded here one byte at a time. That
+ * is lossy for non-ASCII names, and deliberately so: the result only ever
+ * feeds a path predicate whose entire vocabulary is ASCII, so a mangled
+ * non-ASCII basename cannot change a verdict.
+ */
+function unquoteDiffPath(raw: string | undefined): string {
+  const value = raw?.trim();
+  if (!value) return '';
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value
+      .slice(1, -1)
+      .replace(/\\([abfnrtv"\\]|[0-7]{1,3})/g, (_match, seq: string) =>
+        seq in GIT_C_ESCAPES ? GIT_C_ESCAPES[seq] : String.fromCharCode(Number.parseInt(seq, 8)),
+      )
+      .trim();
+  }
+  return value;
+}
+
+/**
+ * Every path a `diff --git` block names, collected from every line shape git
+ * uses to name one — so the sensitivity check sees the destination of a
+ * rename, not just its source. Returns `[]` when nothing parses; the caller
+ * treats that as "unidentifiable", never as "safe".
+ *
+ * Both the raw and prefix-stripped forms are kept. `isSensitivePath` matches
+ * on directory context as well as basename (`/.ssh/`, `/.aws/credentials`),
+ * so stripping `a/` off `a/.ssh/known_hosts` would lose the match that the
+ * unstripped form still makes. Checking both costs one array entry.
+ *
+ * Sources are ranked, because they are not equally trustworthy. `---`/`+++`
+ * and rename/copy lines carry exactly one path each and cannot be misread.
+ * The header carries two with only whitespace between them, and git does not
+ * quote a path merely for containing a space — so `.env b/foo.txt` (a
+ * directory named `.env b`) splits into a spurious `a/.env` and hides a file
+ * whose real basename is `foo.txt` (Codex P2 on #1614). The header is
+ * therefore consulted only when no unambiguous source yielded anything, which
+ * in practice means mode-only and binary blocks — the ones with no content to
+ * leak either way.
+ */
+function diffBlockPaths(block: string): string[] {
+  const paths = new Set<string>();
+  const headerFallback = new Set<string>();
+  const addTo = (target: Set<string>, raw: string | undefined) => {
+    const cleaned = unquoteDiffPath(raw);
+    if (!cleaned || cleaned === '/dev/null') return;
+    target.add(cleaned);
+    // `a/ b/` by default; `i/ w/ c/ o/` under diff.mnemonicPrefix. A real
+    // top-level dir with one of those names loses a segment here, which is
+    // harmless: this value is only ever fed to a sensitivity predicate, and
+    // the unstripped form is in the set too.
+    const stripped = cleaned.replace(/^[abciwo]\//, '');
+    if (stripped && stripped !== cleaned) target.add(stripped);
+  };
+  const add = (raw: string | undefined) => addTo(paths, raw);
+
+  for (const line of block.split('\n')) {
+    // Metadata ends at the first hunk header; everything after it is content,
+    // and content is not addressable as a path. Deleting a line that reads
+    // `-- .env` emits the patch line `--- .env`, which is byte-identical to a
+    // file header — so without this stop, ordinary text drops its own block
+    // and gets reported as a sensitive file (Codex P2 on #1614). `@@+` also
+    // covers the `@@@` of a combined diff.
+    if (/^@@/.test(line)) break;
+    // `--- <path>` / `+++ <path>`: one path per line, never ambiguous. The
+    // most reliable source, and present for every block that carries content.
+    const marker = /^(?:---|\+\+\+) (.+)$/.exec(line);
+    if (marker) {
+      add(marker[1]);
+      continue;
+    }
+    // Renames and copies name both sides explicitly, and are the only source
+    // for a pure rename (100% similarity emits no ---/+++ pair).
+    const moved = /^(?:rename|copy) (?:from|to) (.+)$/.exec(line);
+    if (moved) {
+      add(moved[1]);
+      continue;
+    }
+    const header = /^diff --git (.+)$/.exec(line);
+    if (!header) continue;
+    const operands = header[1].trim();
+    if (!operands) continue;
+    // Both sides quoted — the quote boundary is unambiguous, so this one is
+    // as trustworthy as a marker line and goes straight into the main set.
+    const quoted = /^("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/.exec(operands);
+    if (quoted) {
+      add(quoted[1]);
+      add(quoted[2]);
+      continue;
+    }
+    // Standard prefixed form. Anchoring the split on ` b/` rather than any
+    // space keeps most unquoted paths-with-spaces intact, but it cannot be
+    // made exact: a path containing ` b/` is indistinguishable from the
+    // separator. Fallback-only for that reason.
+    const prefixed = /^"?([abciwo]\/.+?)"? "?([abciwo]\/.+?)"?$/.exec(operands);
+    if (prefixed) {
+      addTo(headerFallback, prefixed[1]);
+      addTo(headerFallback, prefixed[2]);
+      continue;
+    }
+    // Unprefixed / unrecognized: contribute nothing here. A block with content
+    // still resolves through its ---/+++ lines; one without them falls to the
+    // fail-closed branch, which is the intended outcome.
+  }
+  return paths.size > 0 ? [...paths] : [...headerFallback];
+}
+
 /**
  * The native working-copy diff includes untracked files as additions so commit
  * preview/stats see the same files JGit will stage. It can carry contents no
@@ -505,9 +633,19 @@ function sanitizeNativeDiff(result: NativeFsDiffResult): NativeFsDiffResult {
   });
   if (!result.diff) return withStatus(result);
   let hidden = 0;
+  let unparseable = 0;
   const kept = result.diff.split(/^(?=diff --git )/m).filter((block) => {
-    const header = /^diff --git a\/(\S+) /.exec(block);
-    if (header && isSensitivePath(header[1])) {
+    const paths = diffBlockPaths(block);
+    // Fail closed. The previous guard read only the source-side `a/` path and
+    // skipped the check entirely when its regex missed, so a rename into a
+    // sensitive destination, a quoted path, and a `diff.noprefix` header all
+    // fell through into the kept set. A sanitizer that cannot tell what it is
+    // looking at must drop the block, not publish it.
+    if (paths.length === 0) {
+      unparseable += 1;
+      return false;
+    }
+    if (paths.some(isSensitivePath)) {
       hidden += 1;
       return false;
     }
@@ -516,6 +654,12 @@ function sanitizeNativeDiff(result: NativeFsDiffResult): NativeFsDiffResult {
   const redaction = redactSensitiveText(kept.join(''));
   const notes = [
     ...(hidden > 0 ? [`[${hidden} sensitive file diff${hidden === 1 ? '' : 's'} hidden]`] : []),
+    // Counted separately from the sensitive drops: "hidden because sensitive"
+    // and "hidden because unreadable" are different facts, and collapsing them
+    // would report a parser gap as a policy decision.
+    ...(unparseable > 0
+      ? [`[${unparseable} unparseable file diff${unparseable === 1 ? '' : 's'} hidden]`]
+      : []),
     ...(redaction.redacted ? ['[secret-like values redacted]'] : []),
   ];
   const diff = [redaction.text.trimEnd(), ...notes].filter(Boolean).join('\n');
