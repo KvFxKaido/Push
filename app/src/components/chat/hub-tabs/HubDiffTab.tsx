@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, CornerDownRight, Loader2, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
 import { DiffLine } from '@/components/cards/DiffPreviewCard';
 import { parseDiffStats, parseDiffIntoFiles, type FileDiff } from '@/lib/diff-utils';
+import { useWarmAction } from '@/hooks/useWarmAction';
 import { getSandboxDiff } from '@/lib/sandbox-client';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS, HUB_TAG_CLASS } from '@/components/chat/hub-styles';
 import type { DiffPreviewCardData } from '@/types';
+
+const WORKSPACE_START_FAILED = 'Workspace could not start. Try again in a moment.';
+const DIFF_READ_FAILED = "Couldn't read workspace changes.";
 
 interface DiffJumpTarget {
   path: string;
@@ -14,9 +17,15 @@ interface DiffJumpTarget {
 }
 
 interface HubDiffTabProps {
-  sandboxId: string | null;
-  sandboxStatus: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
+  /**
+   * Warms the workspace and resolves its id. The tab takes no readiness props:
+   * accept-warm-run (Wave 3) means it never branches on whether the runtime is
+   * up, so `sandboxId` / `sandboxStatus` were removed rather than left as
+   * unread surface a future caller might mistake for a gate.
+   */
   ensureSandbox: () => Promise<string | null>;
+  /** Monotonic token owned by the sheet that owns the diff state. */
+  diffGeneration: number;
   /** Externally-managed diff data (so the hub shell can trigger refreshes after commit). */
   diffData: DiffPreviewCardData | null;
   diffLoading: boolean;
@@ -25,8 +34,12 @@ interface HubDiffTabProps {
   diffMode: 'working-tree' | 'review-github' | 'review-sandbox';
   jumpTarget: DiffJumpTarget | null;
   onClearReviewDiff?: () => void;
-  onDiffUpdate: (data: DiffPreviewCardData | null, error: string | null) => void;
-  onDiffLoadingChange: (loading: boolean) => void;
+  onDiffUpdate: (
+    generation: number,
+    data: DiffPreviewCardData | null,
+    error: string | null,
+  ) => void;
+  onDiffLoadingChange: (generation: number, loading: boolean) => void;
 }
 
 interface DiffRenderLine {
@@ -41,9 +54,8 @@ interface ParsedFileDiff extends FileDiff {
 }
 
 export function HubDiffTab({
-  sandboxId,
-  sandboxStatus,
   ensureSandbox,
+  diffGeneration,
   diffData,
   diffLoading,
   diffError,
@@ -54,64 +66,82 @@ export function HubDiffTab({
   onDiffUpdate,
   onDiffLoadingChange,
 }: HubDiffTabProps) {
-  const [startingSandbox, setStartingSandbox] = useState(false);
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [highlightedFile, setHighlightedFile] = useState<string | null>(null);
   const [highlightedLineKey, setHighlightedLineKey] = useState<string | null>(null);
   const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const lineRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
+  const { warming: diffWarming, run: runWarmedDiff } = useWarmAction(ensureSandbox);
   const showingReviewDiff = diffMode !== 'working-tree';
   const jumpTargetPath = jumpTarget?.path ?? null;
   const jumpTargetLine = jumpTarget?.line;
   const jumpTargetRequestKey = jumpTarget?.requestKey ?? null;
 
-  const ensureHubSandbox = useCallback(async (): Promise<string | null> => {
-    if (sandboxId) return sandboxId;
-    setStartingSandbox(true);
-    try {
-      const id = await ensureSandbox();
-      if (!id) toast.error('Workspace is not ready yet.');
-      return id;
-    } finally {
-      setStartingSandbox(false);
-    }
-  }, [sandboxId, ensureSandbox]);
-
   const refreshDiff = useCallback(async () => {
-    const id = await ensureHubSandbox();
-    if (!id) return;
-    onDiffLoadingChange(true);
+    const generation = diffGeneration;
+    let readStarted = false;
+
+    // The user-facing copy is deliberately generic (upstream detail never
+    // reaches the UI), so the cause only survives in these logs. Three paired
+    // branches, one per way a load can end without a diff.
     try {
-      const result = await getSandboxDiff(id);
-      if (!result.diff) {
-        onDiffUpdate(null, null);
-        return;
-      }
-      const stats = parseDiffStats(result.diff);
-      onDiffUpdate(
-        {
-          diff: result.diff,
-          filesChanged: stats.filesChanged,
-          additions: stats.additions,
-          deletions: stats.deletions,
-          truncated: result.truncated,
+      await runWarmedDiff(
+        async (workspaceId) => {
+          readStarted = true;
+          onDiffLoadingChange(generation, true);
+          try {
+            const result = await getSandboxDiff(workspaceId);
+            if (result.error) throw new Error(result.error);
+            const stats = parseDiffStats(result.diff);
+            onDiffUpdate(
+              generation,
+              {
+                diff: result.diff,
+                filesChanged: stats.filesChanged,
+                additions: stats.additions,
+                deletions: stats.deletions,
+                truncated: result.truncated,
+              },
+              null,
+            );
+          } finally {
+            onDiffLoadingChange(generation, false);
+          }
         },
-        null,
+        () => {
+          console.log(
+            JSON.stringify({
+              level: 'warn',
+              event: 'hub_diff_warm_unavailable',
+              generation,
+            }),
+          );
+          onDiffUpdate(generation, null, WORKSPACE_START_FAILED);
+        },
       );
     } catch (err) {
-      onDiffUpdate(null, err instanceof Error ? err.message : 'Failed to load diff');
-    } finally {
-      onDiffLoadingChange(false);
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: readStarted ? 'hub_diff_read_failed' : 'hub_diff_warm_failed',
+          generation,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      onDiffUpdate(generation, null, readStarted ? DIFF_READ_FAILED : WORKSPACE_START_FAILED);
     }
-  }, [ensureHubSandbox, onDiffUpdate, onDiffLoadingChange]);
+  }, [diffGeneration, onDiffLoadingChange, onDiffUpdate, runWarmedDiff]);
+
+  useEffect(() => {
+    if (showingReviewDiff || diffData || diffError || diffLoading || diffWarming) return;
+    void refreshDiff();
+  }, [diffData, diffError, diffLoading, diffWarming, refreshDiff, showingReviewDiff]);
 
   const diffText = diffData?.diff ?? '';
   const fileDiffs: FileDiff[] = useMemo(
     () => (diffText ? parseDiffIntoFiles(diffText) : []),
     [diffText],
   );
-
   const parsedFileDiffs: ParsedFileDiff[] = useMemo(() => {
     return fileDiffs.map((fd) => {
       const renderLines: DiffRenderLine[] = [];
@@ -213,32 +243,6 @@ export function HubDiffTab({
     };
   }, [jumpTargetPath, jumpTargetLine, jumpTargetRequestKey, parsedFileDiffs]);
 
-  if (!diffData && !sandboxReady) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-sm text-push-fg-secondary">Start a workspace to view diff.</p>
-        <button
-          onClick={() => {
-            void ensureHubSandbox().then((id) => {
-              if (id) void refreshDiff();
-            });
-          }}
-          disabled={startingSandbox || sandboxStatus === 'creating'}
-          className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-9 px-3 text-push-fg-secondary`}
-        >
-          {(startingSandbox || sandboxStatus === 'creating') && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          )}
-          <span>
-            {startingSandbox || sandboxStatus === 'creating'
-              ? 'Starting workspace...'
-              : 'Start workspace'}
-          </span>
-        </button>
-      </div>
-    );
-  }
-
   return (
     <>
       <div className="flex items-center justify-between border-b border-push-edge px-3 py-2">
@@ -260,10 +264,10 @@ export function HubDiffTab({
         ) : (
           <button
             onClick={() => void refreshDiff()}
-            disabled={diffLoading}
+            disabled={diffLoading || diffWarming}
             className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
           >
-            {diffLoading ? (
+            {diffLoading || diffWarming ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
               <RefreshCw className="h-3.5 w-3.5" />
@@ -303,7 +307,7 @@ export function HubDiffTab({
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {diffLoading && !diffData ? (
+        {!diffData && (diffLoading || diffWarming || (!showingReviewDiff && !diffError)) ? (
           <div className="flex items-center gap-2 p-3 text-xs text-push-fg-dim">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             Loading diff...
@@ -377,8 +381,6 @@ export function HubDiffTab({
               </div>
             )}
           </div>
-        ) : diffData ? (
-          <p className="p-3 text-xs text-push-fg-dim">No working tree changes.</p>
         ) : (
           <p className="p-3 text-xs text-push-fg-dim">No working tree changes.</p>
         )}

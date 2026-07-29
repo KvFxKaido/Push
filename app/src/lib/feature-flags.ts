@@ -46,12 +46,13 @@ export function isStreamdownEnabled(): boolean {
  * - Runtime override: `localStorage['push:native-working-copy'] = '1' | '0'`
  *
  * Off by default and gated behind {@link isNativePlatform} at the call site.
- * DELIBERATELY dormant: the clone makes git *reads* resolve locally, but the
- * non-git tools (exec, file read/write) still route to the cloud sandbox by
- * `sandboxId` — until that HTTP surface is native-routed, a flag-on session is a
- * knowingly-incomplete hybrid for on-device validation of the clone path, not a
- * shippable workspace. See the on-device working-copy registry
- * (`native-working-copy.ts`) and git-session's native binding.
+ * DELIBERATELY dormant: a flag-on session has no native command runtime, so
+ * `sandbox_exec`, `sandbox_run_tests`, `sandbox_check_types`,
+ * `sandbox_verify_workspace`, `sandbox_show_commit`, `sandbox_download`, and
+ * `sandbox_find_references` return `NATIVE_TOOL_UNSUPPORTED`. Tool-layer file
+ * reads, writes, listings, searches, symbols, and diffs route to the on-device
+ * clone. See the on-device working-copy registry (`native-working-copy.ts`) and
+ * git-session's native binding.
  */
 export function isNativeWorkingCopyEnabled(): boolean {
   const override = readLocalOverride('push:native-working-copy');

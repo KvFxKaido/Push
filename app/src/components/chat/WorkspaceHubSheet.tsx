@@ -159,6 +159,15 @@ interface ReviewDiffSelection {
   mode: Exclude<DiffViewMode, 'working-tree'>;
 }
 
+interface WorkspaceDiffState {
+  repoFullName: string | undefined;
+  branch: string | undefined;
+  generation: number;
+  data: DiffPreviewCardData | null;
+  loading: boolean;
+  error: string | null;
+}
+
 interface CommitPushTarget {
   mode: CommitTargetMode;
   branchName?: string;
@@ -467,11 +476,37 @@ export function WorkspaceHubSheet({
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Diff state (shared between diff tab and commit flow)
-  const [diffData, setDiffData] = useState<DiffPreviewCardData | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
-  const [diffError, setDiffError] = useState<string | null>(null);
+  const [diffState, setDiffState] = useState<WorkspaceDiffState>({
+    repoFullName,
+    branch: branchProps.currentBranch,
+    generation: 0,
+    data: null,
+    loading: false,
+    error: null,
+  });
   const [reviewDiffSelection, setReviewDiffSelection] = useState<ReviewDiffSelection | null>(null);
   const [diffJumpTarget, setDiffJumpTarget] = useState<DiffJumpTarget | null>(null);
+  /**
+   * Diff state lives in this sheet, so its base and invalidation token live in
+   * the same state cell. React's prop-adjustment pattern rerenders this parent
+   * before its children see the new base, closing the gap where a child effect
+   * could otherwise publish before a parent effect advanced the generation.
+   * The numeric token distinguishes A→B→A; branch-name equality cannot.
+   */
+  if (diffState.repoFullName !== repoFullName || diffState.branch !== branchProps.currentBranch) {
+    setDiffState({
+      repoFullName,
+      branch: branchProps.currentBranch,
+      generation: diffState.generation + 1,
+      data: null,
+      loading: false,
+      error: null,
+    });
+  }
+  const diffGeneration = diffState.generation;
+  const diffData = diffState.data;
+  const diffLoading = diffState.loading;
+  const diffError = diffState.error;
 
   // Commit flow state (replaces old hand-rolled commit/push)
   const [commitPhase, setCommitPhase] = useState<CommitPhase>('idle');
@@ -575,13 +610,41 @@ export function WorkspaceHubSheet({
   const sanitizedNewBranchName = sanitizeBranchName(newBranchName);
 
   // ---- Diff callbacks for HubDiffTab ----
-  const handleDiffUpdate = useCallback((data: DiffPreviewCardData | null, error: string | null) => {
-    setDiffData(data);
-    setDiffError(error);
-  }, []);
+  const handleDiffUpdate = useCallback(
+    (generation: number, data: DiffPreviewCardData | null, error: string | null) => {
+      setDiffState((current) => {
+        if (current.generation !== generation) {
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'hub_diff_discarded_stale',
+              generation,
+              stage: 'state_update',
+            }),
+          );
+          return current;
+        }
+        return { ...current, data, error };
+      });
+    },
+    [],
+  );
 
-  const handleDiffLoadingChange = useCallback((loading: boolean) => {
-    setDiffLoading(loading);
+  const handleDiffLoadingChange = useCallback((generation: number, loading: boolean) => {
+    setDiffState((current) => {
+      if (current.generation !== generation) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'hub_diff_discarded_stale',
+            generation,
+            stage: loading ? 'loading_start' : 'loading_release',
+          }),
+        );
+        return current;
+      }
+      return { ...current, loading };
+    });
   }, []);
 
   const handleOpenReviewDiff = useCallback(
@@ -888,21 +951,39 @@ export function WorkspaceHubSheet({
           branchProps.onRefreshBranches();
         }
 
-        // Refresh diff data
+        // Refresh diff data.
+        //
+        // This is the second writer into the diff cell, and it races the tab's
+        // auto-load: a new-branch commit moves `currentBranch` *before* the
+        // commit runs, which invalidates the base and lets the visible tab
+        // start a read against the still-dirty tree. Sharing a generation with
+        // that read means whichever resolves last wins, so a slow pre-commit
+        // read could overwrite this clean result and report work as
+        // uncommitted after it was committed.
+        //
+        // Advancing the generation makes this refresh the sole owner: the
+        // in-flight read's data *and* its loading release are both rejected as
+        // stale. Clearing `loading` here is what keeps that from deadlocking —
+        // the rejected read can no longer turn it off.
         try {
           const freshDiff = await getSandboxDiff(workspaceId);
-          if (freshDiff.diff) {
-            const stats = parseDiffStats(freshDiff.diff);
-            setDiffData({
+          const stats = parseDiffStats(freshDiff.diff);
+          setDiffState((current) => ({
+            ...current,
+            generation: current.generation + 1,
+            loading: false,
+            error: null,
+            // An empty post-commit diff is *checked* data, not absent data —
+            // same convention the tab uses, so a clean tree does not re-arm
+            // the auto-load into a redundant read.
+            data: {
               diff: freshDiff.diff,
               filesChanged: stats.filesChanged,
               additions: stats.additions,
               deletions: stats.deletions,
               truncated: freshDiff.truncated,
-            });
-          } else {
-            setDiffData(null);
-          }
+            },
+          }));
         } catch {
           // Best effort
         }
@@ -1281,13 +1362,6 @@ export function WorkspaceHubSheet({
     branchSuggestionAttemptedRef.current = true;
     void suggestBranchName();
   }, [commitTargetSheetOpen, commitTargetMode, suggestBranchName]);
-
-  // Auto-load diff when opening diff tab
-  useEffect(() => {
-    if (open && activeTab === 'diff' && sandboxReady && !diffLoading && !diffData && !diffError) {
-      // Diff tab will handle its own initial load via its ensureSandbox
-    }
-  }, [open, activeTab, sandboxReady, diffLoading, diffData, diffError]);
 
   // ---- Swipe navigation ----
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -1859,9 +1933,8 @@ export function WorkspaceHubSheet({
             {activeTab === 'diff' && (
               <div className="flex h-full min-h-0 flex-col">
                 <HubDiffTab
-                  sandboxId={sandboxId}
-                  sandboxStatus={sandboxStatus}
                   ensureSandbox={ensureSandbox}
+                  diffGeneration={diffGeneration}
                   diffData={reviewDiffSelection?.data ?? diffData}
                   diffLoading={reviewDiffSelection ? false : diffLoading}
                   diffError={reviewDiffSelection ? null : diffError}
