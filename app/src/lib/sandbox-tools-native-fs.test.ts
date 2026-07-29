@@ -668,6 +668,30 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).not.toContain('sensitive file diff hidden');
   });
 
+  // The other direction. Git does NOT quote a header path that merely contains
+  // a space, so `diff --git a/my notes.md b/my notes.md` is ambiguous to any
+  // space-split — and a fail-closed filter that mis-parses it would silently
+  // swallow an ordinary diff. Over-dropping recreates the same lie as
+  // under-dropping: a tab that shows nothing while the work exists.
+  it('keeps an ordinary diff whose path contains a space', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/my notes.md b/my notes.md\n' +
+        '--- a/my notes.md\n' +
+        '+++ b/my notes.md\n' +
+        '@@ -1 +1 @@\n' +
+        '+ordinary-body\n',
+      truncated: false,
+      git_status: ' M my notes.md',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('ordinary-body');
+    expect(result.text).toContain('my notes.md');
+    expect(result.text).not.toContain('hidden');
+  });
+
   it('refuses sandbox_find_references on-device with a typed error', async () => {
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_find_references', args: { symbol: 'hello' } },
