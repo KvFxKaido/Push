@@ -692,6 +692,55 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).not.toContain('hidden');
   });
 
+  // Codex P2 on #1614. Git C-quotes control characters in a path, so a file
+  // named `.env` + newline arrives as the literal 6-char token `.env\n`.
+  // Decoding only `\"` and `\\` left that undecoded, the basename regex missed
+  // it, and the block was kept — a fail-OPEN hole inside a change whose whole
+  // point was to fail closed.
+  it('hides a sensitive path whose control characters git escaped', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git "a/.env\\n" "b/.env\\n"\n' +
+        'new file mode 100644\n' +
+        '--- /dev/null\n' +
+        '+++ "b/.env\\n"\n' +
+        '@@ -0,0 +1 @@\n' +
+        '+canary-escaped-control\n',
+      truncated: false,
+      git_status: '?? ".env\\n"',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('canary-escaped-control');
+    expect(result.text).toContain('1 sensitive file diff hidden');
+  });
+
+  // Codex P2 on #1614, and the sharper of the two. Deleting a line whose
+  // content is `-- .env` emits the patch line `--- .env`, which the marker
+  // regex read as a file header. The block was dropped and reported as a
+  // sensitive file — over-dropping AND a false claim, from ordinary content.
+  it('does not mistake hunk content for a file-header path', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff:
+        'diff --git a/notes.md b/notes.md\n' +
+        '--- a/notes.md\n' +
+        '+++ b/notes.md\n' +
+        '@@ -1,3 +1,2 @@\n' +
+        ' canary-hunk-context\n' +
+        '--- .env\n' +
+        '+++ .env.example\n',
+      truncated: false,
+      git_status: ' M notes.md',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('canary-hunk-context');
+    expect(result.text).toContain('notes.md');
+    expect(result.text).not.toContain('hidden');
+  });
+
   it('refuses sandbox_find_references on-device with a typed error', async () => {
     const result = await executeSandboxToolCall(
       { tool: 'sandbox_find_references', args: { symbol: 'hello' } },

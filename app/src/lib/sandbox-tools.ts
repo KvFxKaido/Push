@@ -477,14 +477,41 @@ function nativeFileDiffHunks(
   };
 }
 
-/** Strip git's C-style quoting from one path token, if it carries any. */
+const GIT_C_ESCAPES: Readonly<Record<string, string>> = {
+  a: '\x07',
+  b: '\b',
+  f: '\f',
+  n: '\n',
+  r: '\r',
+  t: '\t',
+  v: '\v',
+  '"': '"',
+  '\\': '\\',
+};
+
+/**
+ * Strip git's C-style quoting from one path token, if it carries any.
+ *
+ * Every escape git emits has to be decoded, not just `\"` and `\\`: a path
+ * ending in a control character (`.env` + newline) is quoted as `".env\n"`,
+ * and leaving that as the literal two-character `\n` hides the trailing
+ * whitespace that `isSensitivePath`'s trim would otherwise strip — so the
+ * basename never matches and the block survives (Codex P2 on #1614).
+ *
+ * Octal escapes encode UTF-8 *bytes*, decoded here one byte at a time. That
+ * is lossy for non-ASCII names, and deliberately so: the result only ever
+ * feeds a path predicate whose entire vocabulary is ASCII, so a mangled
+ * non-ASCII basename cannot change a verdict.
+ */
 function unquoteDiffPath(raw: string | undefined): string {
   const value = raw?.trim();
   if (!value) return '';
   if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
     return value
       .slice(1, -1)
-      .replace(/\\(["\\])/g, '$1')
+      .replace(/\\([abfnrtv"\\]|[0-7]{1,3})/g, (_match, seq: string) =>
+        seq in GIT_C_ESCAPES ? GIT_C_ESCAPES[seq] : String.fromCharCode(Number.parseInt(seq, 8)),
+      )
       .trim();
   }
   return value;
@@ -516,6 +543,13 @@ function diffBlockPaths(block: string): string[] {
   };
 
   for (const line of block.split('\n')) {
+    // Metadata ends at the first hunk header; everything after it is content,
+    // and content is not addressable as a path. Deleting a line that reads
+    // `-- .env` emits the patch line `--- .env`, which is byte-identical to a
+    // file header — so without this stop, ordinary text drops its own block
+    // and gets reported as a sensitive file (Codex P2 on #1614). `@@+` also
+    // covers the `@@@` of a combined diff.
+    if (/^@@/.test(line)) break;
     // `--- <path>` / `+++ <path>`: one path per line, never ambiguous. The
     // most reliable source, and present for every block that carries content.
     const marker = /^(?:---|\+\+\+) (.+)$/.exec(line);
