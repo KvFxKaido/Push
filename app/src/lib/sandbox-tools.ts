@@ -621,9 +621,19 @@ function sanitizeNativeDiff(result: NativeFsDiffResult): NativeFsDiffResult {
     ?.split('\n')
     .filter((line) => {
       if (!line || line.startsWith('##')) return true;
-      // XY <path> (renames: `XY old -> new`) — drop the line if any named
-      // path is sensitive.
-      const paths = line.slice(3).split(' -> ');
+      // `XY PATH`, except renames/copies, which are `XY OLD -> NEW`. Only an R
+      // or C status code carries that pair, so splitting every line on ` -> `
+      // reads a filename that merely *contains* the arrow as two paths — and
+      // drops an ordinary file's entry when the fragment after it looks
+      // sensitive (`M foo -> .env` lost its whole line). That is the same
+      // ambiguity #1614 removed from the diff body by demoting the header:
+      // prefer the source that cannot be misread. Gated rather than deleted —
+      // `JGitEngine.statusPorcelain` marks only A/M/D/U/??, so no rename pair
+      // exists on today's producer, but this stays correct if it is ever fed
+      // real `git status --porcelain`.
+      const isRenameOrCopy = /[RC]/.test(line.slice(0, 2));
+      const rest = line.slice(3);
+      const paths = isRenameOrCopy ? rest.split(' -> ') : [rest];
       return !paths.some((p) => p.trim() && isSensitivePath(p.trim()));
     })
     .join('\n');
