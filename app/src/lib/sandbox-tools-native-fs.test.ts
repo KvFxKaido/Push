@@ -605,6 +605,39 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).toContain('1 sensitive file diff hidden');
   });
 
+  // The porcelain filter split EVERY line on ` -> `, so an ordinary filename
+  // containing the arrow read as two paths and lost its whole status entry
+  // when the fragment after it looked sensitive. Same ambiguity #1614 removed
+  // from the diff body by demoting the header: only R/C status codes carry a
+  // rename pair, and `JGitEngine.statusPorcelain` emits neither.
+  it('keeps a status line for an ordinary file whose name contains the rename arrow', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff: '',
+      truncated: false,
+      git_status: '## main\n M foo -> .env\n M b.ts',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('foo -> .env');
+    expect(result.text).toContain('b.ts');
+  });
+
+  // The gate must not cost the real case: an R line still names two paths and
+  // still drops when either is sensitive.
+  it('still drops a rename status line whose destination is sensitive', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff: '',
+      truncated: false,
+      git_status: '## main\nR  safe.txt -> .env\n M b.ts',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).not.toContain('safe.txt');
+    expect(result.text).toContain('b.ts');
+  });
+
   // Git quotes paths containing spaces / non-ASCII. The old regex expected a
   // bare `a/` immediately after `diff --git `, so a quoted header matched
   // nothing, `header` was null, and the block fell through the `header &&`
