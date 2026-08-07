@@ -623,6 +623,8 @@ export function DaemonChatBody({
     handleSelectKimiModelFromChat: composerState.handleSelectKimiModelFromChat,
     handleSelectHuggingFaceModelFromChat: composerState.handleSelectHuggingFaceModelFromChat,
     handleSelectCloudflareModelFromChat: composerState.handleSelectCloudflareModelFromChat,
+    handleSelectCloudflareGatewayModelFromChat:
+      composerState.handleSelectCloudflareGatewayModelFromChat,
     handleSelectZenModelFromChat: composerState.handleSelectZenModelFromChat,
     handleSelectFireworksModelFromChat: composerState.handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat: composerState.handleSelectSakanaModelFromChat,

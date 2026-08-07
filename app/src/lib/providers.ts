@@ -15,6 +15,8 @@ export {
   ANTHROPIC_MODELS,
   CLOUDFLARE_DEFAULT_MODEL,
   CLOUDFLARE_MODELS,
+  CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
+  CLOUDFLARE_GATEWAY_MODELS,
   DEEPSEEK_DEFAULT_MODEL,
   DEEPSEEK_MODELS,
   FIREWORKS_DEFAULT_MODEL,
@@ -42,6 +44,7 @@ export {
 import {
   ANTHROPIC_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
+  CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
   DEEPSEEK_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
@@ -156,6 +159,9 @@ const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
   stepfun: 'StepFun',
   'x-ai': 'xAI',
   'z-ai': 'Zhipu',
+  // Cloudflare AI Gateway /compat routing prefixes (cloudflare-gateway ids).
+  'google-ai-studio': 'Google',
+  'workers-ai': 'Workers AI',
 };
 
 // Ollama Cloud retirements: persisted selections of retired ids would 404
@@ -387,6 +393,13 @@ const cloudflareModel = createModelNameStorage(
 export const getCloudflareModelName = cloudflareModel.get;
 export const setCloudflareModelName = cloudflareModel.set;
 
+const cloudflareGatewayModel = createModelNameStorage(
+  requireModelStorageKey('cloudflare-gateway'),
+  CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
+);
+export const getCloudflareGatewayModelName = cloudflareGatewayModel.get;
+export const setCloudflareGatewayModelName = cloudflareGatewayModel.set;
+
 const CLOUDFLARE_WORKER_CONFIGURED_KEY = 'cloudflare_worker_configured';
 export function getCloudflareWorkerConfigured(): boolean {
   return safeStorageGet(CLOUDFLARE_WORKER_CONFIGURED_KEY) === 'true';
@@ -460,6 +473,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   kimi: getKimiModelName,
   huggingface: getHuggingFaceModelName,
   cloudflare: getCloudflareModelName,
+  'cloudflare-gateway': getCloudflareGatewayModelName,
   zen: getZenModelName,
   fireworks: getFireworksModelName,
   sakana: getSakanaModelName,

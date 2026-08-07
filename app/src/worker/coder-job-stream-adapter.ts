@@ -52,6 +52,7 @@ import type { Env } from './worker-middleware';
 import {
   handleAnthropicChat,
   handleCloudflareChat,
+  handleCloudflareGatewayChat,
   handleDeepSeekChat,
   handleFireworksChat,
   handleGoogleChat,
@@ -114,6 +115,8 @@ export function resolveProviderHandler(
       return handleOllamaChat as unknown as ProviderHandler;
     case 'cloudflare':
       return handleCloudflareChat as unknown as ProviderHandler;
+    case 'cloudflare-gateway':
+      return handleCloudflareGatewayChat as unknown as ProviderHandler;
     case 'zen':
       return (zenGo ? handleZenGoChat : handleZenChat) as unknown as ProviderHandler;
     case 'fireworks':

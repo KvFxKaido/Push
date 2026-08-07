@@ -19,6 +19,8 @@ import {
   handleAnthropicModels,
   handleCloudflareChat,
   handleCloudflareModels,
+  handleCloudflareGatewayChat,
+  handleCloudflareGatewayModels,
   handleDeepSeekChat,
   handleOllamaChat,
   handleOllamaModels,
@@ -3764,5 +3766,114 @@ describe('handleGoogleChat — neutral wire (dual-accept)', () => {
     const response = await handleGoogleChat(req, makeEnv({ GOOGLE_API_KEY: 'AIza' }));
     expect(response.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cloudflare AI Gateway unified /compat (AIG v2 Path 2 spike)
+// ---------------------------------------------------------------------------
+
+describe('handleCloudflareGatewayChat', () => {
+  const COMPAT_ENV: Partial<Env> = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',
+    CF_AI_GATEWAY_SLUG: 'push-gate',
+    CF_AI_GATEWAY_TOKEN: 'gw-token',
+  };
+
+  it('returns 401 without fetching when the gateway env is unset', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const response = await handleCloudflareGatewayChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/Cloudflare AI Gateway is not configured/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('posts to the gateway /compat endpoint with token auth and skip-cache', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+
+    await handleCloudflareGatewayChat(makeChatRequest(), makeEnv(COMPAT_ENV));
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/compat/chat/completions',
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    // The gateway token rides both header slots: Authorization is the
+    // compat endpoint's OpenAI-SDK auth, cf-aig-authorization satisfies an
+    // authenticated gateway.
+    expect(headers.Authorization).toBe('Bearer gw-token');
+    expect(headers['cf-aig-authorization']).toBe('Bearer gw-token');
+    expect(headers['cf-aig-skip-cache']).toBe('true');
+  });
+
+  it('401s on a keyless call when the route resolves but no token exists anywhere', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const response = await handleCloudflareGatewayChat(
+      makeChatRequest(),
+      makeEnv({ CF_AI_GATEWAY_ACCOUNT_ID: 'acct123', CF_AI_GATEWAY_SLUG: 'push-gate' }),
+    );
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/token not configured/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('forwards a client bearer token when no Worker secret is set', async () => {
+    let captured: { init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        captured = { init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+
+    const request = new Request('https://push.example.test/api/cloudflare-gateway/chat', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer user-cf-token',
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-5-mini',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    });
+    await handleCloudflareGatewayChat(
+      request,
+      makeEnv({ CF_AI_GATEWAY_ACCOUNT_ID: 'acct123', CF_AI_GATEWAY_SLUG: 'push-gate' }),
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer user-cf-token');
+    // No CF_AI_GATEWAY_TOKEN → no cf-aig-authorization; the request still
+    // routes for unauthenticated gateways.
+    expect(headers['cf-aig-authorization']).toBeUndefined();
+  });
+});
+
+describe('handleCloudflareGatewayModels', () => {
+  it('serves the curated unified-catalog seed', async () => {
+    const response = await handleCloudflareGatewayModels(makeModelsRequest(), makeEnv());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.map((m) => m.id)).toContain('openai/gpt-5-mini');
+    expect(body.data.map((m) => m.id)).toContain('workers-ai/@cf/zai-org/glm-5.2');
   });
 });

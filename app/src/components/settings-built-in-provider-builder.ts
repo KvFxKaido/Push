@@ -226,6 +226,21 @@ const BUILT_IN_PROVIDER_BUILDERS = {
     setKey: catalog.google.setKey,
     clearKey: catalog.google.clearKey,
   }),
+  'cloudflare-gateway': ({ catalog, ...args }) => ({
+    hasKey: catalog.cloudflareGateway.hasKey,
+    model: catalog.cloudflareGateway.model,
+    setModel: catalog.cloudflareGateway.setModel,
+    modelOptions: catalog.cloudflareGatewayModelOptions,
+    modelsLoading: false,
+    modelsError: null,
+    modelsUpdatedAt: null,
+    isModelLocked: isLockedByProvider(args, 'cloudflare-gateway'),
+    refreshModels: NOOP,
+    keyInput: catalog.cloudflareGateway.keyInput,
+    setKeyInput: catalog.cloudflareGateway.setKeyInput,
+    setKey: catalog.cloudflareGateway.setKey,
+    clearKey: catalog.cloudflareGateway.clearKey,
+  }),
 } satisfies Record<BuiltInSettingsProviderId, ProviderBuilder>;
 
 export function buildSettingsBuiltInProviders(

@@ -25,6 +25,7 @@ import {
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import {
   ANTHROPIC_MODELS,
+  CLOUDFLARE_GATEWAY_MODELS,
   GOOGLE_MODELS,
   OPENAI_MODELS,
   XAI_MODELS,
@@ -907,6 +908,70 @@ export const handleHuggingFaceModels = createJsonProxyHandler({
   // gateway binding. See handleOllamaModels for the rationale.
   publicList: true,
 });
+
+// --- Cloudflare AI Gateway unified /compat endpoint (AIG v2 Path 2 spike) ---
+
+/**
+ * `compat` is a first-party gateway surface (not `custom-*`), so
+ * `buildAiGatewayUrl` resolves it whenever `CF_AI_GATEWAY_ACCOUNT_ID` +
+ * `CF_AI_GATEWAY_SLUG` are set — same env vars, no new ops surface. The
+ * resulting URL is `.../{account}/{slug}/compat/chat/completions`, which
+ * routes `{gateway-provider}/{model}` ids to any supported upstream with the
+ * gateway's stored BYOK keys or unified billing.
+ */
+const CLOUDFLARE_GATEWAY_COMPAT_BINDING: AiGatewayBinding = {
+  provider: 'compat',
+  pathSuffix: '/chat/completions',
+};
+
+const CLOUDFLARE_GATEWAY_NOT_CONFIGURED_ERROR =
+  'Cloudflare AI Gateway is not configured on this Worker. Set CF_AI_GATEWAY_ACCOUNT_ID and CF_AI_GATEWAY_SLUG (and CF_AI_GATEWAY_TOKEN for authenticated gateways) to enable the unified /compat catalog.';
+
+const handleCloudflareGatewayChatProxy = createStreamProxyHandler({
+  name: 'Cloudflare AI Gateway',
+  logTag: 'api/cloudflare-gateway/chat',
+  // No direct upstream exists for this provider — the /compat URL IS the
+  // endpoint, and it only resolves from env (account + slug). The exported
+  // handler below guards on that resolution before dispatching here, so this
+  // fallback is unreachable; throwing keeps a future bare call loud instead
+  // of silently posting to a bogus URL.
+  upstreamUrl: () => {
+    throw new Error(
+      'cloudflare-gateway has no direct upstream — the gateway /compat URL must resolve from CF_AI_GATEWAY_* env.',
+    );
+  },
+  timeoutMs: 180_000,
+  maxOutputTokens: 65_536,
+  buildAuth: standardAuth('CF_AI_GATEWAY_TOKEN'),
+  keyMissingError:
+    'Cloudflare AI Gateway token not configured. Add it in Settings or set CF_AI_GATEWAY_TOKEN on the Worker.',
+  timeoutError: 'Cloudflare AI Gateway request timed out after 180 seconds',
+  gateway: CLOUDFLARE_GATEWAY_COMPAT_BINDING,
+  formatUpstreamError: (status, bodyText) => ({
+    error: `Cloudflare AI Gateway ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
+    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+  }),
+});
+
+export async function handleCloudflareGatewayChat(request: Request, env: Env): Promise<Response> {
+  if (buildAiGatewayUrl(env, CLOUDFLARE_GATEWAY_COMPAT_BINDING) === null) {
+    wlog('warn', 'cloudflare_gateway_not_configured', { route: 'api/cloudflare-gateway/chat' });
+    return Response.json({ error: CLOUDFLARE_GATEWAY_NOT_CONFIGURED_ERROR }, { status: 401 });
+  }
+  return handleCloudflareGatewayChatProxy(request, env);
+}
+
+export async function handleCloudflareGatewayModels(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'CloudflareGatewayCuratedModelsList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  return Response.json(
+    { object: 'list', data: CLOUDFLARE_GATEWAY_MODELS.map((id) => ({ id, name: id })) },
+    { headers: { [REQUEST_ID_HEADER]: preamble.requestId } },
+  );
+}
 
 // --- OpenCode Zen (OpenAI-compatible endpoint) ---
 
@@ -3068,6 +3133,10 @@ export const WORKER_PROVIDER_HANDLERS = {
   kimi: { chat: handleKimiChat, models: handleKimiModels },
   huggingface: { chat: handleHuggingFaceChat, models: handleHuggingFaceModels },
   cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
+  'cloudflare-gateway': {
+    chat: handleCloudflareGatewayChat,
+    models: handleCloudflareGatewayModels,
+  },
   zen: { chat: handleZenChat, models: handleZenModels },
   fireworks: { chat: handleFireworksChat, models: handleFireworksModels },
   deepseek: { chat: handleDeepSeekChat, models: handleDeepSeekModels },

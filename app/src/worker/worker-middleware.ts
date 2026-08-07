@@ -914,9 +914,14 @@ export function createStreamProxyHandler(
     let upstreamStatus = 0;
     let bytesOut = 0;
 
-    const directUrl =
-      typeof config.upstreamUrl === 'function' ? config.upstreamUrl(request) : config.upstreamUrl;
-    const upstreamUrl = gatewayUrl ?? directUrl;
+    // Resolve the direct URL lazily: when the gateway URL already resolved,
+    // the direct fallback is never consulted — which also lets a
+    // gateway-only provider (cloudflare-gateway /compat) declare a throwing
+    // `upstreamUrl` for its nonexistent direct route without the throw
+    // firing on every gateway-routed request.
+    const upstreamUrl =
+      gatewayUrl ??
+      (typeof config.upstreamUrl === 'function' ? config.upstreamUrl(request) : config.upstreamUrl);
 
     const writeStat = (fields: Partial<ProviderStatFields>) => {
       writeProviderStat(env, {

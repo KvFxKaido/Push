@@ -17,6 +17,8 @@ import {
   ANTHROPIC_MODELS,
   CLOUDFLARE_DEFAULT_MODEL,
   CLOUDFLARE_MODELS,
+  CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
+  CLOUDFLARE_GATEWAY_MODELS,
   DEEPSEEK_DEFAULT_MODEL,
   DEEPSEEK_MODELS,
   FIREWORKS_DEFAULT_MODEL,
@@ -445,6 +447,45 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       envUrl: 'Worker binding',
       modelContextWindow: 131_072,
       modelStorageKey: 'cloudflare_model',
+    },
+  },
+  {
+    // Cloudflare AI Gateway unified `/compat` endpoint (AIG v2 Path 2 spike):
+    // one Cloudflare token routes `{gateway-provider}/{model}` ids to OpenAI /
+    // Anthropic / Google / Workers AI upstreams with gateway BYOK or unified
+    // billing. Deliberately NOT fallback/failover eligible: routing a round
+    // here changes who gets billed, so the provider is only ever an explicit
+    // user pick. Web-only for now — the compat URL embeds the account id and
+    // gateway slug, which the CLI has no config surface for yet.
+    id: 'cloudflare-gateway',
+    displayName: 'Cloudflare AI Gateway',
+    streamShape: 'openai-compat',
+    initialFallbackEligible: false,
+    failoverEligible: false,
+    adapterRouted: true,
+    defaultModel: CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
+    models: CLOUDFLARE_GATEWAY_MODELS,
+    apiKeyEnvVars: ['CF_AI_GATEWAY_TOKEN'],
+    webProxyPath: '/api/cloudflare-gateway/chat',
+    modelsProxyPath: '/api/cloudflare-gateway/models',
+    icon: {
+      src: 'https://models.dev/logos/cloudflare.svg',
+      alt: 'Cloudflare AI Gateway logo',
+      fallbackText: 'CG',
+    },
+    settings: {
+      description:
+        'Cloudflare AI Gateway unified catalog — one Cloudflare token routes OpenAI, Anthropic, Google, and Workers AI models through the gateway /compat endpoint (stored BYOK keys or unified billing)',
+      envKey: 'CF_AI_GATEWAY_TOKEN',
+      envUrl: 'https://gateway.ai.cloudflare.com',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'cloudflare-gateway_api_key',
+      modelStorageKey: 'cloudflare-gateway_model',
+      builtInOrder: 130,
+      keyPlaceholder: 'Cloudflare API token (AI Gateway Run permission)',
+      keySaveLabel: 'Save Cloudflare AI Gateway token',
+      keyHint:
+        'Cloudflare API token with AI Gateway permissions. Provider keys stay in the gateway (BYOK) or bill through prepaid Gateway credits — no per-provider keys in Push.',
     },
   },
   {

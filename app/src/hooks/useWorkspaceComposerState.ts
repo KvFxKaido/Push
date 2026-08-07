@@ -20,6 +20,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   kimi: '',
   huggingface: '',
   cloudflare: '',
+  'cloudflare-gateway': '',
   zen: '',
   anthropic: '',
   openai: '',
@@ -40,6 +41,8 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     kimi: typeof parsed.kimi === 'string' ? parsed.kimi.trim() : '',
     huggingface: typeof parsed.huggingface === 'string' ? parsed.huggingface.trim() : '',
     cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
+    'cloudflare-gateway':
+      typeof parsed['cloudflare-gateway'] === 'string' ? parsed['cloudflare-gateway'].trim() : '',
     zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
     anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
     openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
@@ -116,6 +119,7 @@ export function useWorkspaceComposerState({
       kimi: catalog.kimi.model,
       huggingface: catalog.huggingface.model,
       cloudflare: catalog.cloudflare.model,
+      'cloudflare-gateway': catalog.cloudflareGateway.model,
       zen: catalog.zen.model,
       fireworks: catalog.fireworks.model,
       sakana: catalog.sakana.model,
@@ -131,6 +135,7 @@ export function useWorkspaceComposerState({
       catalog.xai.model,
       catalog.google.model,
       catalog.cloudflare.model,
+      catalog.cloudflareGateway.model,
       catalog.fireworks.model,
       catalog.sakana.model,
       catalog.ollama.model,
@@ -211,6 +216,10 @@ export function useWorkspaceComposerState({
           draft?.models?.cloudflare?.trim() ||
           rememberedChatModels.cloudflare ||
           defaultChatModels.cloudflare,
+        'cloudflare-gateway':
+          draft?.models?.['cloudflare-gateway']?.trim() ||
+          rememberedChatModels['cloudflare-gateway'] ||
+          defaultChatModels['cloudflare-gateway'],
         zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
         anthropic:
           draft?.models?.anthropic?.trim() ||
@@ -407,6 +416,15 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectCloudflareGatewayModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('cloudflare-gateway', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { 'cloudflare-gateway': model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectZenModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('zen', model);
@@ -500,6 +518,7 @@ export function useWorkspaceComposerState({
     handleSelectKimiModelFromChat,
     handleSelectHuggingFaceModelFromChat,
     handleSelectCloudflareModelFromChat,
+    handleSelectCloudflareGatewayModelFromChat,
     handleSelectZenModelFromChat,
     handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat,

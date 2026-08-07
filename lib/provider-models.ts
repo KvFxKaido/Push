@@ -179,6 +179,25 @@ export const CLOUDFLARE_MODELS: string[] = [
   '@cf/google/gemma-3-12b-it',
 ];
 
+// Cloudflare AI Gateway unified `/compat` catalog (Path 2 spike, 2026-08-07
+// Workers AI + AI Gateway unification). Ids are `{gateway-provider}/{model}`
+// — the compat endpoint's routing prefix, NOT Push provider ids. Workers AI
+// models keep their `@cf/...` id under the `workers-ai/` prefix. Curated seed
+// only; free-text entry covers the rest of the 70+-model unified catalog.
+// The `openai` / `anthropic` / `google-ai-studio` ids below are the exact
+// examples in Cloudflare's compat docs; the `workers-ai/` ids follow the
+// documented prefix convention but are pending live verification (see the
+// AIG v2 decision doc's Path 2 spike notes).
+export const CLOUDFLARE_GATEWAY_DEFAULT_MODEL = 'openai/gpt-5-mini';
+export const CLOUDFLARE_GATEWAY_MODELS: string[] = [
+  CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
+  'anthropic/claude-sonnet-4-5',
+  'google-ai-studio/gemini-2.5-flash',
+  'workers-ai/@cf/zai-org/glm-5.2',
+  'workers-ai/@cf/moonshotai/kimi-k2.6',
+  'workers-ai/@cf/moonshotai/kimi-k2.7-code',
+];
+
 // Full live OpenCode Zen (standard tier) catalog. Free-text entry still covers
 // anything not seeded here. Refreshed 2026-06-17 against the Zen dashboard model
 // list. Excludes the `Go`-tier models (defined in lib/zen-go.ts, not in

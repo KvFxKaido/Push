@@ -83,6 +83,7 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'sakana',
   'zen',
   'cloudflare',
+  'cloudflare-gateway',
   'anthropic',
   'google',
 ]);
@@ -116,6 +117,41 @@ function isCloudflareKimiOrGlm(modelId: string): boolean {
   return model.includes('kimi') || model.includes('moonshot') || model.includes('glm');
 }
 
+/**
+ * `cloudflare-gateway` model ids are `{gateway-provider}/{model}` — the AI
+ * Gateway `/compat` endpoint's routing prefix (`openai/gpt-5-mini`,
+ * `workers-ai/@cf/zai-org/glm-5.2`). Capabilities follow the UPSTREAM model
+ * family, so the prefix must be split off before any model-family heuristic
+ * runs — matching the whole id against provider-family rules would either
+ * always miss (no known family matches `openai/...` as a leaf) or mis-key.
+ * The wire is still openai-compat regardless of upstream: an `anthropic/...`
+ * id through /compat never carries signed reasoning blocks, so nothing here
+ * feeds the Anthropic-transport gates.
+ */
+function splitGatewayCompatModelId(modelId: string): { upstream: string; leaf: string } | null {
+  const slash = modelId.indexOf('/');
+  if (slash <= 0 || slash === modelId.length - 1) return null;
+  return { upstream: modelId.slice(0, slash), leaf: modelId.slice(slash + 1) };
+}
+
+function gatewayCompatModelSupportsTools(modelId: string): boolean {
+  const split = splitGatewayCompatModelId(modelId);
+  if (!split) return false;
+  switch (split.upstream) {
+    case 'openai':
+      return looksLikeOpenAIToolCallingModel(split.leaf);
+    case 'anthropic':
+    case 'google-ai-studio':
+      return true;
+    case 'workers-ai':
+      return isCloudflareKimiOrGlm(split.leaf);
+    default:
+      // Unknown gateway upstream: stay on json-text dispatch rather than
+      // advertising native tools the route may drop.
+      return false;
+  }
+}
+
 function modelSupportsNativeToolCalling(
   provider: string,
   modelId: string,
@@ -123,6 +159,9 @@ function modelSupportsNativeToolCalling(
 ): boolean {
   if (provider === 'cloudflare') {
     return metadata.toolCall ?? isCloudflareKimiOrGlm(modelId);
+  }
+  if (provider === 'cloudflare-gateway') {
+    return metadata.toolCall ?? gatewayCompatModelSupportsTools(modelId);
   }
   if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'ollama') {
@@ -148,7 +187,9 @@ function resolveStructuredOutputMode(
   if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') {
     return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
   }
-  if (provider === 'google' || provider === 'xai') {
+  // cloudflare-gateway reuses the native-tool gate (like google/xai) so the
+  // two capability columns can't drift across the compat route's upstreams.
+  if (provider === 'google' || provider === 'xai' || provider === 'cloudflare-gateway') {
     return nativeToolCalling ? 'strict' : 'none';
   }
   return metadata.structuredOutput === true ? 'strict' : 'none';

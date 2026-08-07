@@ -20,6 +20,7 @@ import {
 } from '@push/lib/provider-definition';
 import { ollamaStream } from './ollama-stream';
 import { cloudflareStream } from './cloudflare-stream';
+import { cloudflareGatewayStream } from './cloudflare-gateway-stream';
 import { openrouterStream } from './openrouter-stream';
 import { zaiStream } from './zai-stream';
 import { kimiStream } from './kimi-stream';
@@ -35,6 +36,7 @@ import { geminiStream } from './gemini-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
 import { resolvePushCapabilityProfile } from './model-catalog';
 import {
+  getCloudflareGatewayModelName,
   getCloudflareModelName,
   getOllamaModelName,
   getOpenRouterModelName,
@@ -205,6 +207,7 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   kimi: kimiStream,
   huggingface: huggingfaceStream,
   cloudflare: cloudflareStream,
+  'cloudflare-gateway': cloudflareGatewayStream,
   zen: zenStream,
   fireworks: fireworksStream,
   sakana: sakanaStream,
@@ -309,6 +312,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getHuggingFaceModelName();
     case 'cloudflare':
       return getCloudflareModelName();
+    case 'cloudflare-gateway':
+      return getCloudflareGatewayModelName();
     case 'zen':
       return getZenModelName();
     case 'fireworks':
