@@ -28,6 +28,7 @@ export type BuiltInSettingsProviderId = Extract<
   | 'openai'
   | 'xai'
   | 'google'
+  | 'cloudflare-gateway'
 >;
 
 export type SettingsSectionIcon = ComponentType<SVGProps<SVGSVGElement>>;

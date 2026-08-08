@@ -3,6 +3,7 @@ import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getKimiKey } from '@/hooks/useKimiConfig';
 import { getHuggingFaceKey } from '@/hooks/useHuggingFaceConfig';
+import { getCloudflareGatewayKey } from '@/hooks/useCloudflareGatewayConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
@@ -47,6 +48,11 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
         getHuggingFaceModelName(),
     ),
   cloudflare: () => getCloudflareWorkerConfigured() || hasServerProviderCredential('cloudflare'),
+  // A local token alone can't prove the Worker has the gateway account/slug
+  // configured — the Worker's 401 surfaces that on first send. The check here
+  // mirrors every other bearer provider: some credential must exist.
+  'cloudflare-gateway': () =>
+    Boolean(getCloudflareGatewayKey() || hasServerProviderCredential('cloudflare-gateway')),
   zen: () => Boolean(getZenKey() || hasServerProviderCredential('zen')),
   fireworks: () => Boolean(getFireworksKey() || hasServerProviderCredential('fireworks')),
   deepseek: () => Boolean(getDeepSeekKey() || hasServerProviderCredential('deepseek')),

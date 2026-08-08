@@ -46,13 +46,19 @@ import {
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
+import { useCloudflareGatewayConfig } from '@/hooks/useCloudflareGatewayConfig';
 import { useKimiConfig } from '@/hooks/useKimiConfig';
 import { useHuggingFaceConfig } from '@/hooks/useHuggingFaceConfig';
 import { useAnthropicConfig } from '@/hooks/useAnthropicConfig';
 import { useOpenAIConfig } from '@/hooks/useOpenAIConfig';
 import { useXAIConfig } from '@/hooks/useXAIConfig';
 import { useGoogleConfig } from '@/hooks/useGoogleConfig';
-import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
+import {
+  ANTHROPIC_MODELS,
+  CLOUDFLARE_GATEWAY_MODELS,
+  GOOGLE_MODELS,
+  OPENAI_MODELS,
+} from '@push/lib/provider-models';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useSakanaConfig } from '@/hooks/useSakanaConfig';
@@ -112,6 +118,7 @@ export interface ModelCatalog {
   kimi: ProviderKeyConfig;
   huggingface: ProviderKeyConfig;
   cloudflare: WorkerBoundProviderConfig;
+  cloudflareGateway: ProviderKeyConfig;
   zen: ProviderKeyConfig;
   fireworks: ProviderKeyConfig;
   sakana: ProviderKeyConfig;
@@ -152,6 +159,7 @@ export interface ModelCatalog {
   kimiModelOptions: string[];
   huggingfaceModelOptions: string[];
   cloudflareModelOptions: string[];
+  cloudflareGatewayModelOptions: string[];
   zenModelOptions: string[];
   fireworksModelOptions: string[];
   sakanaModelOptions: string[];
@@ -326,6 +334,18 @@ export function buildModelControl(
         error: catalog.cloudflareModels.error,
         onRefresh: catalog.refreshCloudflareModels,
       };
+    case 'cloudflare-gateway':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Cloudflare AI Gateway'),
+        value: lockedModel ?? catalog.cloudflareGateway.model,
+        options: includeSelectedModel(
+          catalog.cloudflareGatewayModelOptions,
+          lockedModel ?? catalog.cloudflareGateway.model,
+        ),
+        onChange: catalog.cloudflareGateway.setModel,
+        allowCustom: true,
+      };
     case 'zen':
       return {
         provider,
@@ -439,6 +459,7 @@ export function useModelCatalog(): ModelCatalog {
   const ollamaCfg = useOllamaConfig();
   const openRouterCfg = useOpenRouterConfig();
   const zaiCfg = useZaiConfig();
+  const cloudflareGatewayCfg = useCloudflareGatewayConfig();
   const kimiCfg = useKimiConfig();
   const huggingfaceCfg = useHuggingFaceConfig();
   const zenCfg = useZenConfig(zenGoModelList.length > 0 ? zenGoModelList : null);
@@ -462,6 +483,7 @@ export function useModelCatalog(): ModelCatalog {
   const [sakanaKeyInput, setSakanaKeyInput] = useState('');
   const [deepseekKeyInput, setDeepseekKeyInput] = useState('');
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
+  const [cloudflareGatewayKeyInput, setCloudflareGatewayKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
   const [xaiKeyInput, setXaiKeyInput] = useState('');
   const [googleKeyInput, setGoogleKeyInput] = useState('');
@@ -541,6 +563,7 @@ export function useModelCatalog(): ModelCatalog {
     kimi: kimiCfg.hasKey || serverUnlocked('kimi'),
     huggingface: huggingfaceCfg.hasKey || serverUnlocked('huggingface'),
     cloudflare: cloudflareConfigured || serverUnlocked('cloudflare'),
+    'cloudflare-gateway': cloudflareGatewayCfg.hasKey || serverUnlocked('cloudflare-gateway'),
     zen: zenCfg.hasKey || serverUnlocked('zen'),
     fireworks: fireworksCfg.hasKey || serverUnlocked('fireworks'),
     deepseek: deepseekCfg.hasKey || serverUnlocked('deepseek'),
@@ -1559,6 +1582,13 @@ export function useModelCatalog(): ModelCatalog {
     () => includeSelectedModel(ANTHROPIC_MODELS, anthropicCfg.model),
     [anthropicCfg.model],
   );
+  // Cloudflare AI Gateway /compat: curated seed only — the unified catalog is
+  // 70+ models across 12 providers, so free-text entry (allowCustom) is the
+  // real surface; a live catalog proxy can land with the Path 2 follow-up.
+  const cloudflareGatewayModelOptions = useMemo(
+    () => includeSelectedModel(CLOUDFLARE_GATEWAY_MODELS, cloudflareGatewayCfg.model),
+    [cloudflareGatewayCfg.model],
+  );
   // OpenAI: live list via the Worker proxy (`handleOpenAIModels` filters out
   // embeddings/audio/image/etc.); falls back to the curated list before the
   // first fetch resolves or when the proxy returns the curated set.
@@ -1638,6 +1668,15 @@ export function useModelCatalog(): ModelCatalog {
       statusError: cloudflareStatusError,
       model: cloudflareModel,
       setModel: setCloudflareModel,
+    },
+    cloudflareGateway: {
+      setKey: cloudflareGatewayCfg.setKey,
+      clearKey: cloudflareGatewayCfg.clearKey,
+      hasKey: cloudflareGatewayCfg.hasKey,
+      model: cloudflareGatewayCfg.model,
+      setModel: cloudflareGatewayCfg.setModel,
+      keyInput: cloudflareGatewayKeyInput,
+      setKeyInput: setCloudflareGatewayKeyInput,
     },
     zen: {
       setKey: zenCfg.setKey,
@@ -1816,6 +1855,7 @@ export function useModelCatalog(): ModelCatalog {
     sakanaModelOptions,
     deepseekModelOptions,
     anthropicModelOptions,
+    cloudflareGatewayModelOptions,
     openaiModelOptions,
     xaiModelOptions,
     googleModelOptions,

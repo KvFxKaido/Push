@@ -31,6 +31,7 @@ import {
   KIMI_DEFAULT_MODEL,
   HUGGINGFACE_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
+  CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
   ANTHROPIC_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
@@ -153,6 +154,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   kimi: 'push:review:model:kimi',
   huggingface: 'push:review:model:huggingface',
   cloudflare: 'push:review:model:cloudflare',
+  'cloudflare-gateway': 'push:review:model:cloudflare-gateway',
   zen: 'push:review:model:zen',
   anthropic: 'push:review:model:anthropic',
   openai: 'push:review:model:openai',
@@ -170,6 +172,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   kimi: KIMI_DEFAULT_MODEL,
   huggingface: HUGGINGFACE_DEFAULT_MODEL,
   cloudflare: CLOUDFLARE_DEFAULT_MODEL,
+  'cloudflare-gateway': CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
@@ -197,6 +200,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'kimi' ||
     value === 'huggingface' ||
     value === 'cloudflare' ||
+    value === 'cloudflare-gateway' ||
     value === 'zen' ||
     value === 'anthropic' ||
     value === 'openai' ||
@@ -227,6 +231,7 @@ function readReviewModels(): Record<PreferredProvider, string> {
     kimi: pick('kimi'),
     huggingface: pick('huggingface'),
     cloudflare: pick('cloudflare'),
+    'cloudflare-gateway': pick('cloudflare-gateway'),
     zen: pick('zen'),
     fireworks: pick('fireworks'),
     sakana: pick('sakana'),

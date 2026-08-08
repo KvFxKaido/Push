@@ -90,6 +90,42 @@ describe('resolvePushCapabilityProfile', () => {
     ).toMatchObject({ toolCalling: 'json-text', structuredOutput: 'none' });
   });
 
+  it('splits cloudflare-gateway /compat ids on the routing prefix before family heuristics', () => {
+    // Known upstream families resolve capabilities from the LEAF model id.
+    expect(resolvePushCapabilityProfile('cloudflare-gateway', 'openai/gpt-5-mini')).toMatchObject({
+      toolCalling: 'native',
+      structuredOutput: 'strict',
+      openaiWire: 'chat-completions',
+    });
+    expect(
+      resolvePushCapabilityProfile('cloudflare-gateway', 'anthropic/claude-sonnet-4-5'),
+    ).toMatchObject({
+      toolCalling: 'native',
+      structuredOutput: 'strict',
+      // openai-compat wire regardless of upstream: no signed reasoning blocks.
+      reasoningBlocks: false,
+      contentBlocks: false,
+    });
+    expect(
+      resolvePushCapabilityProfile('cloudflare-gateway', 'workers-ai/@cf/zai-org/glm-5.2'),
+    ).toMatchObject({ toolCalling: 'native', structuredOutput: 'strict' });
+    // Unknown upstream or unprefixed id → conservative json-text dispatch.
+    expect(
+      resolvePushCapabilityProfile('cloudflare-gateway', 'workers-ai/@cf/meta/llama-3.3-70b'),
+    ).toMatchObject({ toolCalling: 'json-text', structuredOutput: 'none' });
+    expect(resolvePushCapabilityProfile('cloudflare-gateway', 'gpt-5-mini')).toMatchObject({
+      toolCalling: 'json-text',
+    });
+    // Catalog evidence still overrides the name heuristic.
+    expect(
+      resolvePushCapabilityProfile(
+        'cloudflare-gateway',
+        'openai/gpt-5-mini',
+        lookup({ toolCall: false }),
+      ),
+    ).toMatchObject({ toolCalling: 'json-text', structuredOutput: 'none' });
+  });
+
   it('resolves route wire, reasoning replay, multimodal, and context coherently', () => {
     expect(
       resolvePushCapabilityProfile(

@@ -88,6 +88,27 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
+    // AI Gateway /compat: known first-party upstream prefixes carry tools +
+    // JSON mode; everything else (workers-ai/*, unknown prefixes) stays
+    // streaming-only so badges don't overpromise — the native tool/JSON WIRE
+    // gates resolve separately through lib/capability-profile.ts, which
+    // splits the routing prefix before its model-family heuristics.
+    providers: ['cloudflare-gateway'],
+    match: /^(openai|anthropic|google-ai-studio)\//i,
+    capabilities: {
+      toolCalls: 'supported',
+      jsonMode: 'supported',
+      streaming: 'supported',
+    },
+  },
+  {
+    providers: ['cloudflare-gateway'],
+    match: /.*/,
+    capabilities: {
+      streaming: 'supported',
+    },
+  },
+  {
     providers: ['zai'],
     match: /.*/,
     capabilities: {

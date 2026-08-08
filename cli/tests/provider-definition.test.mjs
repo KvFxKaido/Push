@@ -98,6 +98,7 @@ const EXPECTED_BUILT_IN_SETTINGS_ORDER = [
   'zen',
   'fireworks',
   'sakana',
+  'cloudflare-gateway',
 ];
 
 // Drift-detector: internal consistency of every ProviderDefinition entry and
@@ -434,6 +435,48 @@ describe('google cross-registry wiring', () => {
     const url = new URL('../../app/src/worker/coder-job-stream-adapter.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
     assert.match(source, /case 'google':\s*\n\s*return handleGoogleChat/);
+  });
+});
+
+// cloudflare-gateway (AIG v2 Path 2 spike) — unified /compat catalog. Not
+// fallback/failover eligible (billing-bearing route, explicit pick only) and
+// web-only (no cli block), so it must stay OUT of the pinned fallback / CLI
+// rosters above while still being wired at every dispatch registry.
+describe('cloudflare-gateway cross-registry wiring', () => {
+  it('appears in AIProviderType', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../lib/provider-contract.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /^\s+'cloudflare-gateway',$/m);
+  });
+
+  it('stays out of the fallback and failover orders', () => {
+    assert.ok(!getInitialFallbackProviderOrder().includes('cloudflare-gateway'));
+    assert.ok(!getFailoverProviderOrder().includes('cloudflare-gateway'));
+  });
+
+  it('has worker provider handlers declared in worker-providers.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/worker/worker-providers.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(
+      source,
+      /'cloudflare-gateway':\s*\{\s*chat:\s*handleCloudflareGatewayChat,\s*models:\s*handleCloudflareGatewayModels,?\s*\}/,
+    );
+  });
+
+  it('has a stream-adapter factory in orchestrator-provider-routing.ts', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/lib/orchestrator-provider-routing.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /'cloudflare-gateway':\s*cloudflareGatewayStream/);
+  });
+
+  it('has a coder-job dispatch case for background runs', async () => {
+    const fs = await import('node:fs');
+    const url = new URL('../../app/src/worker/coder-job-stream-adapter.ts', import.meta.url);
+    const source = fs.readFileSync(url, 'utf8');
+    assert.match(source, /case 'cloudflare-gateway':\s*\n\s*return handleCloudflareGatewayChat/);
   });
 });
 

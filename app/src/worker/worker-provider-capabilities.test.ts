@@ -94,6 +94,39 @@ describe('isProviderEngineCapable', () => {
     expect(isProviderEngineCapable('cloudflare', { AI: {} as Ai } as Env)).toBe(true);
   });
 
+  it('reports cloudflare-gateway capable only when route AND compat token resolve', () => {
+    expect(isProviderEngineCapable('cloudflare-gateway', {} as Env)).toBe(false);
+    // Compat token alone: the /compat URL can't build without account + slug.
+    expect(
+      isProviderEngineCapable('cloudflare-gateway', {
+        CF_AI_GATEWAY_COMPAT_TOKEN: 'compat',
+      } as Env),
+    ).toBe(false);
+    // Route alone: nothing to authenticate with server-side.
+    expect(
+      isProviderEngineCapable('cloudflare-gateway', {
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acct',
+        CF_AI_GATEWAY_SLUG: 'push-gate',
+      } as Env),
+    ).toBe(false);
+    expect(
+      isProviderEngineCapable('cloudflare-gateway', {
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acct',
+        CF_AI_GATEWAY_SLUG: 'push-gate',
+        CF_AI_GATEWAY_COMPAT_TOKEN: 'compat',
+      } as Env),
+    ).toBe(true);
+    // Gateway authentication is an independent header role and cannot unlock
+    // the provider's Authorization credential on its own.
+    expect(
+      isProviderEngineCapable('cloudflare-gateway', {
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acct',
+        CF_AI_GATEWAY_SLUG: 'push-gate',
+        CF_AI_GATEWAY_TOKEN: 'gateway-auth',
+      } as Env),
+    ).toBe(false);
+  });
+
   it('reports non-DO-dispatchable providers incapable regardless of env', () => {
     for (const provider of ['demo'] as const) {
       expect(resolveProviderHandler(provider, false)).toBeNull();
@@ -106,6 +139,12 @@ describe('isProviderEngineCapable', () => {
     // ALL_PROVIDERS table can't drift from the DO's switch.
     const fullEnv = {
       AI: {} as Ai,
+      // cloudflare-gateway needs the gateway route (account + slug) AND its
+      // dedicated compat token — the /compat URL can't build from a token alone.
+      CF_AI_GATEWAY_ACCOUNT_ID: 'acct',
+      CF_AI_GATEWAY_SLUG: 'push-gate',
+      CF_AI_GATEWAY_COMPAT_TOKEN: 'compat',
+      CF_AI_GATEWAY_TOKEN: 'gateway-auth',
       OLLAMA_API_KEY: 'k',
       OPENROUTER_API_KEY: 'k',
       ZAI_API_KEY: 'k',

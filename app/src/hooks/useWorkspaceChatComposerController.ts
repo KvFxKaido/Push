@@ -31,6 +31,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectKimiModelFromChat'
   | 'handleSelectHuggingFaceModelFromChat'
   | 'handleSelectCloudflareModelFromChat'
+  | 'handleSelectCloudflareGatewayModelFromChat'
   | 'handleSelectZenModelFromChat'
   | 'handleSelectFireworksModelFromChat'
   | 'handleSelectSakanaModelFromChat'
@@ -63,6 +64,7 @@ export function useWorkspaceChatComposerController({
   handleSelectKimiModelFromChat,
   handleSelectHuggingFaceModelFromChat,
   handleSelectCloudflareModelFromChat,
+  handleSelectCloudflareGatewayModelFromChat,
   handleSelectZenModelFromChat,
   handleSelectFireworksModelFromChat,
   handleSelectSakanaModelFromChat,
@@ -270,6 +272,14 @@ export function useWorkspaceChatComposerController({
       isLocked: isProviderModelLocked('cloudflare'),
       ariaLabel: 'Select Cloudflare Workers AI model',
       footer: 'Uses the deployed Worker binding. No browser API key needed.',
+    }),
+    'cloudflare-gateway': buildPickerControl('cloudflare-gateway', {
+      options: catalog.cloudflareGatewayModelOptions,
+      onChange: handleSelectCloudflareGatewayModelFromChat,
+      isLocked: isProviderModelLocked('cloudflare-gateway'),
+      ariaLabel: 'Select Cloudflare AI Gateway model',
+      footer:
+        'Unified catalog — {provider}/{model} ids route through your AI Gateway (BYOK or credits).',
     }),
     zen: buildPickerControl('zen', {
       options: catalog.zenModelOptions,

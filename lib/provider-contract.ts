@@ -192,6 +192,7 @@ export const ALL_PROVIDERS = [
   'kimi',
   'huggingface',
   'cloudflare',
+  'cloudflare-gateway',
   'zen',
   'fireworks',
   'sakana',

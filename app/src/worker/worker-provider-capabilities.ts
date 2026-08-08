@@ -121,11 +121,32 @@ function isByokDispatchable(provider: AIProviderType, env: Env): boolean {
  * the gateway injects its stored key — a lingering Worker secret (or user key)
  * is dead weight, and reporting it as the source would misrepresent dispatch.
  */
+/**
+ * The unified /compat route only exists when the gateway account + slug are
+ * set — no token (Worker secret OR user key) can dispatch without them, since
+ * the handler can't even build the upstream URL (`handleCloudflareGatewayChat`
+ * 401s before auth resolution).
+ */
+function cloudflareGatewayRouteConfigured(env: Env): boolean {
+  return Boolean(env.CF_AI_GATEWAY_ACCOUNT_ID?.trim() && env.CF_AI_GATEWAY_SLUG?.trim());
+}
+
 function resolveEnvCredentialSource(
   provider: AIProviderType,
   env: Env,
 ): ProviderCredentialSource | null {
   if (provider === 'cloudflare') return env.AI ? 'binding' : null;
+  // cloudflare-gateway's OpenAI-SDK credential is distinct from the optional
+  // authenticated-gateway token (`CF_AI_GATEWAY_TOKEN`, which only populates
+  // `cf-aig-authorization`). A server-side turn is credentialed when the
+  // route resolves AND the dedicated compat secret is set. A user-stored
+  // compat token can substitute for the secret; that arm lives in the handler
+  // below, gated on the same route check.
+  if (provider === 'cloudflare-gateway') {
+    return cloudflareGatewayRouteConfigured(env) && env.CF_AI_GATEWAY_COMPAT_TOKEN?.trim()
+      ? 'worker-secret'
+      : null;
+  }
   // BYOK: the provider's key lives in the gateway, which injects it — so a
   // server-side turn can run with no Worker secret. Treat it as credentialed
   // even when the env key is absent (that's the whole point of retiring it).
@@ -198,6 +219,11 @@ export async function handleProviderEngineCapabilities(
         if (resolveProviderHandler(provider, false) === null) return [provider, null];
         const envSource = resolveEnvCredentialSource(provider, env);
         if (envSource !== null) return [provider, envSource];
+        // A user-stored cloudflare-gateway token can't dispatch without the
+        // route env — don't let the generic user-key arm report it capable.
+        if (provider === 'cloudflare-gateway' && !cloudflareGatewayRouteConfigured(env)) {
+          return [provider, null];
+        }
         // User-key arm resolves through the SAME path dispatch uses
         // (getUserProviderKey: secret present + decryptable), not metadata
         // presence — a rotated/missing PUSH_SESSION_SECRET must read as
