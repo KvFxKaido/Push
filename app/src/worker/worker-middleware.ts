@@ -194,13 +194,18 @@ export interface Env {
   // so the tighter default stays authoritative for deployed Workers.
   SANDBOX_DEV_LONG_DEADLINE?: string;
   // Cloudflare AI Gateway — opt-in observability/cache/rate-limit layer in
-  // front of upstream providers. All three are optional; when account or slug
+  // front of upstream providers. The route and gateway-auth fields are
+  // optional; when account or slug
   // is unset the gateway path is a no-op and traffic flows direct to the
   // provider exactly as before. CF_AI_GATEWAY_TOKEN is only required when the
-  // configured gateway has authenticated mode enabled.
+  // configured gateway has authenticated mode enabled, and it is used only
+  // for `cf-aig-authorization`. The unified `/compat` provider's independent
+  // OpenAI-SDK credential lives in CF_AI_GATEWAY_COMPAT_TOKEN so the two
+  // header roles can never shadow one another.
   CF_AI_GATEWAY_ACCOUNT_ID?: string;
   CF_AI_GATEWAY_SLUG?: string;
   CF_AI_GATEWAY_TOKEN?: string;
+  CF_AI_GATEWAY_COMPAT_TOKEN?: string;
   // Comma-separated allow-list of *custom* (non-first-party) AI Gateway provider
   // slugs known to be registered + enabled on the gateway (e.g. `ollama`). A
   // `custom-{slug}` binding routes through the gateway only when its slug is

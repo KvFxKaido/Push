@@ -451,9 +451,10 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
   },
   {
     // Cloudflare AI Gateway unified `/compat` endpoint (AIG v2 Path 2 spike):
-    // one Cloudflare token routes `{gateway-provider}/{model}` ids to OpenAI /
-    // Anthropic / Google / Workers AI upstreams with gateway BYOK or unified
-    // billing. Deliberately NOT fallback/failover eligible: routing a round
+    // a dedicated compat credential routes `{gateway-provider}/{model}` ids to
+    // OpenAI / Anthropic / Google / Workers AI upstreams with gateway BYOK or
+    // unified billing. Gateway-hop authentication remains a separate
+    // `CF_AI_GATEWAY_TOKEN`. Deliberately NOT fallback/failover eligible: routing a round
     // here changes who gets billed, so the provider is only ever an explicit
     // user pick. Web-only for now — the compat URL embeds the account id and
     // gateway slug, which the CLI has no config surface for yet.
@@ -465,7 +466,7 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     adapterRouted: true,
     defaultModel: CLOUDFLARE_GATEWAY_DEFAULT_MODEL,
     models: CLOUDFLARE_GATEWAY_MODELS,
-    apiKeyEnvVars: ['CF_AI_GATEWAY_TOKEN'],
+    apiKeyEnvVars: ['CF_AI_GATEWAY_COMPAT_TOKEN', 'VITE_CLOUDFLARE_GATEWAY_COMPAT_TOKEN'],
     webProxyPath: '/api/cloudflare-gateway/chat',
     modelsProxyPath: '/api/cloudflare-gateway/models',
     icon: {
@@ -475,17 +476,17 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     },
     settings: {
       description:
-        'Cloudflare AI Gateway unified catalog — one Cloudflare token routes OpenAI, Anthropic, Google, and Workers AI models through the gateway /compat endpoint (stored BYOK keys or unified billing)',
-      envKey: 'CF_AI_GATEWAY_TOKEN',
+        'Cloudflare AI Gateway unified catalog — a dedicated /compat credential routes OpenAI, Anthropic, Google, and Workers AI models through stored BYOK keys or unified billing; gateway authentication is configured separately',
+      envKey: 'VITE_CLOUDFLARE_GATEWAY_COMPAT_TOKEN',
       envUrl: 'https://gateway.ai.cloudflare.com',
       modelContextWindow: 200_000,
       keyStorageKey: 'cloudflare-gateway_api_key',
       modelStorageKey: 'cloudflare-gateway_model',
       builtInOrder: 130,
-      keyPlaceholder: 'Cloudflare API token (AI Gateway Run permission)',
-      keySaveLabel: 'Save Cloudflare AI Gateway token',
+      keyPlaceholder: 'Cloudflare /compat API token (AI Gateway Run permission)',
+      keySaveLabel: 'Save Cloudflare /compat token',
       keyHint:
-        'Cloudflare API token with AI Gateway permissions. Provider keys stay in the gateway (BYOK) or bill through prepaid Gateway credits — no per-provider keys in Push.',
+        'Cloudflare API token used as the /compat Authorization credential. Authenticated gateways also need the separate CF_AI_GATEWAY_TOKEN secret for cf-aig-authorization. Provider keys stay in the gateway (BYOK) or bill through prepaid Gateway credits.',
     },
   },
   {

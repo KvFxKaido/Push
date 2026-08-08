@@ -48,7 +48,8 @@ deploys); use the `versions` variant and promote, or set via dashboard.
 
 | Secret | Purpose |
 |---|---|
-| `CF_AI_GATEWAY_ACCOUNT_ID`, `CF_AI_GATEWAY_SLUG`, `CF_AI_GATEWAY_TOKEN` | AI Gateway routing + BYOK |
+| `CF_AI_GATEWAY_ACCOUNT_ID`, `CF_AI_GATEWAY_SLUG`, `CF_AI_GATEWAY_TOKEN` | AI Gateway routing + optional authenticated-gateway header (`cf-aig-authorization`) |
+| `CF_AI_GATEWAY_COMPAT_TOKEN` | Server-side `Authorization` credential for the unified `/compat` provider; separate from gateway authentication |
 | `ADMIN_TOKEN` | Admin routes |
 | `PUSH_RELAY_ENABLED`, `PUSH_RELAY_TOKEN` | Remote session relay (CLI daemon ↔ web) |
 | `MODAL_SANDBOX_BASE_URL` | Alternate Modal sandbox backend (`PUSH_SANDBOX_PROVIDER=modal`; deploy `sandbox/app.py` with `modal deploy`) |

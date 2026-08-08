@@ -3777,7 +3777,8 @@ describe('handleCloudflareGatewayChat', () => {
   const COMPAT_ENV: Partial<Env> = {
     CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',
     CF_AI_GATEWAY_SLUG: 'push-gate',
-    CF_AI_GATEWAY_TOKEN: 'gw-token',
+    CF_AI_GATEWAY_COMPAT_TOKEN: 'compat-token',
+    CF_AI_GATEWAY_TOKEN: 'gateway-auth-token',
   };
 
   it('returns 401 without fetching when the gateway env is unset', async () => {
@@ -3791,7 +3792,7 @@ describe('handleCloudflareGatewayChat', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('posts to the gateway /compat endpoint with token auth and skip-cache', async () => {
+  it('posts to /compat with independent compat and gateway-auth credentials', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
@@ -3809,11 +3810,8 @@ describe('handleCloudflareGatewayChat', () => {
       'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/compat/chat/completions',
     );
     const headers = captured?.init.headers as Record<string, string>;
-    // The gateway token rides both header slots: Authorization is the
-    // compat endpoint's OpenAI-SDK auth, cf-aig-authorization satisfies an
-    // authenticated gateway.
-    expect(headers.Authorization).toBe('Bearer gw-token');
-    expect(headers['cf-aig-authorization']).toBe('Bearer gw-token');
+    expect(headers.Authorization).toBe('Bearer compat-token');
+    expect(headers['cf-aig-authorization']).toBe('Bearer gateway-auth-token');
     expect(headers['cf-aig-skip-cache']).toBe('true');
   });
 
@@ -3831,7 +3829,25 @@ describe('handleCloudflareGatewayChat', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('forwards a client bearer token when no Worker secret is set', async () => {
+  it('does not reuse the gateway-auth secret as the compat credential', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const response = await handleCloudflareGatewayChat(
+      makeChatRequest(),
+      makeEnv({
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',
+        CF_AI_GATEWAY_SLUG: 'push-gate',
+        CF_AI_GATEWAY_TOKEN: 'gateway-auth-token',
+      }),
+    );
+    expect(response.status).toBe(401);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/compat token not configured/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves a client compat token while attaching Worker gateway authentication', async () => {
     let captured: { init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
@@ -3858,13 +3874,15 @@ describe('handleCloudflareGatewayChat', () => {
     });
     await handleCloudflareGatewayChat(
       request,
-      makeEnv({ CF_AI_GATEWAY_ACCOUNT_ID: 'acct123', CF_AI_GATEWAY_SLUG: 'push-gate' }),
+      makeEnv({
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',
+        CF_AI_GATEWAY_SLUG: 'push-gate',
+        CF_AI_GATEWAY_TOKEN: 'gateway-auth-token',
+      }),
     );
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer user-cf-token');
-    // No CF_AI_GATEWAY_TOKEN → no cf-aig-authorization; the request still
-    // routes for unauthenticated gateways.
-    expect(headers['cf-aig-authorization']).toBeUndefined();
+    expect(headers['cf-aig-authorization']).toBe('Bearer gateway-auth-token');
   });
 });
 

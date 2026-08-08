@@ -10,11 +10,12 @@
  * bespoke pump — the `{gateway-provider}/{model}` id is the entire routing
  * surface.
  *
- * Auth: a Cloudflare API token, not a per-provider key. A Settings-saved
- * token rides `Authorization: Bearer`; the Worker prefers its own
- * `CF_AI_GATEWAY_TOKEN` secret (standardAuth precedence). Upstream provider
- * credentials resolve inside the gateway — stored BYOK keys or unified
- * billing — which is the point of the route.
+ * Auth uses two deliberately independent roles. A Settings-saved compat token
+ * rides `Authorization: Bearer`; the Worker may instead supply its dedicated
+ * `CF_AI_GATEWAY_COMPAT_TOKEN` secret. The existing `CF_AI_GATEWAY_TOKEN`
+ * authenticates the gateway hop only through `cf-aig-authorization`. Upstream
+ * provider credentials resolve inside the gateway — stored BYOK keys or
+ * unified billing — which is the point of the route.
  */
 
 import { getCloudflareGatewayKey } from '@/hooks/useCloudflareGatewayConfig';

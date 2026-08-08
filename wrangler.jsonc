@@ -107,7 +107,7 @@
     "import.meta.env.SSR": "true",
     "import.meta.env.VITE_ANTHROPIC_API_KEY": "\"\"",
     "import.meta.env.VITE_API_BASE_URL": "\"\"",
-    "import.meta.env.VITE_CLOUDFLARE_GATEWAY_TOKEN": "\"\"",
+    "import.meta.env.VITE_CLOUDFLARE_GATEWAY_COMPAT_TOKEN": "\"\"",
     "import.meta.env.VITE_DEEPSEEK_API_KEY": "\"\"",
     "import.meta.env.VITE_FIREWORKS_API_KEY": "\"\"",
     "import.meta.env.VITE_GITHUB_APP_REDIRECT_URI": "\"\"",

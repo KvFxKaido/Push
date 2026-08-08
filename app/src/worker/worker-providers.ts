@@ -914,10 +914,12 @@ export const handleHuggingFaceModels = createJsonProxyHandler({
 /**
  * `compat` is a first-party gateway surface (not `custom-*`), so
  * `buildAiGatewayUrl` resolves it whenever `CF_AI_GATEWAY_ACCOUNT_ID` +
- * `CF_AI_GATEWAY_SLUG` are set — same env vars, no new ops surface. The
+ * `CF_AI_GATEWAY_SLUG` are set. The
  * resulting URL is `.../{account}/{slug}/compat/chat/completions`, which
  * routes `{gateway-provider}/{model}` ids to any supported upstream with the
- * gateway's stored BYOK keys or unified billing.
+ * gateway's stored BYOK keys or unified billing. Its OpenAI-SDK credential is
+ * deliberately separate from `CF_AI_GATEWAY_TOKEN`, which only authenticates
+ * the gateway hop via `cf-aig-authorization`.
  */
 const CLOUDFLARE_GATEWAY_COMPAT_BINDING: AiGatewayBinding = {
   provider: 'compat',
@@ -942,9 +944,9 @@ const handleCloudflareGatewayChatProxy = createStreamProxyHandler({
   },
   timeoutMs: 180_000,
   maxOutputTokens: 65_536,
-  buildAuth: standardAuth('CF_AI_GATEWAY_TOKEN'),
+  buildAuth: standardAuth('CF_AI_GATEWAY_COMPAT_TOKEN'),
   keyMissingError:
-    'Cloudflare AI Gateway token not configured. Add it in Settings or set CF_AI_GATEWAY_TOKEN on the Worker.',
+    'Cloudflare AI Gateway /compat token not configured. Add it in Settings or set CF_AI_GATEWAY_COMPAT_TOKEN on the Worker.',
   timeoutError: 'Cloudflare AI Gateway request timed out after 180 seconds',
   gateway: CLOUDFLARE_GATEWAY_COMPAT_BINDING,
   formatUpstreamError: (status, bodyText) => ({

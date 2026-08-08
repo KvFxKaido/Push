@@ -176,8 +176,8 @@ describe('cloudflareGatewayStream', () => {
     expect(headers.Authorization).toBe('Bearer cf-token-123');
   });
 
-  it('omits Authorization when no local token is saved (Worker secret covers it)', async () => {
-    // Keyless client + CF_AI_GATEWAY_TOKEN on the Worker is the primary
+  it('omits Authorization when no local token is saved (Worker compat secret covers it)', async () => {
+    // Keyless client + CF_AI_GATEWAY_COMPAT_TOKEN on the Worker is the primary
     // deployment shape; the header must be absent so `standardAuth` resolves
     // the server secret instead of a blank bearer.
     installStreamFetch(fetchMock);

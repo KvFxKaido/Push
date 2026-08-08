@@ -136,12 +136,14 @@ function resolveEnvCredentialSource(
   env: Env,
 ): ProviderCredentialSource | null {
   if (provider === 'cloudflare') return env.AI ? 'binding' : null;
-  // cloudflare-gateway authenticates with the gateway's own token, not a
-  // provider key — credentialed only when the route resolves AND the token
-  // secret is set. (A user-stored token can substitute for the secret; that
-  // arm lives in the handler below, gated on the same route check.)
+  // cloudflare-gateway's OpenAI-SDK credential is distinct from the optional
+  // authenticated-gateway token (`CF_AI_GATEWAY_TOKEN`, which only populates
+  // `cf-aig-authorization`). A server-side turn is credentialed when the
+  // route resolves AND the dedicated compat secret is set. A user-stored
+  // compat token can substitute for the secret; that arm lives in the handler
+  // below, gated on the same route check.
   if (provider === 'cloudflare-gateway') {
-    return cloudflareGatewayRouteConfigured(env) && env.CF_AI_GATEWAY_TOKEN?.trim()
+    return cloudflareGatewayRouteConfigured(env) && env.CF_AI_GATEWAY_COMPAT_TOKEN?.trim()
       ? 'worker-secret'
       : null;
   }
