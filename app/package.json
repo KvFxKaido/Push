@@ -105,7 +105,7 @@
     "typescript-eslint": "^8.65.0",
     "typescript-go": "npm:typescript@~7.0.2",
     "vite": "^8.1.5",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "ws": "^8.21.1"
   },
   "engines": {
