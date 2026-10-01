@@ -138,9 +138,10 @@ describe('shared task ledger', () => {
 
   it('lets exactly one process through when several reclaim the same stale lock', async () => {
     // Real processes, not async tasks: the race is between separate lock
-    // reclaimers that each judge the same dead-owner lock stale. Before the
-    // reclaim guard, one could unlink the lock the other had just acquired,
-    // letting two writers with the same expected revision both succeed.
+    // contenders that each judge the same dead-owner lock stale. When stale
+    // takeover unlinked the lock by path, one could delete the lock another
+    // had just acquired, letting two writers with the same expected revision
+    // both succeed.
     const contender = fileURLToPath(new URL('./task-ledger-lock-contender.mjs', import.meta.url));
     const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
     const file = taskLedgerFilePath(scope);
@@ -151,8 +152,17 @@ describe('shared task ledger', () => {
       const base = await saveTaskLedger(scope, [
         { id: `base-${round}`, content: 'Base', activeForm: 'Running base', status: 'in_progress' },
       ]);
+      // Plant a dead owner holding the current epoch, so every contender has
+      // to take over from it rather than find a released lock.
+      const lockDir = `${file}.lockdir`;
+      const current = Math.max(
+        -1,
+        ...(await fs.readdir(lockDir))
+          .filter((entry) => entry.endsWith('.owner'))
+          .map((entry) => Number(entry.slice(0, -'.owner'.length))),
+      );
       await fs.writeFile(
-        `${file}.lock`,
+        path.join(lockDir, `${current + 1}.owner`),
         JSON.stringify({ pid: deadPid, createdAt: Date.now() - 60_000 }),
         { mode: 0o600 },
       );
@@ -170,21 +180,32 @@ describe('shared task ledger', () => {
         });
         let stdout = '';
         let stderr = '';
-        const ready = new Promise((resolve) => {
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk;
+        });
+        // Reject (rather than hang) if a contender fails to start or exits
+        // before reporting ready; a late reject after resolve is a no-op.
+        const ready = new Promise((resolve, reject) => {
           child.stdout.on('data', (chunk) => {
             stdout += chunk;
             if (stdout.includes('ready\n')) resolve();
           });
-        });
-        child.stderr.on('data', (chunk) => {
-          stderr += chunk;
+          child.on('error', reject);
+          child.on('close', (code) =>
+            reject(new Error(`contender exited (${code}) before ready: ${stderr}`)),
+          );
         });
         const done = new Promise((resolve) => {
           child.on('close', (code) => resolve({ code, stdout, stderr }));
         });
-        return { ready, done };
+        return { child, ready, done };
       });
-      await Promise.all(children.map((child) => child.ready));
+      try {
+        await Promise.all(children.map((contender) => contender.ready));
+      } catch (error) {
+        for (const contender of children) contender.child.kill();
+        throw error;
+      }
       await fs.writeFile(goFile, '');
       const outcomes = await Promise.all(children.map((child) => child.done));
 
@@ -199,8 +220,13 @@ describe('shared task ledger', () => {
       assert.equal(results.filter((result) => result === 'conflict').length, contenders - 1);
       const stored = await loadTaskLedger(scope);
       assert.equal(stored.revision, base.revision + 1);
-      await assert.rejects(fs.access(`${file}.lock.reclaim`), { code: 'ENOENT' });
-      await assert.rejects(fs.access(`${file}.lock`), { code: 'ENOENT' });
+      // Released and garbage-collected: only the final epoch's owner and
+      // release marker remain.
+      const remaining = (await fs.readdir(lockDir)).sort();
+      assert.equal(remaining.length, 2, `unexpected lock entries: ${remaining.join(', ')}`);
+      const [lastOwner, lastReleased] = remaining;
+      assert.match(lastOwner, /^\d+\.owner$/);
+      assert.equal(lastReleased, lastOwner.replace('.owner', '.released'));
     }
   });
 
