@@ -17,8 +17,12 @@ build-out*.txt
 !app/.env.production
 .dev.vars
 
-# claude code
-.claude/
+# claude code (only the shared web-session hook is tracked; local settings stay ignored)
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 .codex/*
 !.codex/environments/
 .codex/environments/*
