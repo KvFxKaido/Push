@@ -112,17 +112,29 @@ section wins.
    CLI stream rule.
 7. **Model picker** treats the catalog as advisory for this provider.
 
-### The main risk: rotating refresh tokens across processes
+### The main risk: concurrent refresh of a rotating refresh token
 
-A refresh token is single-use. Push routinely runs several processes against
-one account — pushd, a TUI, a headless `push run`. If two see an expired access
+**What is established vs. assumed.** The Registration and sign-in page says
+the refresh token **rotates** ("replace the access token, expiry, granted
+scopes, and rotating refresh token together after a successful refresh"). It
+does **not** say whether the previous refresh token is invalidated immediately
+(single-use), tolerated for a grace window, or triggers reuse detection and
+family revocation — that contract lives on the unread Refreshing tokens page
+(open question 1). The analysis below therefore designs for the **worst case**
+(strict single-use with reuse detection) and should be re-scored once that
+page is read; if rotation turns out to be lenient, the lock is still correct,
+just less critical.
+
+Under the worst case: Push routinely runs several processes against one
+account — pushd, a TUI, a headless `push run`. If two see an expired access
 token and both refresh, one presents an already-rotated refresh token: at best
-a failed request, at worst (depending on OpenAI's reuse-detection, unread) the
-token family is revoked and the user is silently signed out. This is the
-CLAUDE.md "**an `await` that breaks a reservation**" class: expiry-check →
-`await fetch(refresh)` → write, with another process landing in between.
+a failed request, at worst the token family is revoked and the user is
+silently signed out. This is the CLAUDE.md "**an `await` that breaks a
+reservation**" class: expiry-check → `await fetch(refresh)` → write, with
+another process landing in between.
 
-Required shape: a **cross-process** lock around read → (re-check expiry after
+Required shape (holds under any rotation semantics, since concurrent refreshes
+at minimum waste a rotation and race the atomic file write): a **cross-process** lock around read → (re-check expiry after
 acquiring) → refresh → atomic write. Re-reading after acquiring is what makes
 the loser pick up the winner's fresh token instead of refreshing again.
 
@@ -170,10 +182,19 @@ documents for `url`/`defaultModel`.
 - **Electron desktop** runs locally and can host a loopback listener, so it fits
   the OSS flow the same way the CLI does, despite rendering the web UI. Worth
   doing after the CLI, sharing the flow through `lib/`.
-- **Hosted web (Worker): still no**, but for a thinner reason. Technically it
-  would now *work* — `standardAuth` already forwards a client `Authorization`
-  header to the same URL — which is exactly why it needs an explicit decision,
-  not an accident. The OSS program is scoped to "locally run apps." The docs
+- **Hosted web (Worker): still no** — on policy *and* on implementation scope.
+  Policy: the OSS program is scoped to "locally run apps." Implementation: a
+  client-supplied plan token would **not** reach OpenAI through today's routing
+  in either documented Worker configuration. `handleOpenAIChat` authenticates
+  via `standardAuth('OPENAI_API_KEY')`, which prefers a configured Worker
+  secret over the request's `Authorization` header
+  (`app/src/worker/worker-middleware.ts` `standardAuth`), and the AI Gateway
+  BYOK path omits `Authorization` entirely so the gateway can inject its stored
+  key (`app/src/worker/worker-providers.ts`, `...(byok ? {} : { Authorization:
+  authHeader })`). Only a deployment with neither a secret nor BYOK would pass
+  the client header through. A web path therefore needs a distinct auth mode or
+  route (or a precedence change scoped to SIWC tokens) on top of the policy
+  answer — it is not a policy-only gap. The docs
   reference a **separate "On your website" flow** (the OSS flow "remains a
   public client without a secret," implying a confidential-client website
   variant). That page decides whether a hosted surface using *each user's own*
