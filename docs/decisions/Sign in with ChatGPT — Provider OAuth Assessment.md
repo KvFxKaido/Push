@@ -1,15 +1,262 @@
 # Sign in with ChatGPT — Provider OAuth Assessment
 
-Date: 2026-07-17
-Status: **Reference** — recommendation is **do not fold in**. Keep the
-API-key-only provider auth model (`lib/provider-definition.ts` →
-`apiKeyEnvVars`; `~/.push/config.json`). The capability is already reachable on
-the **CLI** through the existing base-URL seam (`PUSH_OPENAI_URL` → a local
-proxy) with zero first-party code, and it does **not** belong on the governed
-web/cloud surface for ToS and durability reasons. No implementation committed.
+Date: 2026-07-17 (original) · revised 2026-10-01
+Status: **Draft** — the July reconsider-trigger ("OpenAI ships a sanctioned
+path with an official flow and terms") **has fired**. Revised recommendation:
+**fold in, CLI-first** (plus, possibly, the Electron shell), as a first-party
+OAuth provider-auth path against the sanctioned Sign in with ChatGPT (SIWC)
+token-sharing flow. Web/cloud stays **no** pending a read of the separate
+"On your website" flow. Not yet owner-committed; no implementation.
 Owner: Push.
 
-## Context
+## 2026-10-01 revision — the sanctioned path exists
+
+OpenAI now documents **SIWC token sharing for open-source, locally run apps**
+(`developers.openai.com/siwc/token-sharing-open-source`, pages: Overview,
+Registration and sign-in, Codex app-server; not yet read: Refreshing tokens /
+profiles-and-sessions, Errors and recovery, On your website, UI/UX
+guidelines). This removes two of the three July blockers for the CLI. The
+July assessment is kept below as provenance; where the two disagree, this
+section wins.
+
+### What the official flow is (from the docs, 2026-10-01)
+
+- **Same endpoint Push already calls.** The plan-backed OAuth access token is
+  a plain `Authorization: Bearer` on `https://api.openai.com/v1/responses`
+  (authorization `resource=https://api.openai.com/v1`). Not
+  `chatgpt.com/backend-api/codex`, not a proxy. Push's OpenAI definition
+  already targets that URL (`lib/provider-definition.ts`, `baseUrl`) and the
+  CLI already sends `Bearer` (`cli/openai-responses-stream.ts`). On the wire,
+  a plan token is an API key that expires.
+- **Self-serve, per-account dynamic client registration.** First sign-in uses
+  the shared entry point `client_id=dynamic_agent_client` plus
+  `agent_name_hint` (the app's real name, consistent across installs) and a
+  required per-host `ext_agent_host_id`. The user names/authorizes the agent;
+  the callback returns an **issued `client_id` (`oaiapp_...`)** bound to that
+  ChatGPT account + workspace, reused for later sign-ins. **No client secret,
+  no partner API key** — nothing Push-the-project has to apply for or hide in a
+  public repo. `dynamic_agent_client` is never saved or used for token exchange.
+- **Authorization code + PKCE (S256), loopback only.** Authorize at
+  `https://auth.openai.com/api/accounts/authorize`; exchange at
+  `https://auth.openai.com/api/accounts/oauth/token` (form-encoded, issued
+  `client_id`, `code_verifier`, same `redirect_uri` and `resource`, no secret).
+  Redirect must be `http://127.0.0.1:<port>/auth/callback` — **`127.0.0.1`,
+  never `localhost`**; exact path; only the port may vary between sign-ins, and
+  must match within one attempt. Fresh `state` + OIDC `nonce` + PKCE verifier
+  per attempt.
+- **Scopes.** Identity `openid profile email`; plan usage
+  `offline_access resource.invoke chatgpt.tokens.use.direct`. A valid ID token
+  alone does **not** authorize plan usage — gate on the *granted* scopes
+  containing `chatgpt.tokens.use.direct`. `error=access_denied` is ambiguous:
+  the docs route it to a "ChatGPT plan use isn't enabled" recovery path, but
+  it is also the standard OAuth result when the user simply declines consent.
+- **ID-token validation is required.** Signature against OpenAI's JWKS; `iss`,
+  `aud` == the **issued** client id, `exp`, `nonce`. Identity is the validated
+  `sub` (email and `sub` are not workspace identifiers — key records by issued
+  client id + `sub`). On re-auth, reject a callback whose `client_id` differs
+  from the pending request's, and confirm the new `sub` matches the selected
+  account before replacing credentials.
+- **Returning sign-in.** Reuse the issued `client_id`; send the retained (maybe
+  expired) `id_token` as `id_token_hint` (skips the account selector) and/or a
+  saved `login_hint`. Omit `agent_name_hint` on re-auth.
+- **Storage.** One record per (issued client id, verified identity): identity,
+  `id_token`, `access_token`, `refresh_token`, `expires_in`, granted scopes,
+  `saved_at`, `ext_agent_host_id`. Atomic writes, `0600`, never logged.
+  **Refresh tokens rotate**: access token, expiry, scopes and refresh token are
+  replaced together after a successful refresh.
+- **Branding.** The entry point is labeled **Continue with ChatGPT** per
+  OpenAI's UI/UX guidelines (unread; matters for the web/Electron UI, mostly
+  text in the TUI). Multiple saved accounts/workspaces are expected.
+- **Model list is a catalog, not an entitlement check** (app-server page): only
+  a completed inference turn proves the plan can use a model.
+- **Codex app-server is optional.** It is one integration recipe (spawn
+  `codex app-server` with the token in `ACCESS_TOKEN`, restart it on refresh,
+  `thread/resume`). Push should **not** take it: it is the T3-Code "wrap an
+  external agent" fork (`docs/research/T3 Code — Lessons for Push.md`), and
+  Push's governance (Auditor gate, capability gating, side-effect budget)
+  requires owning the loop. Push talks to `/v1/responses` directly with its own
+  pump.
+
+### July blockers, re-scored
+
+| July blocker | Now |
+|---|---|
+| **Durability** — reverse-engineered, borrowed Codex client id, unpublished endpoint | **Cleared.** Documented flow, per-user issued client id, public `api.openai.com` endpoint |
+| **ToS** — token pooling | **Cleared for the CLI** (one user, their own account, their own machine — the case the program is written for). **Not cleared for web** (see below) |
+| **Web can't do loopback / no refresh machinery** | Loopback: still true for a Worker; **not** true for the Electron shell, which is a locally run app. Refresh machinery: still net-new, now the main cost |
+
+### Revised shape (CLI-first)
+
+1. **Login command** (`push auth chatgpt` / a `config init` branch): bind a free
+   `127.0.0.1` port, open the system browser, PKCE + state + nonce, handle the
+   callback, exchange, validate the ID token, check granted scopes, save.
+   `agent_name_hint="Push"`.
+2. **Host id.** One stable `ext_agent_host_id` (`urn:uuid:...`) per machine,
+   minted once and persisted under `~/.push/`; shared by the CLI and pushd on
+   that host.
+3. **Credential store.** New, separate from `~/.push/config.json` (whose
+   per-provider `{ url, apiKey, model }` can't hold a rotating multi-field
+   credential): e.g. `~/.push/chatgpt/<issued_client_id>.json`, `0600`, atomic
+   write (temp + rename), plus an active-account pointer. Multi-account from day
+   one — the docs assume it.
+4. **Token-aware key resolution.** See the seam correction below — the
+   interactive CLI captures the key once, which a 1-hour token breaks.
+5. **Locked refresh** (cross-process). See below — the main correctness risk.
+6. **Error mapping.** A token response whose granted scopes lack
+   `chatgpt.tokens.use.direct` (a confirmed restriction — likely an
+   admin-disabled workspace) → an actionable "plan use isn't enabled" message
+   at sign-in, not a 401 on the first turn. A bare `error=access_denied` callback
+   does **not** prove that — the user may just have declined — so it gets a
+   neutral "sign-in was cancelled or not authorized; try again" message that
+   also links the plan-enablement recovery, rather than asserting a plan
+   restriction. A per-model entitlement
+   failure → "your plan doesn't include this model," not the generic 4xx bucket
+   (CLAUDE.md HTTP-status checklist; `lib/quota-errors.ts` for plan-quota
+   exhaustion). `invalid_grant` on exchange → discard code, restart auth.
+   Structured logs on each branch (sign-in ok / denied / scope-missing /
+   refresh ok / refresh failed / identity mismatch), to `console.error` per the
+   CLI stream rule.
+7. **Model picker** treats the catalog as advisory for this provider.
+
+### The main risk: concurrent refresh of a rotating refresh token
+
+**What is established vs. assumed.** The Registration and sign-in page says
+the refresh token **rotates** ("replace the access token, expiry, granted
+scopes, and rotating refresh token together after a successful refresh"). It
+does **not** say whether the previous refresh token is invalidated immediately
+(single-use), tolerated for a grace window, or triggers reuse detection and
+family revocation — that contract lives on the unread Refreshing tokens page
+(open question 1). The analysis below therefore designs for the **worst case**
+(strict single-use with reuse detection) and should be re-scored once that
+page is read; if rotation turns out to be lenient, the lock is still correct,
+just less critical.
+
+Under the worst case: Push routinely runs several processes against one
+account — pushd, a TUI, a headless `push run`. If two see an expired access
+token and both refresh, one presents an already-rotated refresh token: at best
+a failed request, at worst the token family is revoked and the user is
+silently signed out. This is the CLAUDE.md "**an `await` that breaks a
+reservation**" class: expiry-check → `await fetch(refresh)` → write, with
+another process landing in between.
+
+Required shape (holds under any rotation semantics, since concurrent refreshes
+at minimum waste a rotation and race the atomic file write): a **cross-process** lock around read → (re-check expiry after
+acquiring) → refresh → atomic write. Re-reading after acquiring is what makes
+the loser pick up the winner's fresh token instead of refreshing again.
+
+Correction to the 2026-10-01 chat analysis: `lib/git/repo-lock.ts` is **not**
+the precedent — it is an **in-process** keyed lane (`Map<string, Lane>`), which
+does nothing across pushd/TUI/`push run`. The cross-process precedent is
+`cli/task-ledger-store.ts` `acquireTaskLedgerLock` (`fs.open(lockFile, 'wx',
+0o600)` + stale-lock reclaim + timeout) — but **do not reuse it unchanged**.
+Its stale-lock reclaim (`removeAbandonedLock`) reads the owner PID, decides the
+owner is dead, then unlinks the lock **by path** without confirming it is still
+the same file. Two contenders can both judge the same stale lock dead; one
+unlinks it and acquires a fresh lock, then the other unlinks *that* fresh lock
+and acquires its own — both are now inside the critical section. For ledger
+appends that may be tolerable; for a single-use-in-the-worst-case refresh token
+it is exactly the double-refresh this lock exists to prevent.
+
+Requirements for the credential lock:
+
+- **Safe stale-lock recovery.** Reclaim must be atomic with respect to other
+  reclaimers, e.g. `rename` the stale lock to a unique tombstone (only one
+  rename of a given path succeeds) and then re-attempt the `'wx'` create, or
+  verify identity (`dev`/`ino` from the initial `stat`) immediately before
+  unlinking, or use an OS advisory lock (`flock`) that the kernel releases on
+  process death so no stale-reclaim path exists at all.
+- **A multiprocess contention test.** Spawn N real processes (not async tasks
+  in one process) racing a refresh against a planted stale lock, and assert
+  exactly one refresh call is made and every process ends with the same
+  token. Watch it fail against the current `removeAbandonedLock` shape first.
+- The same race is latent in the task ledger itself; fixing the shared helper
+  once (and promoting it to `lib/` if a second surface needs it) is preferable
+  to a credential-only copy.
+
+### Seam correction: the interactive CLI captures the key once
+
+The daemon path already resolves lazily per invocation
+(`cli/daemon-provider-stream.ts` calls `resolveApiKey(config)` inside the
+stream). The **interactive CLI does not**: `resolveApiKey` reads env only
+(`cli/provider.ts`), and `cli/cli.ts` stores the result on `ctx.apiKey` at
+startup / provider switch, threading the string into `runLeadKernelTurn` and
+`createProviderStream(config, apiKey, ...)`. A session longer than the access
+token's lifetime (`expires_in: 3600` in the docs' example) would keep sending a
+dead token. The fix is a resolver at the stream boundary (key-or-getter,
+awaited per request) rather than a captured string — which also matches the
+"live getters, not spawn-time snapshots" contract `cli/provider.ts` already
+documents for `url`/`defaultModel`.
+
+### Other sharp edges
+
+- **Port.** The docs' example port is 1455 — the same one the Codex CLI uses.
+  Bind any free port; whether the *initial* registration must use a specific
+  port is ambiguous in the docs ("from initial registration onward ... later
+  sign-ins may use another available port") — verify.
+- **No device-code flow** is documented. SSH to a remote host needs a manual
+  port-forward. The WSL-hosted daemon
+  ([`Windows Desktop — WSL-Hosted Daemon.md`](<Windows Desktop — WSL-Hosted Daemon.md>))
+  puts the browser on Windows and the listener in WSL2 — localhost forwarding
+  usually covers `127.0.0.1`, but test it per WSL networking mode, don't assume.
+- **JWT verification** against a remote JWKS is new to Push (the worker's
+  HS256 session tokens are self-minted and symmetric — no reuse). Use a
+  maintained library; don't hand-roll.
+- **Attribution.** The app-server path sends `clientInfo.name` as the request
+  originator / User-Agent and says it should match `agent_name_hint`. Whether a
+  **direct** `/v1/responses` caller is expected to send an equivalent
+  originator header is unknown — check the unread pages.
+
+### Web / cloud and Electron
+
+- **Electron desktop** runs locally and can host a loopback listener, so it fits
+  the OSS flow the same way the CLI does, despite rendering the web UI. Worth
+  doing after the CLI, sharing the flow through `lib/`.
+- **Hosted web (Worker): still no** — on policy *and* on implementation scope.
+  Policy: the OSS program is scoped to "locally run apps." Implementation: a
+  client-supplied plan token would **not** reach OpenAI through today's routing
+  in either documented Worker configuration. `handleOpenAIChat` authenticates
+  via `standardAuth('OPENAI_API_KEY')`, which prefers a configured Worker
+  secret over the request's `Authorization` header
+  (`app/src/worker/worker-middleware.ts` `standardAuth`), and the AI Gateway
+  BYOK path omits `Authorization` entirely so the gateway can inject its stored
+  key (`app/src/worker/worker-providers.ts`, `...(byok ? {} : { Authorization:
+  authHeader })`). Only a deployment with neither a secret nor BYOK would pass
+  the client header through. A web path therefore needs a distinct auth mode or
+  route (or a precedence change scoped to SIWC tokens) on top of the policy
+  answer — it is not a policy-only gap. The docs
+  reference a **separate "On your website" flow** (the OSS flow "remains a
+  public client without a secret," implying a confidential-client website
+  variant). That page decides whether a hosted surface using *each user's own*
+  plan token for *that user* is sanctioned or is the pooling case. Until it is
+  read, the July non-goal stands.
+
+### Open questions (read these pages next, in order)
+
+1. **Refreshing tokens** (profiles-and-sessions) — rotation on every refresh?
+   reuse detection / family revocation? refresh-token lifetime?
+2. **On your website** — reopens or confirms the web answer.
+3. **Errors and recovery** — exact error shapes for plan-not-enabled,
+   model-not-entitled, rate limit vs. quota.
+4. **A client vs. an agent host** — confirms one `ext_agent_host_id` per
+   machine (vs. per pushd instance / per install).
+5. Is "open-source" a condition on the app, or just the flow's name? (Push is
+   public either way.)
+6. Rate limits / model availability relative to Codex itself.
+
+Reconsider-trigger #2 from July ("demonstrated CLI demand") is an owner call;
+this revision only establishes that the cost is now mostly the auth layer
+(login, store, locked refresh, error mapping) — the network half is built.
+
+---
+
+## Original assessment (2026-07-17) — provenance
+
+Kept as written. Its recommendation ("do not fold in") is superseded by the
+revision above for the CLI; its web non-goal still stands pending the open
+questions. Its description of `openai-oauth` (an unofficial proxy against
+`chatgpt.com/backend-api/codex`) is **not** the sanctioned flow.
+
+### Context
 
 [`EvanZhouDev/openai-OAuth`](https://github.com/EvanZhouDev/openai-OAuth)
 (Apache-2.0, unofficial, not affiliated with OpenAI) lets a **ChatGPT
@@ -75,7 +322,7 @@ not, on the governed surface; on the CLI it needs nothing built.
   entirely disjoint from *which LLM key signs the upstream call*. Nothing today
   obtains a **provider** credential via OAuth.
 
-## What "Sign in with ChatGPT" would buy Push
+### What "Sign in with ChatGPT" would buy Push
 
 | Capability | Push status today | What this adds |
 |---|---|---|
@@ -88,7 +335,7 @@ The only genuine, non-duplicative win is the headline one — and on the CLI it 
 **already available with zero Push code**. Everything Push would actually *build*
 is either redundant (CLI) or lands on the wrong surface (web).
 
-## Feasibility, per surface
+### Feasibility, per surface
 
 **CLI — reachable now, nothing to fold in.** A user who wants this runs the
 `openai-oauth` proxy locally and points `PUSH_OPENAI_URL` at it. This is exactly
@@ -121,7 +368,7 @@ sufficient:
    ([`Single Identity Model`](<Single Identity Model — Drop Accountless, Keep the Provider Seam.md>)
    Open Question #2) and the deferred Settings-Unification runbook.
 
-## Durability risk (both surfaces)
+### Durability risk (both surfaces)
 
 This is an **unofficial, reverse-engineered** use of Codex's OAuth tokens
 against an endpoint OpenAI never published for third-party clients. OpenAI can
@@ -132,7 +379,7 @@ APIs; this is that risk without the sanction. Building a first-party Push surfac
 on it means every upstream change is a Push outage. Acceptable for a user's own
 opt-in local proxy; not acceptable as a supported product surface.
 
-## Recommendation
+### Recommendation
 
 **Do not fold in.** Keep provider auth API-key-only.
 
@@ -157,7 +404,7 @@ Reconsider **only** if *all* of these become concretely true:
   no-pooling constraint is squared with the multi-user governance model — which
   today it cannot be.
 
-## Seams a first-class path would touch (for reference, if the trigger ever flips)
+### Seams a first-class path would touch (for reference, if the trigger ever flips)
 
 1. `lib/provider-definition.ts` — `ProviderDefinition` assumes `apiKeyEnvVars`;
    an OAuth backend needs a new provider id or an auth-mode field. None exists.
@@ -173,7 +420,7 @@ Reconsider **only** if *all* of these become concretely true:
    [`Single Identity Model — Drop Accountless, Keep the Provider Seam.md`](<Single Identity Model — Drop Accountless, Keep the Provider Seam.md>),
    and the deferred Settings-Unification runbook.
 
-## Non-goals
+### Non-goals
 
 - **No web/cloud ChatGPT-OAuth backend.** The governed multi-user surface must
   not broker ChatGPT-account tokens — ToS pooling risk and users' account safety.
