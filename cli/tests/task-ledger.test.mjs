@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import {
@@ -132,6 +134,100 @@ describe('shared task ledger', () => {
     const stored = await loadTaskLedger(scope);
     assert.equal(stored.revision, initial.revision + 1);
     assert.deepEqual(stored.steps, fulfilled[0].value.steps);
+  });
+
+  it('lets exactly one process through when several reclaim the same stale lock', async () => {
+    // Real processes, not async tasks: the race is between separate lock
+    // contenders that each judge the same dead-owner lock stale. When stale
+    // takeover unlinked the lock by path, one could delete the lock another
+    // had just acquired, letting two writers with the same expected revision
+    // both succeed.
+    const contender = fileURLToPath(new URL('./task-ledger-lock-contender.mjs', import.meta.url));
+    const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+    const file = taskLedgerFilePath(scope);
+    const rounds = 4;
+    const contenders = 8;
+
+    for (let round = 0; round < rounds; round += 1) {
+      const base = await saveTaskLedger(scope, [
+        { id: `base-${round}`, content: 'Base', activeForm: 'Running base', status: 'in_progress' },
+      ]);
+      // Plant a dead owner holding the current epoch, so every contender has
+      // to take over from it rather than find a released lock.
+      const lockDir = `${file}.lockdir`;
+      const current = Math.max(
+        -1,
+        ...(await fs.readdir(lockDir))
+          .filter((entry) => entry.endsWith('.owner'))
+          .map((entry) => Number(entry.slice(0, -'.owner'.length))),
+      );
+      await fs.writeFile(
+        path.join(lockDir, `${current + 1}.owner`),
+        JSON.stringify({ pid: deadPid, createdAt: Date.now() - 60_000 }),
+        { mode: 0o600 },
+      );
+      const goFile = path.join(tmpRoot, `go-${round}`);
+      const children = Array.from({ length: contenders }, (_, index) => {
+        const child = spawn(process.execPath, ['--import', 'tsx', contender], {
+          env: {
+            ...process.env,
+            CONTENDER_ID: `${round}-${index}`,
+            CONTENDER_GO_FILE: goFile,
+            CONTENDER_EXPECTED_REVISION: String(base.revision),
+            CONTENDER_SCOPE: JSON.stringify(scope),
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk;
+        });
+        // Reject (rather than hang) if a contender fails to start or exits
+        // before reporting ready; a late reject after resolve is a no-op.
+        const ready = new Promise((resolve, reject) => {
+          child.stdout.on('data', (chunk) => {
+            stdout += chunk;
+            if (stdout.includes('ready\n')) resolve();
+          });
+          child.on('error', reject);
+          child.on('close', (code) =>
+            reject(new Error(`contender exited (${code}) before ready: ${stderr}`)),
+          );
+        });
+        const done = new Promise((resolve) => {
+          child.on('close', (code) => resolve({ code, stdout, stderr }));
+        });
+        return { child, ready, done };
+      });
+      try {
+        await Promise.all(children.map((contender) => contender.ready));
+      } catch (error) {
+        for (const contender of children) contender.child.kill();
+        throw error;
+      }
+      await fs.writeFile(goFile, '');
+      const outcomes = await Promise.all(children.map((child) => child.done));
+
+      const results = outcomes.map(
+        (outcome) => outcome.stdout.match(/result:(\S+)/)?.[1] ?? `none:${outcome.stderr}`,
+      );
+      assert.equal(
+        results.filter((result) => result === 'ok').length,
+        1,
+        `round ${round}: expected exactly one writer through the lock, got ${results.join(', ')}`,
+      );
+      assert.equal(results.filter((result) => result === 'conflict').length, contenders - 1);
+      const stored = await loadTaskLedger(scope);
+      assert.equal(stored.revision, base.revision + 1);
+      // Released and garbage-collected: only the final epoch's owner and
+      // release marker remain.
+      const remaining = (await fs.readdir(lockDir)).sort();
+      assert.equal(remaining.length, 2, `unexpected lock entries: ${remaining.join(', ')}`);
+      const [lastOwner, lastReleased] = remaining;
+      assert.match(lastOwner, /^\d+\.owner$/);
+      assert.equal(lastReleased, lastOwner.replace('.owner', '.released'));
+    }
   });
 
   it('only enables the no-mutation signal for explicit change requests', () => {
