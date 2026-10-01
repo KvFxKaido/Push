@@ -225,8 +225,13 @@ export default {
 
       // SPA fallback: serve index.html for non-file paths
       // (actual static files like .js/.css are already served by the [assets] layer)
+      // `Fetcher` is typed against @cloudflare/workers-types while this project
+      // compiles with the DOM lib, so bridge the two Request/Response shapes.
+      const indexRequest = new Request(new URL('/index.html', requestWithId.url));
       return withRequestIdOnResponse(
-        await env.ASSETS.fetch(new Request(new URL('/index.html', requestWithId.url))),
+        (await env.ASSETS.fetch(
+          indexRequest as unknown as Parameters<Env['ASSETS']['fetch']>[0],
+        )) as unknown as Response,
         requestId,
         requestWithId,
         env,

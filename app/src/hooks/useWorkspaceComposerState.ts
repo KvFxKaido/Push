@@ -98,7 +98,7 @@ type WorkspaceComposerStateArgs = {
       provider?: Conversation['provider'] | null;
       model?: string | null;
     },
-  ) => Promise<void> | void;
+  ) => Promise<void>;
 };
 
 export function useWorkspaceComposerState({
