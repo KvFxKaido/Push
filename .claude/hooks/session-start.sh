@@ -22,15 +22,17 @@ NODE_CACHE="${HOME}/.cache/push-node"
 
 current_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
 if [ "$current_major" -lt "$NODE_MAJOR" ]; then
-  # Only fully extracted installs are ever renamed into place (below), so any
-  # node-v<major>.* directory here is complete.
-  node_dir=$(ls -d "$NODE_CACHE"/node-v"$NODE_MAJOR".*-linux-*/ 2>/dev/null | sort -V | tail -1 || true)
+  # Resolve the arch before the cache lookup: a cache can outlive the machine
+  # that filled it, and a linux-* glob would happily reuse another arch.
+  case "$(uname -m)" in
+    x86_64) arch=x64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) echo "session-start: unsupported arch $(uname -m)" >&2; exit 1 ;;
+  esac
+  # Only fully extracted, smoke-tested installs are ever renamed into place
+  # (below), so any matching directory here is complete.
+  node_dir=$(ls -d "$NODE_CACHE"/node-v"$NODE_MAJOR".*-linux-"$arch"/ 2>/dev/null | sort -V | tail -1 || true)
   if [ -z "$node_dir" ]; then
-    case "$(uname -m)" in
-      x86_64) arch=x64 ;;
-      aarch64 | arm64) arch=arm64 ;;
-      *) echo "session-start: unsupported arch $(uname -m)" >&2; exit 1 ;;
-    esac
     base="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"
     mkdir -p "$NODE_CACHE"
     rm -rf "$NODE_CACHE"/.staging.* # leftovers from an interrupted run
@@ -43,9 +45,15 @@ if [ "$current_major" -lt "$NODE_MAJOR" ]; then
     curl -fsSL "$base/$tarball" -o "$staging/$tarball"
     (cd "$staging" && grep " ${tarball}\$" SHASUMS256.txt | sha256sum -c - >/dev/null)
     tar -xJf "$staging/$tarball" -C "$staging"
+    # Smoke-test before publishing: the binary must run and report the major
+    # we asked for, and npm must load.
+    staged="$staging/${tarball%.tar.xz}"
+    staged_major=$("$staged/bin/node" -p 'process.versions.node.split(".")[0]')
+    [ "$staged_major" = "$NODE_MAJOR" ] || { echo "session-start: staged node is v$staged_major" >&2; exit 1; }
+    PATH="$staged/bin:$PATH" "$staged/bin/npm" --version >/dev/null
     node_dir="$NODE_CACHE/${tarball%.tar.xz}"
     if [ ! -d "$node_dir" ]; then
-      mv "$staging/${tarball%.tar.xz}" "$node_dir"
+      mv "$staged" "$node_dir"
     fi
   fi
   node_bin="${node_dir%/}/bin"
