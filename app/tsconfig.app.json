@@ -32,5 +32,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  // worker.ts is the Worker entry (wrangler `main`); it lives beside src/ but
+  // shares src/worker/*'s lib + types, so it is checked under this project.
+  "include": ["src", "worker.ts"]
 }
