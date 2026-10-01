@@ -12,13 +12,13 @@
   "devDependencies": {
     "@capacitor/core": "^8.3.1",
     "@capawesome/capacitor-electron": "^0.1.0",
-    "electron": "^43.2.0",
+    "electron": "^43.7.7",
     "electron-builder": "^26.0.12",
     "typescript": "^7.0.2"
   },
   "pnpm": {
     "overrides": {
-      "fast-uri": "^3.1.4"
+      "fast-uri": "^3.1.8"
     }
   }
 }
