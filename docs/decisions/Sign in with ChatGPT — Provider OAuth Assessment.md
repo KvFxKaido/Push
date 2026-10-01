@@ -47,8 +47,9 @@ section wins.
 - **Scopes.** Identity `openid profile email`; plan usage
   `offline_access resource.invoke chatgpt.tokens.use.direct`. A valid ID token
   alone does **not** authorize plan usage — gate on the *granted* scopes
-  containing `chatgpt.tokens.use.direct`. `error=access_denied` → "ChatGPT plan
-  use isn't enabled" recovery path.
+  containing `chatgpt.tokens.use.direct`. `error=access_denied` is ambiguous:
+  the docs route it to a "ChatGPT plan use isn't enabled" recovery path, but
+  it is also the standard OAuth result when the user simply declines consent.
 - **ID-token validation is required.** Signature against OpenAI's JWKS; `iss`,
   `aud` == the **issued** client id, `exp`, `nonce`. Identity is the validated
   `sub` (email and `sub` are not workspace identifiers — key records by issued
@@ -101,9 +102,14 @@ section wins.
 4. **Token-aware key resolution.** See the seam correction below — the
    interactive CLI captures the key once, which a 1-hour token breaks.
 5. **Locked refresh** (cross-process). See below — the main correctness risk.
-6. **Error mapping.** Missing `chatgpt.tokens.use.direct` / `access_denied`
-   (likely admin-disabled workspaces) → an actionable "plan use isn't enabled"
-   message at sign-in, not a 401 on the first turn. A per-model entitlement
+6. **Error mapping.** A token response whose granted scopes lack
+   `chatgpt.tokens.use.direct` (a confirmed restriction — likely an
+   admin-disabled workspace) → an actionable "plan use isn't enabled" message
+   at sign-in, not a 401 on the first turn. A bare `error=access_denied` callback
+   does **not** prove that — the user may just have declined — so it gets a
+   neutral "sign-in was cancelled or not authorized; try again" message that
+   also links the plan-enablement recovery, rather than asserting a plan
+   restriction. A per-model entitlement
    failure → "your plan doesn't include this model," not the generic 4xx bucket
    (CLAUDE.md HTTP-status checklist; `lib/quota-errors.ts` for plan-quota
    exhaustion). `invalid_grant` on exchange → discard code, restart auth.
@@ -142,7 +148,30 @@ Correction to the 2026-10-01 chat analysis: `lib/git/repo-lock.ts` is **not**
 the precedent — it is an **in-process** keyed lane (`Map<string, Lane>`), which
 does nothing across pushd/TUI/`push run`. The cross-process precedent is
 `cli/task-ledger-store.ts` `acquireTaskLedgerLock` (`fs.open(lockFile, 'wx',
-0o600)` + stale-lock reclaim + timeout). Reuse or promote that.
+0o600)` + stale-lock reclaim + timeout) — but **do not reuse it unchanged**.
+Its stale-lock reclaim (`removeAbandonedLock`) reads the owner PID, decides the
+owner is dead, then unlinks the lock **by path** without confirming it is still
+the same file. Two contenders can both judge the same stale lock dead; one
+unlinks it and acquires a fresh lock, then the other unlinks *that* fresh lock
+and acquires its own — both are now inside the critical section. For ledger
+appends that may be tolerable; for a single-use-in-the-worst-case refresh token
+it is exactly the double-refresh this lock exists to prevent.
+
+Requirements for the credential lock:
+
+- **Safe stale-lock recovery.** Reclaim must be atomic with respect to other
+  reclaimers, e.g. `rename` the stale lock to a unique tombstone (only one
+  rename of a given path succeeds) and then re-attempt the `'wx'` create, or
+  verify identity (`dev`/`ino` from the initial `stat`) immediately before
+  unlinking, or use an OS advisory lock (`flock`) that the kernel releases on
+  process death so no stale-reclaim path exists at all.
+- **A multiprocess contention test.** Spawn N real processes (not async tasks
+  in one process) racing a refresh against a planted stale lock, and assert
+  exactly one refresh call is made and every process ends with the same
+  token. Watch it fail against the current `removeAbandonedLock` shape first.
+- The same race is latent in the task ledger itself; fixing the shared helper
+  once (and promoting it to `lib/` if a second surface needs it) is preferable
+  to a credential-only copy.
 
 ### Seam correction: the interactive CLI captures the key once
 
