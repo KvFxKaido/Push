@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import {
@@ -132,6 +134,74 @@ describe('shared task ledger', () => {
     const stored = await loadTaskLedger(scope);
     assert.equal(stored.revision, initial.revision + 1);
     assert.deepEqual(stored.steps, fulfilled[0].value.steps);
+  });
+
+  it('lets exactly one process through when several reclaim the same stale lock', async () => {
+    // Real processes, not async tasks: the race is between separate lock
+    // reclaimers that each judge the same dead-owner lock stale. Before the
+    // reclaim guard, one could unlink the lock the other had just acquired,
+    // letting two writers with the same expected revision both succeed.
+    const contender = fileURLToPath(new URL('./task-ledger-lock-contender.mjs', import.meta.url));
+    const deadPid = spawnSync(process.execPath, ['-e', '']).pid;
+    const file = taskLedgerFilePath(scope);
+    const rounds = 4;
+    const contenders = 8;
+
+    for (let round = 0; round < rounds; round += 1) {
+      const base = await saveTaskLedger(scope, [
+        { id: `base-${round}`, content: 'Base', activeForm: 'Running base', status: 'in_progress' },
+      ]);
+      await fs.writeFile(
+        `${file}.lock`,
+        JSON.stringify({ pid: deadPid, createdAt: Date.now() - 60_000 }),
+        { mode: 0o600 },
+      );
+      const goFile = path.join(tmpRoot, `go-${round}`);
+      const children = Array.from({ length: contenders }, (_, index) => {
+        const child = spawn(process.execPath, ['--import', 'tsx', contender], {
+          env: {
+            ...process.env,
+            CONTENDER_ID: `${round}-${index}`,
+            CONTENDER_GO_FILE: goFile,
+            CONTENDER_EXPECTED_REVISION: String(base.revision),
+            CONTENDER_SCOPE: JSON.stringify(scope),
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        const ready = new Promise((resolve) => {
+          child.stdout.on('data', (chunk) => {
+            stdout += chunk;
+            if (stdout.includes('ready\n')) resolve();
+          });
+        });
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk;
+        });
+        const done = new Promise((resolve) => {
+          child.on('close', (code) => resolve({ code, stdout, stderr }));
+        });
+        return { ready, done };
+      });
+      await Promise.all(children.map((child) => child.ready));
+      await fs.writeFile(goFile, '');
+      const outcomes = await Promise.all(children.map((child) => child.done));
+
+      const results = outcomes.map(
+        (outcome) => outcome.stdout.match(/result:(\S+)/)?.[1] ?? `none:${outcome.stderr}`,
+      );
+      assert.equal(
+        results.filter((result) => result === 'ok').length,
+        1,
+        `round ${round}: expected exactly one writer through the lock, got ${results.join(', ')}`,
+      );
+      assert.equal(results.filter((result) => result === 'conflict').length, contenders - 1);
+      const stored = await loadTaskLedger(scope);
+      assert.equal(stored.revision, base.revision + 1);
+      await assert.rejects(fs.access(`${file}.lock.reclaim`), { code: 'ENOENT' });
+      await assert.rejects(fs.access(`${file}.lock`), { code: 'ENOENT' });
+    }
   });
 
   it('only enables the no-mutation signal for explicit change requests', () => {

@@ -67,7 +67,57 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// Reclaiming a stale lock is a check-then-unlink, and `unlink` is by path:
+// two processes that both judge the same dead-owner lock stale could each
+// unlink it, the second one deleting the lock the first had just acquired —
+// putting both inside the critical section. A guard file serializes
+// reclaimers so that, while a reclaimer holds it, nothing else can replace
+// the lock between its staleness check and its unlink (the dead owner never
+// releases; every other remover must hold the guard).
 async function removeAbandonedLock(lockFile: string): Promise<boolean> {
+  const guardFile = `${lockFile}.reclaim`;
+  let guard: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    guard = await fs.open(guardFile, 'wx', 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    await reapAbandonedReclaimGuard(guardFile);
+    return false; // another process is reclaiming; the caller retries
+  }
+  try {
+    return await reclaimIfAbandoned(lockFile);
+  } finally {
+    await guard.close().catch(() => undefined);
+    await fs.unlink(guardFile).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
+}
+
+// A guard is held only for one read + unlink, so one older than
+// LOCK_STALE_MS was left by a reclaimer that died mid-reclaim. Reaping it is
+// itself an unguarded check-then-unlink, so this narrow case (a crash inside
+// the guard *and* concurrent reapers) is the one residual race; it no longer
+// covers the common case of a crashed lock *owner*.
+async function reapAbandonedReclaimGuard(guardFile: string): Promise<void> {
+  try {
+    const stat = await fs.stat(guardFile);
+    if (Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return;
+    await fs.unlink(guardFile);
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'task_ledger_lock_guard_reaped',
+        guardFile,
+        ageMs: Date.now() - stat.mtimeMs,
+      }),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
+async function reclaimIfAbandoned(lockFile: string): Promise<boolean> {
   try {
     const raw = await fs.readFile(lockFile, 'utf8');
     const parsed = JSON.parse(raw) as { pid?: unknown };
