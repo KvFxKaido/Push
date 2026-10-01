@@ -147,31 +147,48 @@ the loser pick up the winner's fresh token instead of refreshing again.
 Correction to the 2026-10-01 chat analysis: `lib/git/repo-lock.ts` is **not**
 the precedent — it is an **in-process** keyed lane (`Map<string, Lane>`), which
 does nothing across pushd/TUI/`push run`. The cross-process precedent is
-`cli/task-ledger-store.ts` `acquireTaskLedgerLock` (`fs.open(lockFile, 'wx',
-0o600)` + stale-lock reclaim + timeout) — but **do not reuse it unchanged**.
-Its stale-lock reclaim (`removeAbandonedLock`) reads the owner PID, decides the
-owner is dead, then unlinks the lock **by path** without confirming it is still
-the same file. Two contenders can both judge the same stale lock dead; one
-unlinks it and acquires a fresh lock, then the other unlinks *that* fresh lock
-and acquires its own — both are now inside the critical section. For ledger
-appends that may be tolerable; for a single-use-in-the-worst-case refresh token
-it is exactly the double-refresh this lock exists to prevent.
+`cli/task-ledger-store.ts` `acquireTaskLedgerLock` — **as fixed in #1643**,
+not as it stood when this revision was first written.
+
+The original helper (`fs.open(lockFile, 'wx')` + stale-lock reclaim) read the
+owner PID, decided the owner was dead, then unlinked the lock **by path**. Two
+contenders could both judge the same stale lock dead; one unlinked it and
+acquired a fresh lock, then the other unlinked *that* fresh lock — both inside
+the critical section. A multiprocess test reproduced it on the ledger itself
+(2–3 writers with the same `expectedRevision` succeeding per round). A first
+fix put the reclaim behind a guard file, but reaping a crashed reclaimer's
+guard was the same check-then-unlink, just moved; the guard's 30s staleness
+also exceeded the 10s acquire timeout. Rename-to-tombstone variants have the
+same shape: any "check, then remove by path" step can be raced.
+
+What landed instead is an **epoch sequence** in `<ledger>.lockdir/`: the holder
+owns the highest `<n>.owner` with no `<n>.released` marker and a live PID;
+acquiring — including taking over from a dead owner — creates `<n+1>.owner`
+via `link()` of a fully written temp file (atomic, no-replace). No step
+unlinks a name another live process could hold. Release writes the marker
+and garbage-collects lower epochs; a dead owner is taken over on the next
+15ms poll (`task_ledger_lock_owner_dead`).
 
 Requirements for the credential lock:
 
-- **Safe stale-lock recovery.** Reclaim must be atomic with respect to other
-  reclaimers, e.g. `rename` the stale lock to a unique tombstone (only one
-  rename of a given path succeeds) and then re-attempt the `'wx'` create, or
-  verify identity (`dev`/`ino` from the initial `stat`) immediately before
-  unlinking, or use an OS advisory lock (`flock`) that the kernel releases on
-  process death so no stale-reclaim path exists at all.
-- **A multiprocess contention test.** Spawn N real processes (not async tasks
-  in one process) racing a refresh against a planted stale lock, and assert
-  exactly one refresh call is made and every process ends with the same
-  token. Watch it fail against the current `removeAbandonedLock` shape first.
-- The same race is latent in the task ledger itself; fixing the shared helper
-  once (and promoting it to `lib/` if a second surface needs it) is preferable
-  to a credential-only copy.
+- **Reuse the epoch lock; don't reinvent it.** Its helpers are module-private
+  to `cli/task-ledger-store.ts` today. When the credential store lands, extract
+  them into a shared helper parameterized by lock directory (promote to `lib/`
+  only if a second surface needs it, per the CLAUDE.md rule) rather than
+  writing a credential-only copy. Never add a stale-reclaim path that unlinks
+  by name.
+- **Re-check inside the lock.** After acquiring, re-read the credential record
+  and refresh only if it is still expired, so the loser picks up the winner's
+  token instead of spending another rotation.
+- **A multiprocess contention test.** Mirror
+  `cli/tests/task-ledger.test.mjs` (real processes via
+  `cli/tests/task-ledger-lock-contender.mjs`, a shared start signal, a planted
+  dead owner): assert exactly one refresh call is made and every process ends
+  with the same token. Mutation-check it — making epoch creation overwrite, or
+  restoring unlink-then-retake, must turn it red.
+- **Liveness, not safety, on PID reuse.** A dead owner's recycled PID makes it
+  look alive until the acquire timeout; that delays a refresh but never admits
+  two refreshers.
 
 ### Seam correction: the interactive CLI captures the key once
 
