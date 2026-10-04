@@ -18,7 +18,8 @@ build-out*.txt
 .dev.vars
 
 # claude code
-.claude/
+.claude/*
+!.claude/skills/
 .codex/*
 !.codex/environments/
 .codex/environments/*
