@@ -23,21 +23,32 @@ device depends on where the change lives:**
 | Worker (`app/worker.ts`, `app/src/worker/**`) | deploy + reload | **No** |
 | Native plugin (`plugins/capacitor-native-git/**` Kotlin) | **APK** | **Yes** |
 | `app/android/**`, `capacitor.config.ts` | **APK** | **Yes** |
-| Build-time `VITE_*` flag baked into the bundle | **APK** (bundle) | **Yes** |
+| Build-time `VITE_*` flag | Workers Builds → Build Variables + redeploy | **No** (see below) |
 
 If the change is frontend/Worker only: merge → Workers Builds deploys (~2 min) →
 **force-stop + reopen** the app (below). No rebuild. If it touches native/Kotlin/
 Capacitor: rebuild the APK.
 
+`VITE_*` flags are inlined at `vite build` time, and the WebView loads the
+*deployed* bundle — so a flag in `app/.env.local` + an APK rebuild does nothing
+on its own. Either set it as a Workers Builds build variable and redeploy, or
+for a temporary local test comment out `server.url`, then sync + install (and
+revert afterwards — see Gotchas).
+
 ## Rebuild + install (native changes)
 
 ```bash
+# Windows host (Android Studio + adb live there).
 # JDK 21 is required — Capacitor 8 fails under the default Temurin 17 with
 # "invalid source release: 21". Android Studio's bundled JBR is 21.
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
-cd /c/dev/Push/app/android && ./gradlew installDebug --console=plain
+cd "$(git rev-parse --show-toplevel)/app" && pnpm run android:sync \n  && cd android && ./gradlew installDebug --console=plain
 ```
 
+- **Always `android:sync` first** (build + `cap sync android`, same as CI). Gradle
+  only packages the generated `capacitor.config.json` + web assets, which are
+  gitignored — skipping sync installs a stale config, or no bundle at all on a
+  fresh checkout.
 - **Never pipe gradle through `| tail`** — it masks the exit code; a `BUILD FAILED`
   then reports exit 0 and looks like success. Read the file or grep `BUILD`.
 - Run long builds with `run_in_background: true` (no `| tail` needed then).
@@ -72,7 +83,8 @@ capture; second is the delta").
 ## Gotchas
 
 - **cwd drift:** a background command's `cd` leaks into the foreground Bash cwd.
-  Use absolute paths (`/c/dev/Push/...`) or you'll get `app/app/...` doubling.
+  Anchor paths on `$(git rev-parse --show-toplevel)` or you'll get `app/app/...`
+  doubling.
 - **`run-as` on debug builds:** `adb shell run-as com.push.app` can read app-private
   storage (e.g. pull a checkpoint repo to inspect with host git) — useful for
   diagnosing without another rebuild.
@@ -80,5 +92,3 @@ capture; second is the delta").
   leave the device on a stale local bundle — revert them and rebuild a normal APK
   when done, or the phone stops following production.
 - Device may drop USB after sleep; `adb devices` to confirm, re-plug if `(no device)`.
-
-See memory: `reference_windows_jdk21_capacitor`, `project_mobile_stack`.

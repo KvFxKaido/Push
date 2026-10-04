@@ -17,18 +17,18 @@ This leans on the `agent-dev-reporter` Vite plugin (PR #1109,
 
 ## It auto-activates for agents
 
-The reporter turns on when an agent env var is present —
-`CLAUDECODE` / `CLAUDE_CODE` / `CURSOR_AGENT` / `AIDER` / `REPLIT_AGENT` — so under
-Claude Code it's **already on**. Override: `PUSH_DEV_AGENT=1` forces on,
+The reporter turns on when an agent env var is present — source of truth is
+`KNOWN_AGENT_ENV` in `app/dev/agent-dev-reporter.ts` (Claude Code, Codex, Cursor,
+Aider, Replit) — so under Claude Code or Codex it's **already on**. Override: `PUSH_DEV_AGENT=1` forces on,
 `PUSH_DEV_AGENT=0` forces off (human logs are always preserved underneath).
 
 ## Start the stack (two background servers)
 
 ```bash
 # Vite app on :5173 (proxies /api/* to :8787)
-cd /c/dev/Push/app && npm run dev
+cd "$(git rev-parse --show-toplevel)/app" && npm run dev
 # Worker on :8787, in a second background run, from repo root
-cd /c/dev/Push && npx wrangler dev --port 8787
+cd "$(git rev-parse --show-toplevel)" && npx wrangler dev --port 8787
 ```
 Run **both** with `run_in_background: true`. Don't foreground-`sleep` waiting for
 them — read the ready event instead (below).

@@ -12,6 +12,10 @@ The repeatable Push delivery loop, with the gotchas baked in.
 
 ## 1. Branch off fresh main
 
+Already on a feature branch with the work committed (e.g. after `/dev` or
+`/device` iteration)? **Skip this step** — branching from main here would drop
+those commits. Only branch when the work is uncommitted on main:
+
 ```bash
 git checkout main && git pull --ff-only origin main && git checkout -b <type>/<slug>
 ```
