@@ -1382,10 +1382,20 @@ function classifyToolError(err) {
   if (lower.includes('enoent') || lower.includes('no such file')) {
     return { code: 'NOT_FOUND', message, retryable: true };
   }
-  if (lower.includes('stale ref') || lower.includes('stale expected_version')) {
+  // Match the hashline resolver's actual wording (lib/hashline.ts):
+  // "Stale line-qualified ref …" and "Reference "<ref>" is ambiguous …". The
+  // older "stale ref" / "ambiguous ref" phrasings are kept for compatibility.
+  // A miss here falls through to TOOL_ERROR, which lead-turn counts toward
+  // editErrorRate (shrinking the round budget) instead of treating a stale ref
+  // as a normal re-read-and-retry. cli/tests/tools.test.mjs pins both.
+  if (
+    lower.includes('stale ref') ||
+    lower.includes('stale line-qualified ref') ||
+    lower.includes('stale expected_version')
+  ) {
     return { code: 'STALE_WRITE', message, retryable: true };
   }
-  if (lower.includes('ambiguous ref')) {
+  if (lower.includes('ambiguous ref') || /\breference "[^"]*" is ambiguous\b/.test(lower)) {
     return { code: 'AMBIGUOUS_REF', message, retryable: true };
   }
   if (lower.includes('must be') || lower.includes('required') || lower.includes('invalid')) {
