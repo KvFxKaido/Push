@@ -442,6 +442,16 @@ Removed providers (`mistral`, `minimax`, `azure`, `bedrock`, `vertex`, `kilocode
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
+### Claude Max / Team API credits
+
+Claude Max and Team plans include monthly Claude Platform API credits ($100 on Max 5x, $200 on Max 20x, up to $500 pooled on Team, as announced 2026-10). Anthropic says the credits apply in third-party harnesses that accept a Claude API key, and Push is one: the direct `anthropic` provider takes a plain API key, so there is nothing extra to configure. Details are in Anthropic's [Monthly API credits for Max and Team plans](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans).
+
+1. Claim the credits on claude.ai: **Max** subscribers go to **Settings → Billing**; on **Team**, an Owner or Primary Owner goes to **Organization settings → Billing** and claims the pooled credit for the team. Under **API credits**, choose **Link organization** and pick or create a Console organization (you need the Owner, Admin, or Billing role there). New subscribers can claim after 7 days.
+2. Create an API key in that Console organization. The credits belong to the organization, so any key in it draws on the balance.
+3. Give it to Push like any Anthropic key: `./push config init` (choose `anthropic`), or `PUSH_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY`. For the web app, see the `ANTHROPIC_API_KEY` notes in `app/README.md`: a Worker secret takes precedence over a Settings key, and with Cloudflare AI Gateway BYOK active for `anthropic` the gateway's stored key is used instead of either.
+
+When the month's credits are used up, requests stop until the next grant unless the Console organization has other credits or auto-reload; usage is never charged to the Claude plan. The credits don't cover interactive Claude Code sessions, but that restriction doesn't apply to Push.
+
 ## Tools
 
 All providers support prompt-engineered tool calls (fenced JSON blocks in the content stream). OpenAI-compatible native `delta.tool_calls` and direct OpenAI Responses `response.function_call_arguments.*` events are also accepted; the provider pumps accumulate them and flush each assembled call back into the same dispatcher.
