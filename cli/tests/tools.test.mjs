@@ -537,9 +537,12 @@ describe('edit_file hashline flow', () => {
   });
 
   // The hashline resolver's real messages ("Stale line-qualified ref …",
-  // "Reference … is ambiguous") must classify as STALE_WRITE / AMBIGUOUS_REF.
-  // Falling through to TOOL_ERROR made a normal re-read-and-retry count toward
-  // lead-turn's editErrorRate and could silently shrink the round budget.
+  // "Reference … is ambiguous", and "line N is out of range" for a file that
+  // shrank) must classify as STALE_WRITE / AMBIGUOUS_REF. Only STALE_WRITE is
+  // exempt from lead-turn's editErrorRate: when stale refs fell through to
+  // TOOL_ERROR, a normal re-read-and-retry counted as an edit error and could
+  // silently shrink the round budget. AMBIGUOUS_REF still counts (a bare-ref
+  // collision is a model mistake), but is now labelled and retryable.
   async function hashlineRefOf(root, rel, lineNo) {
     const read = await executeToolCall({ tool: 'read_file', args: { path: rel } }, root);
     assert.equal(read.ok, true);
@@ -563,6 +566,14 @@ describe('edit_file hashline flow', () => {
       line: 1,
       after: 'x\ny\nz\ndup\nq\ndup\n',
       ref: (ref) => `2:${ref.split(':')[1]}`,
+      bare: false,
+      code: 'STALE_WRITE',
+    },
+    {
+      name: 'line-qualified ref past the end of a file that shrank',
+      before: 'a\nb\nc\nd\n',
+      line: 4,
+      after: 'a\nb\n',
       bare: false,
       code: 'STALE_WRITE',
     },
@@ -602,6 +613,27 @@ describe('edit_file hashline flow', () => {
       }
     });
   }
+
+  it('keeps a line-0 ref out of STALE_WRITE (an invalid ref, not drift)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
+    try {
+      const rel = 'zero.txt';
+      await fs.writeFile(path.join(root, rel), 'alpha\nbeta\n', 'utf8');
+      const hash = (await hashlineRefOf(root, rel, 1)).split(':')[1];
+      const edit = await executeToolCall(
+        {
+          tool: 'edit_file',
+          args: { path: rel, edits: [{ op: 'replace_line', ref: `0:${hash}`, content: 'x' }] },
+        },
+        root,
+      );
+      assert.equal(edit.ok, false);
+      assert.match(edit.structuredError.message, /line 0 is out of range/);
+      assert.notEqual(edit.structuredError.code, 'STALE_WRITE');
+    } finally {
+      await rmWithRetry(root);
+    }
+  });
 
   it('surfaces warnings when replace_line targets the same line twice', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
