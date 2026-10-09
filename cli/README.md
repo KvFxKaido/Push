@@ -442,6 +442,16 @@ Removed providers (`mistral`, `minimax`, `azure`, `bedrock`, `vertex`, `kilocode
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
+### Claude Max / Team API credits
+
+Claude Max and Team plans include monthly Claude Platform API credits ($100 on Max 5x, $200 on Max 20x, up to $500 pooled on Team, as announced 2026-10). Anthropic says the credits apply in third-party harnesses that accept a Claude API key, and Push is one: the direct `anthropic` provider takes a plain API key, so there is nothing extra to configure.
+
+1. On claude.ai, open **Settings → Billing** and link or create a Console organization to claim the credits (new subscribers can claim after 7 days).
+2. Create an API key in that Console organization.
+3. Give it to Push like any Anthropic key: `./push config init` (choose `anthropic`), or `PUSH_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY`. On the web app, paste it into Settings, or set it as the Worker's `ANTHROPIC_API_KEY` secret (a Worker secret takes precedence over a Settings key; see `app/README.md`).
+
+The credits cannot be used for interactive Claude Code sessions, but that restriction doesn't apply to Push. Check Anthropic's current terms for what happens when a month's credits run out, and before sharing a credit-backed key on a multi-user deployment.
+
 ## Tools
 
 All providers support prompt-engineered tool calls (fenced JSON blocks in the content stream). OpenAI-compatible native `delta.tool_calls` and direct OpenAI Responses `response.function_call_arguments.*` events are also accepted; the provider pumps accumulate them and flush each assembled call back into the same dispatcher.
