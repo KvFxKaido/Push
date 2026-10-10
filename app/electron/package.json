@@ -10,8 +10,8 @@
     "pack": "npm run build && capacitor-electron vendor && electron-builder --config electron-builder.config.js"
   },
   "devDependencies": {
-    "@capacitor/core": "^8.3.1",
-    "@capawesome/capacitor-electron": "^0.1.0",
+    "@capacitor/core": "^8.5.3",
+    "@capawesome/capacitor-electron": "^0.2.0",
     "electron": "^43.7.7",
     "electron-builder": "^26.0.12",
     "typescript": "^7.0.2"
