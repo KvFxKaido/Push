@@ -1039,6 +1039,16 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsStructuredOutput('openrouter', undefined)).toBe(false);
   });
 
+  it('gates native tool calling for DeepSeek from the curated catalog on a cold cache', () => {
+    stubWindow();
+    // Web and CLI share the gate; both must agree DeepSeek is native-capable.
+    for (const model of ['deepseek-v4-pro', 'deepseek-flash', 'deepseek-v4-flash']) {
+      expect(providerModelSupportsNativeToolCalling('deepseek', model)).toBe(true);
+      expect(cliProviderModelSupportsNativeToolCalling('deepseek', model)).toBe(true);
+    }
+    expect(providerModelSupportsNativeToolCalling('deepseek', 'deepseek-unknown')).toBe(false);
+  });
+
   it('gates native tool calling for Cloudflare Kimi/GLM by name on a cold catalog cache', () => {
     stubWindow();
     expect(

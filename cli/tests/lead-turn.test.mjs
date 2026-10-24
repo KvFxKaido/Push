@@ -270,6 +270,36 @@ describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLo
     assert.ok(!text.includes('Emit only JSON blocks'), 'a text-dispatch rule is still sent');
   });
 
+  it('sends DeepSeek native tool schemas and the lean protocol', async () => {
+    // DeepSeek rides the Anthropic transport (api.deepseek.com/anthropic), so
+    // the request carries a top-level `system` and `tools`. The mock answers
+    // in OpenAI SSE, which this transport can't parse; only the outgoing
+    // request matters here, so a failed turn is fine.
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([{ tokens: ['Done.'] }]);
+      try {
+        await runLeadKernelTurn(
+          makeState(cwd, { provider: 'deepseek', model: 'deepseek-flash' }),
+          { ...PROVIDER_CONFIGS.deepseek, url: server.url },
+          'mock-key',
+          'Say hi.',
+          1,
+          { emit: () => {} },
+        ).catch(() => {});
+        const body = server.requests[0];
+        assert.ok(body, 'no request reached the provider');
+        const system = Array.isArray(body.system)
+          ? body.system.map((part) => part.text ?? '').join('')
+          : String(body.system ?? '');
+        assert.ok((body.tools ?? []).length > 0, 'DeepSeek got no native tool schemas');
+        assert.ok(!system.includes('Available tools:'), 'prose tool catalog still sent');
+        assert.ok(!system.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('keeps the full catalog for a text-dispatch model', async () => {
     const { text, tools } = await systemPromptFor({ provider: 'ollama', model: 'mock-model' });
     assert.equal(tools.length, 0);

@@ -48,10 +48,11 @@ export const ZEN_DEFAULT_MODEL = 'big-pickle';
 export const FIREWORKS_DEFAULT_MODEL = 'accounts/fireworks/models/deepseek-v4-pro';
 // Direct DeepSeek API (api.deepseek.com) — OpenAI-compatible. `deepseek-v4-pro`
 // is DeepSeek's flagship (frontier reasoning + thinking mode, up to 1M context);
-// `deepseek-v4-flash` is the faster, cheaper sibling. The legacy `deepseek-chat`
-// / `deepseek-reasoner` aliases (non-thinking / thinking mode of v4-flash) are
-// deprecated 2026-07-24, so they're left out of the curated list — free-text
-// entry still resolves them until then.
+// `deepseek-flash` is DeepSeek-V4.1-Flash, the faster, cheaper sibling. Checked
+// against DeepSeek's /models list on 2026-10-24, which offers exactly these two.
+// The legacy `deepseek-chat` / `deepseek-reasoner` aliases (non-thinking /
+// thinking mode of v4-flash) were deprecated 2026-07-24, so they're left out
+// of the curated list.
 export const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-pro';
 // Sakana AI's Fugu is a multi-agent orchestration router over frontier LLMs,
 // exposed as one OpenAI-compatible endpoint (launched 2026-06-22). `fugu` is the
@@ -290,7 +291,11 @@ export const FIREWORKS_MODELS: string[] = [
   'accounts/fireworks/models/nemotron-3-ultra-nvfp4',
 ];
 
-export const DEEPSEEK_MODELS: string[] = [DEEPSEEK_DEFAULT_MODEL, 'deepseek-v4-flash'];
+export const DEEPSEEK_MODELS: string[] = [DEEPSEEK_DEFAULT_MODEL, 'deepseek-flash'];
+// Ids DeepSeek still accepts but no longer lists. Not advertised; kept on the
+// native-tool allowlists so an existing config doesn't silently fall back to
+// text-dispatch (verified native tool_use 2026-10-24).
+export const DEEPSEEK_LEGACY_MODELS: string[] = ['deepseek-v4-flash'];
 // Sakana Fugu orchestration tiers. The model field also accepts any free-text
 // slug; these two are the curated suggestions.
 export const SAKANA_MODELS: string[] = [SAKANA_DEFAULT_MODEL, 'fugu-ultra'];

@@ -117,6 +117,16 @@ describe('CLI native tool calling gate', () => {
     }
   });
 
+  it('grants native tools to current DeepSeek models and the legacy flash id', () => {
+    // DeepSeek's /anthropic endpoint returns native tool_use blocks for all
+    // three (verified live 2026-10-24). Without the grant, V4.1 Flash writes
+    // its own DSML call markup as text, which no dispatcher parses.
+    for (const model of ['deepseek-v4-pro', 'deepseek-flash', 'deepseek-v4-flash']) {
+      assert.equal(cliProviderModelSupportsNativeToolCalling('deepseek', model), true, model);
+    }
+    assert.equal(cliProviderModelSupportsNativeToolCalling('deepseek', 'deepseek-unknown'), false);
+  });
+
   it('routes curated CLI evidence through the shared complete profile resolver', () => {
     assert.deepEqual(resolveCliPushCapabilityProfile('anthropic', 'claude-sonnet-4-6'), {
       toolCalling: 'native',
