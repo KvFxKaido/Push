@@ -204,6 +204,10 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'gpt-5-mini': M(400000, true, true, true, TEXT_IMAGE),
   },
   anthropic: {
+    'claude-fable-5-1': M(1000000, true, true, true, TEXT_IMAGE_PDF),
+    'claude-opus-5-5': M(1000000, true, true, true, TEXT_IMAGE_PDF),
+    'claude-sonnet-5-5': M(1000000, true, true, true, TEXT_IMAGE_PDF),
+    'claude-haiku-5-5': M(1000000, true, true, true, TEXT_IMAGE_PDF),
     'claude-fable-5': M(1000000, true, true, true, TEXT_IMAGE_PDF),
     'claude-opus-4-8': M(1000000, true, true, true, TEXT_IMAGE_PDF),
     'claude-sonnet-5': M(1000000, true, true, true, TEXT_IMAGE_PDF),
