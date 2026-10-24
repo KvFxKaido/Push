@@ -9,6 +9,7 @@ import process from 'node:process';
 import {
   PROVIDER_CONFIGS,
   DEPRECATED_PROVIDERS,
+  applyProviderFlagOverrides,
   createProviderStream,
   resolveApiKey,
   getProviderList,
@@ -301,8 +302,8 @@ Usage:
 Options:
   --provider <name>             ollama | openrouter | kimi | zai | huggingface | zen | fireworks | deepseek | sakana | openai | anthropic | google | xai (default: ollama)
   --model <name>                Override model
-  --url <endpoint>              Override provider endpoint URL
-  --api-key <secret>            Set provider API key (for push config set/init)
+  --url <endpoint>              Override provider endpoint URL (run / interactive, or saved by config set/init)
+  --api-key <secret>            Set provider API key (run / interactive, or saved by config set/init)
   --tavily-key <secret>         Set Tavily API key (for push config set/init)
   --search-backend <mode>       auto | tavily | ollama | duckduckgo
   --cwd <path>                  Workspace root (default: current directory)
@@ -4277,6 +4278,14 @@ export async function main() {
 
   const provider = parseProvider(values.provider, runtimeConfig.provider);
   const providerConfig = PROVIDER_CONFIGS[provider];
+  // Only the model-facing paths (run, the bare interactive session) get here;
+  // config / daemon relay / tui branched off above, and relay's --url is a
+  // deployment URL, not a provider endpoint.
+  const flagUrl = typeof values.url === 'string' ? values.url.trim() : '';
+  const flagApiKey = String(values['api-key'] || values.apiKey || '').trim();
+  if (flagUrl || flagApiKey) {
+    applyProviderFlagOverrides(provider, { url: flagUrl, apiKey: flagApiKey });
+  }
   const cwd = path.resolve(values.cwd || process.cwd());
   if (values.cwd) {
     let cwdStat;

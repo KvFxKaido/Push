@@ -726,6 +726,54 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
 });
 
 describe('push run --jsonl stream', needsHeadlessJsonl, () => {
+  describe('run honors --url and --api-key', () => {
+    // Both flags are in `push --help` but never reached the provider: the run
+    // went to the default endpoint and failed with "Missing API key".
+    const run = async ({ urlFlag, env = {} }) => {
+      const mock = await startMockProviderServer({ tokens: ['Hello', ' world.'] });
+      try {
+        const result = await runCli(
+          [
+            'run',
+            '--task',
+            'Say hello.',
+            '--provider',
+            'openrouter',
+            '--url',
+            urlFlag(mock.url),
+            '--api-key',
+            'flag-key',
+            '--json',
+          ],
+          { timeout: 15_000, env: { PUSH_OPENROUTER_TRANSPORT: 'chat', ...env } },
+        );
+        return { ...result, requests: mock.requestCount(), headers: mock.requestHeaders() };
+      } finally {
+        await mock.stop();
+      }
+    };
+
+    it('sends the request to --url with the --api-key key', async () => {
+      const { code, stderr, requests, headers } = await run({ urlFlag: (url) => url });
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.ok(requests > 0, 'request never reached the --url endpoint');
+      assert.equal(headers[0].authorization, 'Bearer flag-key');
+    });
+
+    it('lets the flags win over exported provider env vars', async () => {
+      const { code, stderr, requests, headers } = await run({
+        urlFlag: (url) => url,
+        env: {
+          PUSH_OPENROUTER_URL: 'http://127.0.0.1:9/never-used',
+          PUSH_OPENROUTER_API_KEY: 'env-key',
+        },
+      });
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.ok(requests > 0, 'the env URL won over --url');
+      assert.equal(headers[0].authorization, 'Bearer flag-key', 'the env key won over --api-key');
+    });
+  });
+
   describe('headless outcome reflects what was verified', () => {
     // `success` means an --accept check passed. A run that simply ended with no
     // check is `completed`: Push only knows the model stopped calling tools.

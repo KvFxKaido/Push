@@ -31,14 +31,16 @@ import { PROVIDER_CONFIGS } from '../provider.ts';
 
 /**
  * @param {{ tokens?: string[], responses?: string[][], hang?: boolean, streamShape?: 'chat' | 'responses' }} [opts]
- * @returns {Promise<{ url: string, port: number, requestCount: () => number, requestBodies: () => unknown[], stop: () => Promise<void> }>}
+ * @returns {Promise<{ url: string, port: number, requestCount: () => number, requestBodies: () => unknown[], requestHeaders: () => Record<string, string | string[] | undefined>[], stop: () => Promise<void> }>}
  */
 export async function startMockProviderServer(opts = {}) {
   const { tokens = [], responses = null, hang = false, streamShape = 'chat' } = opts;
   let requestCount = 0;
   const requestBodies = [];
+  const requestHeaders = [];
 
   const server = http.createServer((req, res) => {
+    requestHeaders.push(req.headers);
     // Drain request body before responding so the client's write is flushed.
     let rawBody = '';
     req.setEncoding('utf8');
@@ -121,6 +123,7 @@ export async function startMockProviderServer(opts = {}) {
     requestCount: () => requestCount,
     /** Parsed request bodies in arrival order. */
     requestBodies: () => requestBodies,
+    requestHeaders: () => requestHeaders,
     async stop() {
       await new Promise((resolve) => {
         server.closeAllConnections?.();

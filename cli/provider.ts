@@ -247,6 +247,29 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = Object.fromEntri
   getCliProviderDefinitions().map((def) => [def.id, buildProviderConfig(def)]),
 );
 
+/**
+ * Apply `--url` / `--api-key` for one provider. Config reaches the provider
+ * through env vars that an exported variable already wins (`applyConfigToEnv`
+ * only fills missing ones), so an explicit flag has to overwrite the first var
+ * the provider reads: `url` resolves via the first live `urlEnvVars` entry and
+ * the key via `apiKeyEnv` in order. Child processes (pushd) inherit it.
+ */
+export function applyProviderFlagOverrides(
+  providerId: string,
+  flags: { url?: string; apiKey?: string },
+): void {
+  const def = getCliProviderDefinitions().find((d) => d.id === providerId);
+  if (!def?.cli) throw new Error(`Provider "${providerId}" is not enabled for the CLI.`);
+  if (flags.url) {
+    const urlEnv = def.cli.urlEnvVars?.[0];
+    if (!urlEnv) throw new Error(`--url is not supported for provider "${providerId}".`);
+    process.env[urlEnv] = flags.url;
+  }
+  if (flags.apiKey) {
+    process.env[PROVIDER_CONFIGS[providerId].apiKeyEnv[0]] = flags.apiKey;
+  }
+}
+
 // Removed providers redirect to a working replacement instead of crashing
 // whatever surface reads them — CLI flags/env (`parseProvider` in cli.ts),
 // TUI startup/resume, daemon session starts, and persisted session state

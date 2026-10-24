@@ -704,8 +704,8 @@ TUI Remote flow:
 Options:
   --provider <name>       ollama | openrouter | kimi | zai | huggingface | zen | fireworks | deepseek | sakana | openai | xai | anthropic | google (default: ollama)
   --model <name>          Override model
-  --url <endpoint>        Override provider endpoint URL
-  --api-key <secret>      Set provider API key
+  --url <endpoint>        Override provider endpoint URL (run / interactive; beats env and config)
+  --api-key <secret>      Set provider API key (run / interactive; beats env and config)
   --tavily-key <secret>   Set Tavily API key for web_search
   --search-backend <mode> auto | tavily | ollama | duckduckgo
   --cwd <path>            Workspace root (default: cwd)
