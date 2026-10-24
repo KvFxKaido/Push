@@ -39,11 +39,11 @@ consumes. So whichever way a model answers — fenced JSON (text-dispatch) or a
 native tool call — both converge at one dispatch path. Consequences:
 
 - The system prompt and text-dispatch path are untouched; no "two instructions
-  fighting." A model can use either route in the same turn. *(Revised for both
-  leads on 2026-10-24, the CLI lead and the web lead in `inline-coder-run.ts`:
-  with native schemas attached and failover off, each sends a lean prompt
-  without the prose tool catalogs; the text-dispatch parser is unchanged. See
-  the addendum below.)*
+  fighting." A model can use either route in the same turn. *(Revised on 2026-10-24 for every run
+  that attaches native schemas: the CLI lead, the web lead in
+  `inline-coder-run.ts`, and the daemon's delegated Coder and Explorer. With
+  failover off, each sends a lean prompt without the prose tool catalogs; the
+  text-dispatch parser is unchanged. See the addendum below.)*
 - Non-capable models are unaffected — they simply never receive a `tools` array.
 - Loose/best-effort parameter types are safe: executors already accept the
   model's free-form JSON on the text path, and nothing runs in strict mode.
@@ -304,5 +304,18 @@ wording when lean (`leanToolProtocols` on `runCoderAgent`). The text version
 says calls dispatch from content text only, which is false for native calls:
 they arrive as structured stream events. The reasoning-channel rule is kept.
 
-Scope: both leads. The daemon's delegated Coder and Explorer still send the
-full prompt alongside their schemas.
+**Delegated agents (same day).** The daemon's delegated Coder and Explorer
+(direct delegation and task-graph nodes, `cli/pushd/delegation-coordinator.ts`)
+and the CLI lead's Explorer fan-out (`cli/lead-explorer.ts`) follow the same
+rule through one helper, `resolveCliDelegatedToolSurface`. These runs have no
+provider failover, so attaching schemas alone decides.
+
+- **Coder:** `TOOL_PROTOCOL` goes lean as on the CLI lead (6,779 → 1,963
+  characters).
+- **Explorer:** `READ_ONLY_TOOL_PROTOCOL` goes lean (2,574 → 664). Its 12
+  catalog lines match the read-only schemas 12 of 12. The Explorer kernel's
+  own fenced-JSON guideline is swapped for a native rule
+  (`leanToolProtocols` on `runExplorerAgent`).
+
+Scope: every run that attaches native schemas. Text-dispatch models and
+failover-enabled leads keep the full prompt.
