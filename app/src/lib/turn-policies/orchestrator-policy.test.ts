@@ -133,6 +133,8 @@ describe('detectTrailingActionIntent — progressive and fragment announcements'
     "So far I've only read `package.json`. I'm reading the source and test file now, then I'll run the suite.",
     "I haven't opened `slugify.js` or the test file, and I haven't run the suite. Pulling those now.",
     'I still need to read `src/slugify.js`. Starting with those reads and the test run.',
+    // "now" before the verb counts as much as after it.
+    "I'm now reading the source file.",
   ])('fires on %j', (text) => {
     expect(detectTrailingActionIntent(text)).toBe(true);
   });
@@ -143,6 +145,10 @@ describe('detectTrailingActionIntent — progressive and fragment announcements'
     'Starting with the parser, every case checks out.',
     "I'm reading this as a request to fix the slug helper, which is done.",
     'Should I pull those now?',
+    // A "Starting with" summary split into sentences: only a final fragment counts.
+    'Starting with the parser. Every case checks out.',
+    // The interpretive idiom stays quiet with "now" in front too.
+    "I'm now reading this as a request to fix the helper.",
   ])('stays quiet on %j', (text) => {
     expect(detectTrailingActionIntent(text)).toBe(false);
   });
