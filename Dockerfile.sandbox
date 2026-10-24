@@ -10,7 +10,7 @@
 # procps, ca-certificates, matplotlib, numpy, pandas, ipython.
 #
 # NOTE ON NODE: this image stays on whatever Node the base image ships — today
-# v22.23.1 — even though the repo-wide floor is Node 24 (root package.json
+# v22.23.4 — even though the repo-wide floor is Node 24 (root package.json
 # `engines`, .nvmrc, CI). The sandbox executes the *user's* repo commands, not
 # Push's own toolchain, and the base image's `/usr/local/bin/node` backs the
 # container server's JS/TS interpreter pools (JAVASCRIPT_POOL_MIN_SIZE /
@@ -49,7 +49,7 @@ ARG PUSH_SANDBOX_COREPACK_VERSION=0.35.0
 # baked here would just be re-downloaded.
 #
 # This previously claimed pnpm 11 "cannot run here" because the base ships Node 20.
-# That reason is dead: the base ships Node v22.23.1, which satisfies pnpm 11's
+# That reason is dead: the base ships Node v22.23.4, which satisfies pnpm 11's
 # Node >=22.13 floor. The pin stands on the packageManager-parity reason alone, so
 # move it when the repo's `packageManager` moves — not when the base image does.
 ARG PUSH_SANDBOX_PNPM_VERSION=10.34.5
@@ -105,7 +105,7 @@ RUN npm install -g corepack@"${PUSH_SANDBOX_COREPACK_VERSION}" \
 #
 # The pnpm version comes from the repo's own `packageManager` field via corepack,
 # so there is no second place to keep in sync. It tracks that field (pnpm 10.x
-# today) — not the base image's Node, which at v22.23.1 clears pnpm 11's >=22.13
+# today) — not the base image's Node, which at v22.23.4 clears pnpm 11's >=22.13
 # floor anyway. See PUSH_SANDBOX_PNPM_VERSION above.
 #
 # `HUSKY=0 CI=1` suppresses the husky git-hook install the repo's `prepare`
