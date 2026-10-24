@@ -284,5 +284,19 @@ can't drift. Native schemas are generated from the protocol definitions in
 code, so removing the prose catalog removes no tool. The core block shrinks
 from 6,779 to 1,964 characters and the GitHub block from 4,025 to 1,030.
 
-Scope: the CLI lead only. The web lead and the daemon's delegated Coder and
-Explorer still send the full prompt alongside their schemas.
+**Web lead (same day).** The web lead (`inline-coder-run.ts`) follows the same
+rule: lean when native schemas are attached and the `providerFailover` setting
+is off, full otherwise.
+
+- **GitHub block:** the catalog and fenced-JSON header and rules are dropped,
+  and the routing rules are kept. The catalog lines matched the schema
+  descriptions 30 of 30, so nothing is lost: 7,396 → 4,096 characters.
+- **Sandbox block:** only the fenced-JSON usage stanza and its CRITICAL rule are
+  dropped (10,512 → 10,239). The catalog stays because it is richer than the
+  registry descriptions (20 of 21 entries carry guidance the schemas don't).
+  Moving that guidance into the registry is what would let it go too.
+- **Unchanged:** the small ask-user, scratchpad, todo, artifact and explorer
+  delegation blocks keep their JSON examples.
+
+Scope: both leads. The daemon's delegated Coder and Explorer still send the
+full prompt alongside their schemas.

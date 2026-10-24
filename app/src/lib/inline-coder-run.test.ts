@@ -8,7 +8,7 @@
  * discipline — see the decision doc's PR 1 plan.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockRunCoderAgentLib,
@@ -98,6 +98,7 @@ import { SCRATCHPAD_TOOL_PROTOCOL } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
 import type { ActiveProvider } from './orchestrator';
+import { setSetting, SETTINGS_KEYS } from './settings-store';
 import type { ChatCard, ChatMessage, HarnessProfileSettings } from '@/types';
 import type {
   LlmMessage,
@@ -1019,5 +1020,65 @@ describe('inline lane web-search protocol gating', () => {
       const options = await runWithProvider(provider);
       expect(options.webSearchToolProtocol).toBe(WEB_SEARCH_TOOL_PROTOCOL);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lean tool protocols when native schemas ride along
+// ---------------------------------------------------------------------------
+
+describe('lead tool protocols follow the tool channel', () => {
+  // With native schemas attached, the GitHub catalog repeats the schemas word
+  // for word and several rules say a tool only runs from a fenced JSON block,
+  // which is false for a native call. The sandbox catalog stays: its entries
+  // carry guidance the terse registry descriptions do not.
+  async function runLead(provider: string, modelId: string): Promise<LibOptions> {
+    await runInPageCoderKernel(
+      {
+        provider: provider as never,
+        modelId,
+        sandboxId: 'sb-1',
+        taskPreamble: 'Task: what changed recently?',
+        branchContext: { activeBranch: 'main', defaultBranch: 'main', protectMain: false },
+        leadToolSurface: true,
+      },
+      { onStatus: () => {} },
+    );
+    return lastKernelCall().options;
+  }
+  const allProtocolText = (options: LibOptions) =>
+    [options.sandboxToolProtocol, ...(options.extraToolProtocols ?? [])].join('\n');
+
+  afterEach(() => setSetting(SETTINGS_KEYS.providerFailover, false));
+
+  it('sends the lean protocols for a native-capable model', async () => {
+    const options = await runLead('anthropic', 'claude-haiku-5-5');
+    expect(options.nativeToolSchemas?.length).toBeGreaterThan(0);
+    const text = allProtocolText(options);
+    expect(text).not.toContain('Available tools:');
+    expect(text).not.toContain('MUST include the fenced JSON block');
+    expect(text).not.toContain('Usage: Output a fenced JSON block');
+    // Kept: the sandbox catalog's guidance and the GitHub routing rules.
+    expect(text).toContain('HashlineOp');
+    expect(text).toContain('READ TIER');
+    expect(text).toContain('For "why did the build fail"');
+  });
+
+  it('keeps the full protocols for a text-dispatch model', async () => {
+    const options = await runLead('openrouter', 'coder-model-x');
+    expect(options.nativeToolSchemas).toBeUndefined();
+    const text = allProtocolText(options);
+    expect(text).toContain('Available tools:');
+    expect(text).toContain('MUST include the fenced JSON block');
+    expect(text).toContain('Usage: Output a fenced JSON block');
+  });
+
+  it('keeps the full protocols when provider failover could switch to a text-mode model', async () => {
+    setSetting(SETTINGS_KEYS.providerFailover, true);
+    const options = await runLead('anthropic', 'claude-haiku-5-5');
+    expect(options.nativeToolSchemas?.length).toBeGreaterThan(0);
+    const text = allProtocolText(options);
+    expect(text).toContain('Available tools:');
+    expect(text).toContain('MUST include the fenced JSON block');
   });
 });
