@@ -876,6 +876,78 @@ describe('tool output redacts values from sensitive files', () => {
     assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
   });
 
+  it('scrubs a value printed by a command that then overwrites the file', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-rw-'));
+    try {
+      await fs.writeFile(path.join(dir, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'cat .env && echo "API_KEY=placeholder" > .env' } },
+        dir,
+        { allowExec: true },
+      );
+      assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    } finally {
+      await rmWithRetry(dir);
+    }
+  });
+
+  it('scrubs values reached through a symlinked .env', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-link-'));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-target-'));
+    try {
+      await fs.writeFile(path.join(outside, 'shared-config'), `API_KEY=${SECRET}\n`, 'utf8');
+      await fs.symlink(path.join(outside, 'shared-config'), path.join(dir, '.env'));
+      const result = await executeToolCall({ tool: 'exec', args: { command: 'cat .env' } }, dir, {
+        allowExec: true,
+      });
+      assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    } finally {
+      await rmWithRetry(dir);
+      await rmWithRetry(outside);
+    }
+  });
+
+  it('scrubs credential fields a command extracts on their own', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-fields-'));
+    const NPM = 'npm-token-7e1b2c9d4a';
+    const NETRC = 'netrc-pass-3f8e0a1c';
+    const GIT = 'ghp_gitcredtoken5b2';
+    try {
+      await fs.writeFile(
+        path.join(dir, '.npmrc'),
+        `//registry.npmjs.org/:_authToken=${NPM}\n`,
+        'utf8',
+      );
+      await fs.writeFile(
+        path.join(dir, '.netrc'),
+        `machine example.com login dev password ${NETRC}\n`,
+        'utf8',
+      );
+      await fs.writeFile(
+        path.join(dir, '.git-credentials'),
+        `https://dev:${GIT}@github.com\n`,
+        'utf8',
+      );
+      const result = await executeToolCall(
+        {
+          tool: 'exec',
+          args: {
+            command:
+              "cut -d= -f2 .npmrc; awk '{print $6}' .netrc; cut -d: -f3 .git-credentials | cut -d@ -f1",
+          },
+        },
+        dir,
+        { allowExec: true },
+      );
+      const out = JSON.stringify(result);
+      for (const secret of [NPM, NETRC, GIT]) {
+        assert.ok(!out.includes(secret), `${secret} leaked: ${result.text}`);
+      }
+    } finally {
+      await rmWithRetry(dir);
+    }
+  });
+
   it('leaves output untouched when nothing sensitive appears', async () => {
     const result = await executeToolCall(
       { tool: 'exec', args: { command: 'cat README.md' } },

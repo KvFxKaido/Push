@@ -26,7 +26,12 @@ import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { isSensitivePath } from '../lib/sensitive-paths.ts';
-import { collectSensitiveValues, redactDeep, redactText } from './secret-redaction.ts';
+import {
+  collectSensitiveValues,
+  mergeSensitiveValues,
+  redactDeep,
+  redactText,
+} from './secret-redaction.ts';
 import {
   enforceRoleCapability,
   formatRoleCapabilityDenial,
@@ -2318,23 +2323,22 @@ function makeAuditorPreCommitGate({
  *   separated) when the option is omitted, so the daemon's delegated tool
  *   executors inherit the user's policy without re-loading config.
  *
- * Every result then passes through `redactToolResult`, so values from the
- * workspace's credential files never reach the model, whichever tool fetched
- * them (see cli/secret-redaction.ts).
+ * Every result then passes through `redactToolResult`, which scrubs values
+ * from the workspace's credential files out of what the tool returns,
+ * whichever tool fetched them (see cli/secret-redaction.ts for its limits).
  */
 export async function executeToolCall(call, workspaceRoot, options = {}) {
+  // Values are snapshotted before the call too: a command can print a
+  // credential file and then overwrite it, and the old value must still match.
+  const before = await collectSensitiveValues(workspaceRoot).catch(() => []);
   const result = await executeToolCallUnredacted(call, workspaceRoot, options);
-  return redactToolResult(result, call?.tool, workspaceRoot);
+  return redactToolResult(result, call?.tool, workspaceRoot, before);
 }
 
-async function redactToolResult(result, tool, workspaceRoot) {
+async function redactToolResult(result, tool, workspaceRoot, before) {
   if (!result || typeof result.text !== 'string') return result;
-  let values;
-  try {
-    values = await collectSensitiveValues(workspaceRoot);
-  } catch {
-    return result;
-  }
+  const after = await collectSensitiveValues(workspaceRoot).catch(() => []);
+  const values = mergeSensitiveValues(before, after);
   if (values.length === 0) return result;
   const { value: redacted, count: total, files } = redactDeep(result, values);
   if (total === 0) return result;

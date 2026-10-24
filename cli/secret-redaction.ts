@@ -12,11 +12,16 @@
  *     ones such as `3000` or `true` aren't secret-shaped, and redacting them
  *     would mangle ordinary output).
  *   - other credential files (keys, `.netrc`, `.npmrc`, …): each line of 16+
- *     characters.
+ *     characters, plus credential fields of 8+ (`key = value`, the word after
+ *     `password` / `login` / `account`, a URL's userinfo password).
+ * Symlinked credential files are followed; the caller snapshots before and
+ * after each tool call so a read-then-overwrite still matches.
  *
- * Limits: a value split across two streamed `exec_poll` chunks isn't caught,
- * and nothing stops a command from sending a value somewhere else; this only
- * keeps it out of what the model reads.
+ * Best effort, not a boundary. Misses: a value split across two streamed
+ * `exec_poll` / `exec_wait` responses (each is redacted on its own), shorter
+ * values, files past the bounded walk, and a value transformed before it's
+ * printed. Nothing here stops a command from sending a value elsewhere; it
+ * only keeps values out of what the model reads.
  */
 
 import { promises as fs } from 'node:fs';
@@ -65,11 +70,36 @@ export function extractSensitiveValues(rel: string, content: string): string[] {
       if (quoted) value = quoted[2];
       else value = value.replace(/\s+#.*$/, '');
       if (value.length >= MIN_ENV_VALUE) values.push(value);
-    } else if (line.length >= MIN_KEY_LINE) {
-      values.push(line);
+    } else {
+      // Whole lines catch key material (PEM bodies); the fields below catch
+      // a command that prints only the credential out of a config line.
+      if (line.length >= MIN_KEY_LINE) values.push(line);
+      for (const field of credentialFields(line)) {
+        if (field.length >= MIN_ENV_VALUE) values.push(field);
+      }
     }
   }
   return values;
+}
+
+/**
+ * Credential-bearing fields in non-.env credential files: `key = value`
+ * (`.npmrc`, `.pypirc`), the words after `password` / `login` / `account`
+ * (`.netrc`), and a URL's userinfo password (`.git-credentials`).
+ */
+function credentialFields(line: string): string[] {
+  const fields: string[] = [];
+  const assignment = /^[^=\s][^=]*?\s*=\s*(.+)$/.exec(line);
+  if (assignment) {
+    const value = assignment[1].trim().replace(/^(['"])(.*)\1$/, '$2');
+    fields.push(value);
+  }
+  const words = line.split(/\s+/);
+  for (let i = 0; i < words.length - 1; i++) {
+    if (/^(password|login|account)$/i.test(words[i])) fields.push(words[i + 1]);
+  }
+  for (const m of line.matchAll(/\/\/[^:/@\s]+:([^@\s]+)@/g)) fields.push(m[1]);
+  return fields;
 }
 
 /** Find credential files under the workspace (bounded walk) and collect their values. */
@@ -90,12 +120,14 @@ export async function collectSensitiveValues(workspaceRoot: string): Promise<Sen
         if (depth < MAX_DEPTH && !SKIP_DIRS.has(entry.name)) await walk(abs, depth + 1);
         continue;
       }
-      if (!entry.isFile()) continue;
+      // A symlinked credential file (`.env -> ../shared/config`) counts: a
+      // shell command follows the link. Symlinked directories aren't walked.
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
       const rel = path.relative(workspaceRoot, abs).split(path.sep).join('/');
       if (!isSensitivePath(rel)) continue;
       try {
-        const stat = await fs.stat(abs);
-        if (stat.size > MAX_FILE_BYTES) continue;
+        const stat = await fs.stat(abs); // follows the link to its target
+        if (!stat.isFile() || stat.size > MAX_FILE_BYTES) continue;
         const content = await fs.readFile(abs, 'utf8');
         for (const value of extractSensitiveValues(rel, content)) found.push({ value, file: rel });
       } catch {
@@ -106,6 +138,13 @@ export async function collectSensitiveValues(workspaceRoot: string): Promise<Sen
   await walk(workspaceRoot, 0);
   // Longest first, so a value containing another is replaced whole.
   return found.sort((a, b) => b.value.length - a.value.length);
+}
+
+/** Union of two snapshots, deduped by value, longest first. */
+export function mergeSensitiveValues(a: SensitiveValue[], b: SensitiveValue[]): SensitiveValue[] {
+  const byValue = new Map<string, SensitiveValue>();
+  for (const v of [...a, ...b]) if (!byValue.has(v.value)) byValue.set(v.value, v);
+  return [...byValue.values()].sort((x, y) => y.value.length - x.value.length);
 }
 
 /** Replace every occurrence of every value in `text`. */
