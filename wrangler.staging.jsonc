@@ -16,9 +16,7 @@
     "watch_dir": "./app/src"
   },
   "compatibility_date": "2026-04-20",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./app/dist",
     "binding": "ASSETS"
@@ -148,33 +146,23 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": [
-        "Sandbox"
-      ]
+      "new_sqlite_classes": ["Sandbox"]
     },
     {
       "tag": "v2",
-      "new_sqlite_classes": [
-        "CoderJob"
-      ]
+      "new_sqlite_classes": ["CoderJob"]
     },
     {
       "tag": "v3",
-      "new_sqlite_classes": [
-        "RelaySessionDO"
-      ]
+      "new_sqlite_classes": ["RelaySessionDO"]
     },
     {
       "tag": "v4",
-      "new_sqlite_classes": [
-        "PrReviewJob"
-      ]
+      "new_sqlite_classes": ["PrReviewJob"]
     },
     {
       "tag": "v5",
-      "new_sqlite_classes": [
-        "RunHost"
-      ]
+      "new_sqlite_classes": ["RunHost"]
     }
   ],
   "analytics_engine_datasets": [
