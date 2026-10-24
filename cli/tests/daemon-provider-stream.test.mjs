@@ -99,8 +99,8 @@ describe('createDaemonProviderStream', () => {
     assert.equal(calls[0].init.headers['x-api-key'], 'sk-ant-test');
     assert.equal(calls[0].init.headers['anthropic-version'], '2023-06-01');
     // Body was translated — OpenAI's bare-string content is now a block array —
-    // and the daemon path gets the adapter's default prompt caching: the only
-    // message is in the rolling tail, so it carries the cache marker.
+    // and the daemon path gets the CLI's default prompt caching from
+    // createProviderStream: the only message is in the rolling tail.
     const body = JSON.parse(calls[0].init.body);
     assert.deepEqual(body.messages[0].content, [
       { type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } },

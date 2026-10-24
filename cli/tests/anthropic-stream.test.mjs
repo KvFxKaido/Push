@@ -121,9 +121,6 @@ describe('createCliAnthropicStream', () => {
           { id: '2', role: 'assistant', content: 'Hello', timestamp: 0 },
           { id: '3', role: 'user', content: 'More', timestamp: 0 },
         ],
-        // Opt out of default caching: this test pins the untagged translation
-        // shape; the caching tests below cover cache_control.
-        cacheBreakpointIndices: [],
       }),
     );
 
@@ -299,56 +296,6 @@ describe('createCliAnthropicStream', () => {
     const lastUser = body.messages[body.messages.length - 1];
     assert.equal(lastUser.role, 'user');
     assert.deepEqual(lastUser.content[0].cache_control, { type: 'ephemeral' });
-  });
-
-  it('caches by default when the caller supplies no cacheBreakpointIndices', async () => {
-    // No CLI caller sets cacheBreakpointIndices (the lead loop, explorer,
-    // auditor, and daemon all forward the kernel's request as-is), so without a
-    // default the CLI never caches: the bake-off measured 0 cache reads.
-    const { calls, handler } = captureFetch();
-    globalThis.fetch = handler;
-
-    const stream = createCliAnthropicStream(ANTHROPIC_CONFIG, 'sk');
-    await collect(
-      stream({
-        provider: 'anthropic',
-        model: 'claude-haiku-5-5',
-        systemPromptOverride: 'Be terse.',
-        messages: [
-          { id: '1', role: 'user', content: 'Hi', timestamp: 0 },
-          { id: '2', role: 'assistant', content: 'Hello', timestamp: 0 },
-          { id: '3', role: 'user', content: 'More', timestamp: 0 },
-          { id: '4', role: 'assistant', content: 'Sure', timestamp: 0 },
-          { id: '5', role: 'user', content: 'Again', timestamp: 0 },
-        ],
-      }),
-    );
-
-    const body = JSON.parse(calls[0].init.body);
-    assert.deepEqual(body.system[0].cache_control, { type: 'ephemeral' });
-    const tagged = body.messages.map(
-      (m) => Array.isArray(m.content) && m.content.some((p) => p.cache_control),
-    );
-    // The rolling tail: the last three messages, not the first two.
-    assert.deepEqual(tagged, [false, false, true, true, true]);
-  });
-
-  it('sends no cache_control when the caller opts out with an empty cacheBreakpointIndices', async () => {
-    const { calls, handler } = captureFetch();
-    globalThis.fetch = handler;
-
-    const stream = createCliAnthropicStream(ANTHROPIC_CONFIG, 'sk');
-    await collect(
-      stream({
-        provider: 'anthropic',
-        model: 'claude-haiku-5-5',
-        systemPromptOverride: 'Be terse.',
-        messages: [{ id: '1', role: 'user', content: 'Hi', timestamp: 0 }],
-        cacheBreakpointIndices: [],
-      }),
-    );
-
-    assert.equal(calls[0].init.body.includes('cache_control'), false);
   });
 
   it('caps cache_control tagging at MAX_ROLLING_CACHE_BREAKPOINTS when too many indices are supplied', async () => {
