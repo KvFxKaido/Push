@@ -8,7 +8,8 @@
  * Worker-side provider toggle can switch backends without any client change.
  *
  * Architecture:
- *   browser/CLI → Worker (this handler) → getSandbox(env.Sandbox, id) → DO → container
+ *   browser/CLI → Worker (this handler) → env.Sandbox.getByName(id) → Sandbox DO
+ *   (sandbox-do.ts, SDK 1.0 facade) → ctx.container
  *
  * Known MVP gaps (tracked as follow-up PRs):
  *   - workspace_revision and file version (SHA) are best-effort — the SDK
@@ -23,8 +24,7 @@
  */
 
 import type { ExecutionContext } from '@cloudflare/workers-types';
-import { getSandbox } from '@cloudflare/sandbox';
-import type { DirectoryBackup } from '@cloudflare/sandbox';
+import type { LegacyBackupHandle, SandboxBackupHandle, SandboxFacade } from './sandbox-do';
 import type { Env } from './worker-middleware';
 import {
   validateOrigin,
@@ -91,27 +91,25 @@ const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 // realistic think/read pauses. We use sleepAfter (auto-reclaim) rather than
 // keepAlive (never sleeps → orphaned-container cost leak if the client fails to
 // destroy). The client idle reaper still snapshots before this as the safety
-// net for the eventual reclaim. Tunable in one place.
-const SANDBOX_SLEEP_AFTER = '1h';
+// net for the eventual reclaim. Since SDK 1.0 the window is set by the Sandbox
+// Durable Object itself: INACTIVITY_TIMEOUT_MS (1h) in sandbox-do.ts.
 
 /**
  * Get the sandbox handle with Push's idle-sleep policy applied. Every accessor
  * routes through here so the container's sleep window is consistent across
  * create / exec / snapshot / etc. — not the SDK's 10-min default.
  *
- * RPC is the SDK's recommended transport and replaces the deprecated HTTP/WS
- * transports removed upstream after July 9, 2026. Default sessions are also
- * disabled: Push never relies on implicit cross-call cwd or environment state
- * (every exec passes explicit cwd, `git -C`, or absolute paths — audited
- * call-by-call), and the SDK deprecated that state because it confused agent
- * workloads.
+ * Since Sandbox SDK 1.0 the handle is a stub of Push's own Durable Object
+ * (sandbox-do.ts), a compatibility facade with the 0.12 method set. The idle
+ * window lives there (`setInactivityTimeout`, INACTIVITY_TIMEOUT_MS).
+ * Push never relies on implicit cross-call cwd or environment state (every
+ * exec passes explicit cwd, `git -C`, or absolute paths — audited call-by-
+ * call), which suits 1.0, where each exec is its own process. The name is
+ * used as-is, as 0.12 did (no normalizeId), so Durable Object identities and
+ * storage carry over.
  */
-function sandboxFor(env: Env, sandboxId: string) {
-  return getSandbox(env.Sandbox!, sandboxId, {
-    sleepAfter: SANDBOX_SLEEP_AFTER,
-    transport: 'rpc',
-    enableDefaultSession: false,
-  });
+function sandboxFor(env: Env, sandboxId: string): SandboxFacade {
+  return env.Sandbox!.getByName(sandboxId) as unknown as SandboxFacade;
 }
 
 function githubRepoUrl(repo: string, token?: string): string {
@@ -2160,16 +2158,16 @@ export const MAX_SNAPSHOT_BYTES = Math.floor((DO_RPC_MAX_BYTES * 3) / 4) - 1024 
 
 interface BackupDescriptor {
   v: 1;
-  backupHandle: DirectoryBackup;
+  backupHandle: SandboxBackupHandle;
 }
 
 function backupDescriptorKey(backupId: string): string {
   return `${BACKUP_DESCRIPTOR_PREFIX}${backupId}`;
 }
 
-function isBackupHandle(raw: unknown): raw is DirectoryBackup {
+function isBackupHandle(raw: unknown): raw is SandboxBackupHandle {
   if (!raw || typeof raw !== 'object') return false;
-  const handle = raw as Partial<DirectoryBackup>;
+  const handle = raw as Partial<LegacyBackupHandle>;
   return (
     typeof handle.id === 'string' &&
     handle.id.length > 0 &&
@@ -2193,7 +2191,11 @@ function parseBackupDescriptor(raw: string): BackupDescriptor | null {
 function backupErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const code = (error as { code?: unknown }).code;
-  return typeof code === 'string' ? code : undefined;
+  if (typeof code === 'string') return code;
+  // Custom error properties don't reliably survive Workers RPC, so the
+  // Sandbox facade also leads its message with the code: "CODE: detail".
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' ? /^([A-Z][A-Z0-9_]+): /.exec(message)?.[1] : undefined;
 }
 
 function invalidBackupConfigError(message: string): Error {
@@ -2232,7 +2234,7 @@ function backupRestoreFailure(error: unknown): {
  */
 async function materializeBackupIntoWorkspace(
   sandbox: SandboxStub,
-  backupHandle: DirectoryBackup,
+  backupHandle: SandboxBackupHandle,
 ): Promise<void> {
   const startedAt = Date.now();
   const stagingDir = `/tmp/push-backup-restore-${crypto.randomUUID()}`;
@@ -2703,15 +2705,14 @@ export async function createWorkspaceSnapshot(
   const startedAt = Date.now();
 
   try {
-    // 0.12.3 names this option `gitignore` (not the earlier-docs
-    // `useGitignore`). The handle is a plain structured-clone value.
+    // The handle is a plain structured-clone value. SDK 1.0 removed
+    // `localBucket`: every backup goes through the R2 binding.
     const backupHandle = await withExecDeadline(
       sandbox.createBackup({
         dir: '/workspace',
         name: backupName,
         ttl: BACKUP_TTL_SECONDS,
         gitignore: true,
-        ...(env.SANDBOX_BACKUP_LOCAL_BUCKET === '1' ? { localBucket: true } : {}),
       }),
       BACKUP_OPERATION_TIMEOUT_MS,
     );
@@ -3239,7 +3240,7 @@ async function routeProbe(env: Env, body: Json): Promise<Response> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-type SandboxStub = ReturnType<typeof getSandbox>;
+type SandboxStub = ReturnType<typeof sandboxFor>;
 
 async function probeEnvironment(sandbox: SandboxStub): Promise<Json> {
   const legacyProbeScript =

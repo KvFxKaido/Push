@@ -248,6 +248,55 @@ the owner's go-ahead.
   staging needs that URL copied in by the owner, because it may embed a
   credential.
 
+### Phases 1–3 progress (2026-10-24, branch `feat/sandbox-sdk-1.0`)
+
+Built on a branch and **not deployed anywhere**. Layer 3 and the Modal check
+are deferred to the rehearsal, at the owner's call.
+
+**Image (Phase 1)**
+- **Base and pins:** `Dockerfile.sandbox` now builds on
+  `python:3.11.14-slim-bookworm` with Node 22.23.4 copied from the official
+  image, Bun 1.4.4, and `sandbox-shim` from `cloudflare/sandbox:1.0.3`.
+- **Parity, checked against the 0.12 base:** a local build reports Node
+  22.23.4 / npm 10.9.9 / Bun 1.4.4 / Python 3.11.14, the data libraries, and
+  every tool the old base had. It adds `squashfs-tools`, needed for the legacy
+  restore path.
+- **The one deliberate difference:** Debian 12 replaces Ubuntu 22.04.
+- **EXPOSE dropped.** The image-contract test now pins its absence.
+
+**Facade (Phase 2):** `app/src/worker/sandbox-do.ts` implements a
+`SandboxFacade` interface that the handler types its stub with.
+- **Commands:** `bash -c`, cwd `/workspace`, `HOME`/`LANG` passed explicitly,
+  and timeouts through an `AbortSignal`, reported as exit 124.
+- **Files:** `writeFile` creates parent directories and writes through a temp
+  file; `listFiles` hides dotfiles.
+- **Git:** `gitCheckout` throws git's own message with any token redacted.
+- **Processes:** run detached, in their own process group.
+- **Backups:** `DirectoryBackup` plus an expiry sidecar. 0.12 SquashFS handles
+  are unpacked directly on restore.
+- **Error codes:** errors lead their message with the code, because custom
+  error properties aren't guaranteed to survive Workers RPC.
+- **Tests:** 21 facade tests. Break tests confirmed the `HOME`, dotfile and
+  error-code guards each fail when removed.
+
+**Handler and config (Phase 3)**
+- **Handler:** `sandboxFor()` is now `env.Sandbox.getByName(id)`, with the same
+  id as before (no normalization), so Durable Object identities carry over.
+  The backup handle type moved to the facade's, `localBucket` was dropped, and
+  `backupErrorCode` also parses the message prefix.
+- **Wrangler config:** both containers entries use
+  `scheduling_policy: "durable_object"` with a named image and new application
+  names (`push-sandbox-do`, `push-staging-sandbox-do`).
+- **Checks:** both configs dry-run cleanly, and app vitest passes 7,553.
+
+**Still unverified until the staging rehearsal**
+- Real container start and RPC.
+- Whether `Date` values survive RPC: the facade returns them for process
+  `startTime` and `endTime`.
+- Restore into a staging directory.
+- Process lifetimes beyond the idle window. There's no keep-alive alarm yet.
+- The legacy conversion path against real 0.12 objects.
+
 ## Phases after staging
 
 1. **Image:** a new `Dockerfile.sandbox` on its own base. Build it locally and

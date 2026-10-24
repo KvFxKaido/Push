@@ -113,10 +113,11 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "./Dockerfile.sandbox",
-      "instance_type": "standard",
-      "max_instances": 3,
-      "name": "push-staging-sandbox"
+      "name": "push-staging-sandbox-do",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": { "dockerfile": "./Dockerfile.sandbox", "build_context": "." }
+      }
     }
   ],
   "durable_objects": {
