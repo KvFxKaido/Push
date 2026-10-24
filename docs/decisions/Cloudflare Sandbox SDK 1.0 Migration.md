@@ -202,12 +202,19 @@ change on.
 - **Instance type renamed.** Wrangler 4.152 warns that the `"standard"`
   instance type is now `"standard-1"`, so today's size has a 1.0 name. That
   answers the instance-size open question.
-- **Production's bucket has no expiry rule.** `push-cf-snapshots` has only the
-  default multipart-abort rule. The `wrangler.jsonc` comment says the 7-day
-  rule "is what physically reclaims" SDK archives, so production snapshot
-  archives have probably never expired. `npm run r2:snapshots:lifecycle`
-  adds it. On Windows, wrangler 4.152's `r2 bucket lifecycle add` crashed
-  (libuv assertion), and staging's rule was set through the API instead.
+- **Production's bucket had no expiry rule (fixed 2026-10-24).**
+  `push-cf-snapshots` had only the default multipart-abort rule, although the
+  `wrangler.jsonc` comment says the 7-day rule "is what physically reclaims"
+  SDK archives.
+  - **Before the fix,** the bucket held 29 objects, all older than 7 days and
+    the oldest 96 days: 24 objects under `backups/` (135.7 MB) and 5
+    descriptors under `cf-backups/`. Every one was past the 7-day handle TTL,
+    so none was restorable. The storage cost was negligible.
+  - **The fix:** an `expire-7d` rule (whole bucket, 7 days) was added through
+    the API alongside the existing multipart-abort rule, at the owner's
+    request. `npm run r2:snapshots:lifecycle` is the scripted equivalent, but
+    on Windows wrangler 4.152's `r2 bucket lifecycle add` crashed (libuv
+    assertion), on staging too.
 - **Cold start.** The first sandbox create on staging took 128 s, most likely
   the first pull of a new container application's image. Re-measure when
   warm.
