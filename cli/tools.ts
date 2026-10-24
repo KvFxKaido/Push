@@ -1113,8 +1113,9 @@ const TEXT_DISPATCH_RULE =
 
 /**
  * Lean variant of a text tool protocol block (`TOOL_PROTOCOL`,
- * `GITHUB_TOOL_PROTOCOL`) for a lead whose tools ride native schemas. The
- * schemas already describe every tool, so the prose `Available tools:` catalog
+ * `READ_ONLY_TOOL_PROTOCOL`, `GITHUB_TOOL_PROTOCOL`) for a run whose tools ride
+ * native schemas. The
+ * schemas already describe every tool, so the prose `Available tools` catalog
  * repeats them, and the text-dispatch header and "Emit only JSON blocks" rule
  * contradict native calling. Keeps everything else (the schema-version marker,
  * the GitHub intro, the Rules block). Derived from the full block rather than
@@ -1122,11 +1123,15 @@ const TEXT_DISPATCH_RULE =
  * model that answers with a JSON block still dispatches.
  */
 export function toNativeToolProtocol(protocol: string): string {
-  return protocol
-    .replace(TEXT_DISPATCH_HEADER, '')
-    .replace(/\nAvailable tools:\n(?:- .*\n)+/, '\n')
-    .replace(TEXT_DISPATCH_RULE, 'Do not describe tool calls in prose; make the call.')
-    .replace(/\n{3,}/g, '\n\n');
+  return (
+    protocol
+      .replace(TEXT_DISPATCH_HEADER, '')
+      // `[^\n]*` admits a qualified heading, e.g. the read-only block's
+      // "Available tools (all read-only — …):".
+      .replace(/\nAvailable tools[^\n]*:\n(?:- .*\n)+/, '\n')
+      .replace(TEXT_DISPATCH_RULE, 'Do not describe tool calls in prose; make the call.')
+      .replace(/\n{3,}/g, '\n\n')
+  );
 }
 
 /**

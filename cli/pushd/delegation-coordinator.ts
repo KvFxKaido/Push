@@ -36,7 +36,6 @@ import {
   wrapCliDetectAnyToolCall,
   wrapCliDetectNativeToolCalls,
 } from '../lead-turn.js';
-import { cliProviderModelSupportsNativeToolCalling } from '../native-tool-gate.js';
 import { PROVIDER_CONFIGS, resolveApiKey } from '../provider.js';
 import {
   appendSessionEvent,
@@ -46,11 +45,8 @@ import {
   saveSessionState,
 } from '../session-store.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from '../task-graph-memory.ts';
-import {
-  getCliNativeToolSchemas,
-  getCliReadOnlyNativeToolSchemas,
-} from '../tool-function-schemas.js';
-import { READ_ONLY_TOOL_PROTOCOL, TOOL_PROTOCOL } from '../tools.js';
+import { resolveCliDelegatedToolSurface } from '../tool-function-schemas.js';
+import { READ_ONLY_TOOL_PROTOCOL } from '../tools.js';
 import { validateAttachToken } from './attach-token.js';
 import type { DelegationExecutionAdapters } from './delegation-execution.js';
 import { makeErrorResponse, makeResponse } from './envelopes.js';
@@ -154,9 +150,8 @@ export function createDelegationCoordinator(
     const toolExec = makeDaemonExplorerToolExec({ entry, signal });
     const evaluateAfterModel = async () => null;
     const daemonStream = createDaemonProviderStream(provider, sessionId);
-    const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(provider, model)
-      ? getCliReadOnlyNativeToolSchemas()
-      : undefined;
+    const { nativeToolSchemas, sandboxToolProtocol, leanToolProtocols } =
+      resolveCliDelegatedToolSurface('explorer', provider, model);
 
     // Splice graph-internal memory (from executeTaskGraph's
     // enrichedContext) and typed-memory retrieval blocks into the
@@ -188,8 +183,9 @@ export function createDelegationCoordinator(
         // tool calls our detector can't recognize and every round
         // silently fails to execute anything (codex + Copilot P1 on
         // PR #284).
-        sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
+        sandboxToolProtocol,
         nativeToolSchemas,
+        leanToolProtocols,
         evaluateAfterModel,
       },
       {
@@ -280,9 +276,11 @@ export function createDelegationCoordinator(
     const { provider, model } = resolveRoleRouting(entry, 'coder');
     const allowedRepo = (await resolveWorkspaceIdentity(entry.state.cwd)).repoFullName;
     const daemonStream = createDaemonProviderStream(provider, sessionId);
-    const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(provider, model)
-      ? getCliNativeToolSchemas({ provider, model })
-      : undefined;
+    const { nativeToolSchemas, sandboxToolProtocol } = resolveCliDelegatedToolSurface(
+      'coder',
+      provider,
+      model,
+    );
     // `parentRunId` can be null when `submit_task_graph` is called on a
     // session with no active run AND no `parentRunId` payload override.
     // `buildApprovalFn` would emit `approval_required` events with
@@ -335,7 +333,7 @@ export function createDelegationCoordinator(
         // guidance on what tool-call JSON to emit (codex P1 on PR #282).
         // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
         // non-delegated CLI engine uses.
-        sandboxToolProtocol: TOOL_PROTOCOL,
+        sandboxToolProtocol,
         nativeToolSchemas,
         verificationPolicyBlock: null,
         approvalModeBlock: null,
@@ -979,12 +977,8 @@ export function createDelegationCoordinator(
       let runError = null;
       try {
         const daemonStream = createDaemonProviderStream(resolvedProvider, sessionId);
-        const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(
-          resolvedProvider,
-          resolvedModel,
-        )
-          ? getCliReadOnlyNativeToolSchemas()
-          : undefined;
+        const { nativeToolSchemas, sandboxToolProtocol, leanToolProtocols } =
+          resolveCliDelegatedToolSurface('explorer', resolvedProvider, resolvedModel);
         const result = await runExplorerAgent(
           {
             provider: resolvedProvider as any,
@@ -1007,8 +1001,9 @@ export function createDelegationCoordinator(
             // with `READ_ONLY_TOOL_PROTOCOL` from `cli/tools.ts` makes
             // the model emit CLI tool names that match
             // `READ_ONLY_TOOLS` + `executeToolCall`'s dispatch table.
-            sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
+            sandboxToolProtocol,
             nativeToolSchemas,
+            leanToolProtocols,
             evaluateAfterModel,
           },
           {
@@ -1359,12 +1354,11 @@ export function createDelegationCoordinator(
       let runError = null;
       try {
         const daemonStream = createDaemonProviderStream(resolvedProvider, sessionId);
-        const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(
+        const { nativeToolSchemas, sandboxToolProtocol } = resolveCliDelegatedToolSurface(
+          'coder',
           resolvedProvider,
           resolvedModel,
-        )
-          ? getCliNativeToolSchemas({ provider: resolvedProvider, model: resolvedModel })
-          : undefined;
+        );
         const result = await runCoderAgent(
           {
             provider: resolvedProvider as any,
@@ -1387,7 +1381,7 @@ export function createDelegationCoordinator(
             // guidance on what tool-call JSON to emit (codex P1 on PR #282).
             // Feed in `TOOL_PROTOCOL` from `cli/tools.ts`, the same block the
             // non-delegated CLI engine uses.
-            sandboxToolProtocol: TOOL_PROTOCOL,
+            sandboxToolProtocol,
             nativeToolSchemas,
             verificationPolicyBlock: null,
             approvalModeBlock: null,

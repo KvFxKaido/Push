@@ -1177,6 +1177,49 @@ describe('LEAD_EXPLORER_DELEGATION_PROTOCOL — advertise/executor drift pins', 
 });
 
 describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', needsLoopback, () => {
+  it('sends a native-capable fanned-out Explorer the lean protocol', async () => {
+    const saved = process.env.PUSH_OPENROUTER_TRANSPORT;
+    process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
+    try {
+      await withTempWorkspace(async (cwd) => {
+        const server = await startSequencedProviderServer([
+          { tokens: [fencedCall('delegate_explorer', { task: 'Trace flow A' })] },
+          { tokens: ['Findings: alpha'] },
+          { tokens: ['Traced. All done.'] },
+        ]);
+        try {
+          await runLeadKernelTurn(
+            makeState(cwd, { provider: 'openrouter', model: 'anthropic/claude-sonnet-4.6:nitro' }),
+            { ...PROVIDER_CONFIGS.openrouter, url: server.url },
+            'mock-key',
+            'Investigate flow A',
+            5,
+            { emit: () => {} },
+          );
+          const explorer = server.requests[1];
+          const system = explorer.messages.find((m) => m.role === 'system');
+          const text =
+            typeof system.content === 'string'
+              ? system.content
+              : system.content.map((part) => part.text ?? '').join('');
+          assert.ok(text.includes('You are the Explorer agent'), 'not the Explorer request');
+          assert.ok((explorer.tools ?? []).length > 0, 'native schemas missing');
+          assert.ok(!text.includes('Available tools'), 'prose tool catalog still sent');
+          assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+          assert.ok(
+            !text.includes('MUST include a fenced JSON block'),
+            'Explorer JSON rule still sent',
+          );
+        } finally {
+          await server.stop();
+        }
+      });
+    } finally {
+      if (saved === undefined) delete process.env.PUSH_OPENROUTER_TRANSPORT;
+      else process.env.PUSH_OPENROUTER_TRANSPORT = saved;
+    }
+  });
+
   it('fans out two Explorers in one turn and feeds their reports back to the lead', async () => {
     await withTempWorkspace(async (cwd) => {
       await fs.writeFile(path.join(cwd, 'notes.txt'), 'fan-out sentinel', 'utf8');

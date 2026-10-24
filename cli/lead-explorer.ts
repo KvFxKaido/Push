@@ -56,9 +56,8 @@ import type {
 } from '../lib/provider-contract.ts';
 import { createProviderStream, PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
 import type { ProviderConfig } from './provider.js';
-import { cliProviderModelSupportsNativeToolCalling } from './native-tool-gate.js';
-import { getCliReadOnlyNativeToolSchemas } from './tool-function-schemas.js';
-import { executeToolCall, READ_ONLY_TOOL_PROTOCOL } from './tools.js';
+import { resolveCliDelegatedToolSurface } from './tool-function-schemas.js';
+import { executeToolCall } from './tools.js';
 import type { RoleRoutingEntry } from './session-store.js';
 
 /** Max Explorer sub-agents the CLI lead may fan out in a single turn (web parity). */
@@ -382,9 +381,8 @@ export async function runLeadExplorerDelegation<TCall>(
       files: asStringArray(args.files),
       targetRole: 'explorer',
     });
-    const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(providerId, modelId)
-      ? getCliReadOnlyNativeToolSchemas()
-      : undefined;
+    const { nativeToolSchemas, sandboxToolProtocol, leanToolProtocols } =
+      resolveCliDelegatedToolSurface('explorer', providerId, modelId);
     const toolExec = makeCliReadOnlyToolExec({
       workspaceRoot: ctx.cwd,
       sessionId: ctx.sessionId,
@@ -409,8 +407,9 @@ export async function runLeadExplorerDelegation<TCall>(
         // The kernel's default `EXPLORER_TOOL_PROTOCOL` advertises web-side
         // public tool names the CLI executor doesn't recognize; override with
         // the CLI-named read-only block (same as the daemon entrypoints).
-        sandboxToolProtocol: READ_ONLY_TOOL_PROTOCOL,
+        sandboxToolProtocol,
         nativeToolSchemas,
+        leanToolProtocols,
         projectInstructions: ctx.projectInstructions,
         instructionFilename: ctx.instructionFilename,
         evaluateAfterModel: async () => null,
