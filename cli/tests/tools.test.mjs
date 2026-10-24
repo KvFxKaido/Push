@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -367,6 +368,63 @@ describe('file tools refuse credential-looking paths', () => {
       workspace,
     );
     assert.ok(!keyHit.text.includes(SECRET), `search leaked the secret: ${keyHit.text}`);
+  });
+
+  it('refuses an ordinary-named symlink that points at a credential file', async () => {
+    await fs.symlink(path.join(workspace, '.env'), path.join(workspace, 'notes.txt'));
+    try {
+      refused(await executeToolCall({ tool: 'read_file', args: { path: 'notes.txt' } }, workspace));
+      refused(
+        await executeToolCall(
+          { tool: 'write_file', args: { path: 'notes.txt', content: 'X=1\n' } },
+          workspace,
+        ),
+      );
+      assert.equal(await fs.readFile(path.join(workspace, '.env'), 'utf8'), `API_KEY=${SECRET}\n`);
+    } finally {
+      await fs.rm(path.join(workspace, 'notes.txt'), { force: true });
+    }
+  });
+
+  it('hides credential files from list_dir and refuses undo_edit on them', async () => {
+    const listing = await executeToolCall({ tool: 'list_dir', args: { path: '.' } }, workspace);
+    assert.equal(listing.ok, true);
+    const names = listing.text.split('\n').map((l) => l.slice(2));
+    assert.ok(!names.includes('.env'), `.env listed: ${listing.text}`);
+    assert.ok(names.includes('.env.example'), 'template hidden');
+    assert.ok(listing.text.includes('1 sensitive entry hidden'), listing.text);
+    const src = await executeToolCall({ tool: 'list_dir', args: { path: 'src' } }, workspace);
+    assert.ok(!src.text.includes('id_rsa'), `id_rsa listed: ${src.text}`);
+    refused(await executeToolCall({ tool: 'undo_edit', args: { path: '.env' } }, workspace));
+  });
+
+  it('omits tracked credential files from a pathless git_diff', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'push-sensitive-git-'));
+    const git = (...args) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@invalid', ...args], {
+        cwd: repo,
+      });
+    try {
+      git('init', '-q');
+      await fs.writeFile(path.join(repo, '.env'), 'API_KEY=old\n', 'utf8');
+      await fs.writeFile(path.join(repo, 'app.js'), 'const a = 1;\n', 'utf8');
+      git('add', '-A');
+      git('commit', '-qm', 'init');
+      await fs.writeFile(path.join(repo, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+      await fs.writeFile(path.join(repo, 'app.js'), 'const a = 2;\n', 'utf8');
+      for (const args of [{}, { path: '.' }]) {
+        const diff = await executeToolCall({ tool: 'git_diff', args }, repo);
+        assert.equal(diff.ok, true, diff.text);
+        assert.ok(!JSON.stringify(diff).includes(SECRET), `diff leaked the secret: ${diff.text}`);
+        assert.ok(diff.text.includes('const a = 2'), 'non-sensitive hunk dropped');
+      }
+      git('add', '-A');
+      const staged = await executeToolCall({ tool: 'git_diff', args: { staged: true } }, repo);
+      assert.ok(!JSON.stringify(staged).includes(SECRET), `staged diff leaked: ${staged.text}`);
+      refused(await executeToolCall({ tool: 'git_diff', args: { path: '.env' } }, repo));
+    } finally {
+      await fs.rm(repo, { recursive: true, force: true });
+    }
   });
 });
 

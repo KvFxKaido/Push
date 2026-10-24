@@ -1302,7 +1302,16 @@ export function detectToolCall(text) {
  */
 export async function ensureFileToolPath(workspaceRoot, rawPath) {
   const resolved = await ensureInsideWorkspace(workspaceRoot, rawPath);
-  if (isSensitivePath(rawPath) || isSensitivePath(resolved)) {
+  // ensureInsideWorkspace returns the logical path, so a symlink with an
+  // ordinary name (`notes.txt -> .env`) would pass a name check; test the
+  // real target too.
+  let realTarget = resolved;
+  try {
+    realTarget = await fs.realpath(resolved);
+  } catch {
+    // Doesn't exist yet (a new file): the logical path is all there is.
+  }
+  if (isSensitivePath(rawPath) || isSensitivePath(resolved) || isSensitivePath(realTarget)) {
     throw new Error(`sensitive path refused: ${rawPath} looks like a credential file`);
   }
   return resolved;
@@ -1474,6 +1483,24 @@ function withoutSensitiveMatches(output) {
   return kept.join('\n').trim() || 'No matches';
 }
 
+/**
+ * Drop `diff --git` sections for credential-looking files from a unified
+ * diff. Either side's path counts, so a rename into or out of `.env` is
+ * dropped too.
+ */
+function withoutSensitiveDiffSections(diff) {
+  const sections = diff.split(/^(?=diff --git )/m);
+  let omitted = 0;
+  const kept = sections.filter((section) => {
+    const m = /^diff --git a\/(.+?) b\/(.+)$/m.exec(section);
+    if (!m) return true;
+    const sensitive = isSensitivePath(m[1]) || isSensitivePath(m[2]);
+    if (sensitive) omitted++;
+    return !sensitive;
+  });
+  return { text: kept.join(''), omitted };
+}
+
 async function executeSearch(pattern, searchRoot, maxResults) {
   return withoutSensitiveMatches(await executeRawSearch(pattern, searchRoot, maxResults));
 }
@@ -1501,7 +1528,7 @@ async function executeRawSearch(pattern, searchRoot, maxResults) {
       try {
         const { stdout } = await execFileAsync(
           'grep',
-          ['-RIn', '--binary-files=without-match', '--', pattern, searchRoot],
+          ['-rIn', '--binary-files=without-match', '--', pattern, searchRoot],
           { maxBuffer: 2_000_000 },
         );
         return stdout.trim() || 'No matches';
@@ -2585,7 +2612,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'list_dir': {
         const dirArg = typeof call.args.path === 'string' ? call.args.path : '.';
         const dirPath = await ensureFileToolPath(workspaceRoot, dirArg);
-        const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        const allEntries = await fs.readdir(dirPath, { withFileTypes: true });
+        // Credential files are hidden by name (the web does the same), and
+        // the count says so: names alone point a model at what to `exec`.
+        const entries = allEntries.filter((entry) => !isSensitivePath(entry.name));
+        const hidden = allEntries.length - entries.length;
         const mapped = entries
           .map((entry) => ({
             name: entry.name,
@@ -2605,13 +2636,14 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           })
           .slice(0, 300);
         const prefixMap = { dir: 'd', file: 'f', symlink: 'l', other: 'f' };
-        const text = mapped
-          .map((entry) => `${prefixMap[entry.type] || 'f'} ${entry.name}`)
-          .join('\n');
+        const lines = mapped.map((entry) => `${prefixMap[entry.type] || 'f'} ${entry.name}`);
+        if (hidden > 0)
+          lines.push(`(${hidden} sensitive entr${hidden === 1 ? 'y' : 'ies'} hidden)`);
+        const text = lines.join('\n');
         return {
           ok: true,
           text: text || '<empty directory>',
-          meta: { path: dirPath, count: mapped.length },
+          meta: { path: dirPath, count: mapped.length, hidden },
         };
       }
 
@@ -3655,10 +3687,13 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const fullArgs = ['diff'];
           if (staged) fullArgs.push('--staged');
           if (diffPath) fullArgs.push('--', diffPath);
-          const { stdout: diffOut } = await execFileAsync('git', fullArgs, {
+          const { stdout: rawDiffOut } = await execFileAsync('git', fullArgs, {
             cwd: workspaceRoot,
             maxBuffer: 2_000_000,
           });
+          // A pathless (or directory) diff still covers tracked credential
+          // files, so their sections are dropped before text and card.
+          const { text: diffOut, omitted } = withoutSensitiveDiffSections(rawDiffOut);
 
           // Parse stat lines to extract file-level summary
           const statLines = statOut.trim().split('\n');
@@ -3678,10 +3713,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
           return {
             ok: true,
-            text: truncateText(diffOut.trim() || 'No changes'),
+            text: truncateText(
+              [
+                diffOut.trim() || 'No changes',
+                omitted > 0
+                  ? `(${omitted} sensitive file${omitted === 1 ? '' : 's'} omitted from the diff)`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            ),
             meta: {
               staged,
               path: diffPath,
+              omittedSensitiveFiles: omitted,
               filesChanged: totalFilesChanged,
               insertions: insertions ? parseInt(insertions, 10) : 0,
               deletions: deletions ? parseInt(deletions, 10) : 0,
