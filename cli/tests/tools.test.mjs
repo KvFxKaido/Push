@@ -812,6 +812,81 @@ describe('edit_file hashline flow', () => {
   });
 });
 
+// ─── secret redaction in tool output ────────────────────────────
+
+describe('tool output redacts values from sensitive files', () => {
+  // The file tools refuse .env, but `exec cat .env` is a shell command, not a
+  // path: the drift canary saw deepseek-v4-pro take exactly that route. So the
+  // values themselves are scrubbed from whatever a tool returns.
+  const SECRET = 'PUSH-TEST-SECRET-9c2e7a';
+  const KEY_LINE = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC';
+  let root;
+
+  before(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-'));
+    await fs.writeFile(
+      path.join(root, '.env'),
+      `# comment\nAPI_KEY="${SECRET}"\nPORT=3000\nDEBUG=true\n`,
+      'utf8',
+    );
+    await fs.mkdir(path.join(root, 'keys'));
+    await fs.writeFile(
+      path.join(root, 'keys', 'server.pem'),
+      `-----BEGIN PRIVATE KEY-----\n${KEY_LINE}\n-----END PRIVATE KEY-----\n`,
+      'utf8',
+    );
+    await fs.writeFile(path.join(root, 'README.md'), 'hello world\n', 'utf8');
+  });
+
+  after(async () => {
+    await rmWithRetry(root);
+  });
+
+  it('scrubs .env values from exec output and says so', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat .env README.md' } },
+      root,
+      { allowExec: true },
+    );
+    assert.equal(result.ok, true, result.text);
+    assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    assert.ok(result.text.includes('[redacted: .env]'), result.text);
+    assert.ok(result.text.includes('hello world'), 'ordinary output dropped');
+    // Short, non-secret-shaped values stay: redacting "3000" would mangle output.
+    assert.ok(result.text.includes('PORT=3000'), result.text);
+    assert.ok(/1 value from sensitive files redacted/.test(result.text), result.text);
+  });
+
+  it('scrubs key-file lines found below the workspace root', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat keys/server.pem' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(!JSON.stringify(result).includes(KEY_LINE), `key leaked: ${result.text}`);
+  });
+
+  it('scrubs a secret the command spells out a different way', async () => {
+    // A command-text check would miss this; output redaction doesn't care how.
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat .e""nv | tr -d "#"' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+  });
+
+  it('leaves output untouched when nothing sensitive appears', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat README.md' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(result.text.includes('hello world'));
+    assert.ok(!result.text.includes('redacted'), result.text);
+  });
+});
+
 // ─── exec headless hardening ────────────────────────────────────
 
 describe('exec headless hardening', () => {

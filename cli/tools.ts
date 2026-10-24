@@ -26,6 +26,7 @@ import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { isSensitivePath } from '../lib/sensitive-paths.ts';
+import { collectSensitiveValues, redactDeep, redactText } from './secret-redaction.ts';
 import {
   enforceRoleCapability,
   formatRoleCapabilityDenial,
@@ -2316,8 +2317,48 @@ function makeAuditorPreCommitGate({
  *   Both fall back to `PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW` env (comma-
  *   separated) when the option is omitted, so the daemon's delegated tool
  *   executors inherit the user's policy without re-loading config.
+ *
+ * Every result then passes through `redactToolResult`, so values from the
+ * workspace's credential files never reach the model, whichever tool fetched
+ * them (see cli/secret-redaction.ts).
  */
 export async function executeToolCall(call, workspaceRoot, options = {}) {
+  const result = await executeToolCallUnredacted(call, workspaceRoot, options);
+  return redactToolResult(result, call?.tool, workspaceRoot);
+}
+
+async function redactToolResult(result, tool, workspaceRoot) {
+  if (!result || typeof result.text !== 'string') return result;
+  let values;
+  try {
+    values = await collectSensitiveValues(workspaceRoot);
+  } catch {
+    return result;
+  }
+  if (values.length === 0) return result;
+  const { value: redacted, count: total, files } = redactDeep(result, values);
+  if (total === 0) return result;
+  // The note counts what the model reads (the text); the card and meta are
+  // scrubbed too, but repeat the same output.
+  const count = redactText(result.text, values).count;
+  // stderr: CLI stdout carries user output and --json payloads.
+  console.error(
+    JSON.stringify({
+      level: 'info',
+      event: 'tool_output_redacted',
+      tool,
+      count,
+      files: [...files],
+    }),
+  );
+  if (count === 0) return redacted;
+  return {
+    ...redacted,
+    text: `${redacted.text}\n\n(${count} value${count === 1 ? '' : 's'} from sensitive files redacted)`,
+  };
+}
+
+async function executeToolCallUnredacted(call, workspaceRoot, options = {}) {
   const disabledList = resolveToolPolicyList(options.disabledTools, 'PUSH_DISABLED_TOOLS');
   const callCanonical = canonicalizeCliToolName(call?.tool);
   if (disabledList.has(callCanonical)) {
