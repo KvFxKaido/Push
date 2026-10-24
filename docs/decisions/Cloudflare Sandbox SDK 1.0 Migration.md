@@ -337,9 +337,16 @@ restores of the snapshot made before the deploy each returned
 SDK 0.12 and is not restorable after the 1.0 upgrade` each time, so it was
 the refusal, not some other miss.
 
+**Modal fallback: alive.** With `MODAL_SANDBOX_BASE_URL` copied to staging
+by the owner, staging was redeployed with `--var PUSH_SANDBOX_PROVIDER:modal`
+(version `88edc5a4`) and driven through `/api/sandbox/*`: create 200 in 51 s
+(cold), exec 200 (exit 0), write and read-back 200, cleanup 200. It's a
+working escape hatch if 1.0 has to be abandoned. One parity gap: Modal's
+image runs Python 3.12.10, against 3.11.14 on the Cloudflare image. Staging
+was then redeployed on `cloudflare` (version `6eb92269`), and
+`snapshot-smoke.mjs` passed again (restore 3.7 s, GREEN).
+
 **Still open**
-- **Modal fallback:** needs `MODAL_SANDBOX_BASE_URL` on staging (owner step;
-  see Phase 0).
 - **`Date` values over RPC** for process `startTime` and `endTime`: no
   smoke layer starts a background process.
 - **Process lifetimes beyond the idle window.** There's no keep-alive alarm
