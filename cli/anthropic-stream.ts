@@ -24,11 +24,11 @@
  * extended-thinking + tool-use combinations 400 on the second turn with
  * `invalid_request_error`.
  *
- * Prompt caching: when `req.cacheBreakpointIndices` is set, the system message
- * + indicated tail messages get tagged with `cache_control: { type:
- * 'ephemeral' }`, hard-capped at the wire layer so direct-Anthropic CLI
- * sessions get the same Hermes `system_and_3` prefix caching the
- * OpenRouter-Anthropic CLI path already has.
+ * Prompt caching: the system message + tail messages get tagged with
+ * `cache_control: { type: 'ephemeral' }`, hard-capped at the wire layer, the
+ * Hermes `system_and_3` shape. `req.cacheBreakpointIndices` picks the tail
+ * when set; otherwise it defaults to the last `MAX_ROLLING_CACHE_BREAKPOINTS`
+ * non-system messages. An explicit `[]` turns caching off.
  *
  * Sampling: `temperature` defaults to 0.1, but `toAnthropicMessages` strips it
  * (and `top_p`) on Opus 4.7+, which removed those parameters and 400s if sent.
@@ -43,6 +43,10 @@ import type {
 import { aiGatewaySkipCacheHeaders } from '../lib/ai-gateway.ts';
 import { anthropicEventStream, toAnthropicMessages } from '../lib/anthropic-bridge.ts';
 import { continueAnthropicPauseTurns } from '../lib/anthropic-pause-continuation.ts';
+import {
+  findRollingCacheBreakpoints,
+  MAX_ROLLING_CACHE_BREAKPOINTS,
+} from '../lib/context-transformer.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
 
@@ -82,6 +86,16 @@ async function* cliAnthropicStream(
 ): AsyncIterable<PushStreamEvent> {
   const model = req.model && req.model.trim() ? req.model : config.defaultModel;
   const enableWebSearch = resolveAnthropicWebSearch(req, config);
+  // No CLI caller sets cacheBreakpointIndices (the lead loop, explorer, auditor
+  // and daemon forward the kernel's request as-is), so default to the same
+  // rolling tail the web lane gets from transformContextBeforeLLM. An explicit
+  // empty array still opts out.
+  const cachedReq: PushStreamRequest<LlmMessage> = {
+    ...req,
+    cacheBreakpointIndices:
+      req.cacheBreakpointIndices ??
+      findRollingCacheBreakpoints(req.messages, MAX_ROLLING_CACHE_BREAKPOINTS),
+  };
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -97,7 +111,7 @@ async function* cliAnthropicStream(
     baseBody: {},
     runAttempt: async function* ({ replayAssistantTurns }) {
       const upstreamBody = JSON.stringify(
-        toAnthropicMessages(req, {
+        toAnthropicMessages(cachedReq, {
           modelOverride: model,
           enableWebSearch,
           temperatureDefault: 0.1,
