@@ -214,8 +214,12 @@ describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLo
           );
           const body = server.requests[0];
           const system = body.messages.find((m) => m.role === 'system');
+          // A cached system prompt arrives as an array of text blocks; join
+          // their text rather than JSON-stringifying, which escapes quotes.
           const text =
-            typeof system.content === 'string' ? system.content : JSON.stringify(system.content);
+            typeof system.content === 'string'
+              ? system.content
+              : system.content.map((part) => part.text ?? '').join('');
           return { text, tools: body.tools ?? [] };
         } finally {
           await server.stop();
@@ -239,6 +243,29 @@ describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLo
     assert.ok(!text.includes('Available tools:'), 'prose tool catalog still sent');
     assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
     assert.ok(text.includes('Per-turn tool budget'), 'protocol rules dropped with the catalog');
+  });
+
+  it('drops the GitHub catalog but keeps its intro and rules when a token resolves', async () => {
+    // PUSH_GITHUB_TOKEN wins the token chain, so the GitHub block is always
+    // present here; without it the lean GitHub path may never run.
+    const { text, tools } = await systemPromptFor({
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+      env: {
+        PUSH_OPENROUTER_TRANSPORT: 'chat',
+        PUSH_PROVIDER_FAILOVER: '0',
+        PUSH_GITHUB_TOKEN: 'test-token',
+      },
+    });
+    assert.ok(
+      tools.some((t) => (t.function?.name ?? t.name) === 'pr_create'),
+      'GitHub native schemas missing',
+    );
+    assert.ok(text.includes('GITHUB TOOLS'), 'GitHub heading dropped');
+    assert.ok(text.includes('`repo` is always "owner/name"'), 'GitHub repo-format intro dropped');
+    assert.ok(text.includes('Merges happen through the PR flow'), 'GitHub rules dropped');
+    assert.ok(!text.includes('Available tools:'), 'a prose tool catalog is still sent');
+    assert.ok(!text.includes('Emit only JSON blocks'), 'a text-dispatch rule is still sent');
   });
 
   it('keeps the full catalog for a text-dispatch model', async () => {
