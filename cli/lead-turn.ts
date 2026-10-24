@@ -91,6 +91,7 @@ import {
   isReadOnlyToolCall,
   REPEAT_EXEMPT_TOOLS,
   TOOL_PROTOCOL,
+  toNativeToolProtocol,
 } from './tools.js';
 import {
   buildWorkspaceSnapshot,
@@ -768,6 +769,19 @@ export async function runLeadKernelTurn(
       })
     : undefined;
 
+  // Opt-in provider failover can retry a round on another provider, possibly
+  // one with no native tool calling (see the stream wrapper below).
+  const failoverEnabled =
+    process.env.PUSH_PROVIDER_FAILOVER === '1' || process.env.PUSH_PROVIDER_FAILOVER === 'true';
+  // With native schemas attached, the prose tool catalogs only repeat them and
+  // their "Emit only JSON blocks" rule contradicts native calling, so send the
+  // lean protocol. Keep the full catalog when failover could land on a
+  // text-dispatch model that needs it.
+  const leanToolProtocols = nativeToolSchemas !== undefined && !failoverEnabled;
+  const leadToolProtocol = leanToolProtocols ? toNativeToolProtocol(TOOL_PROTOCOL) : TOOL_PROTOCOL;
+  const leadGitHubProtocol =
+    githubProtocol && leanToolProtocols ? toNativeToolProtocol(githubProtocol) : githubProtocol;
+
   // Tee the provider stream into the engine event vocabulary so the TUI /
   // REPL / daemon clients render the kernel's rounds exactly like engine
   // rounds. The kernel makes one stream call per round; each `done` commits
@@ -815,9 +829,6 @@ export async function runLeadKernelTurn(
   // the legacy `streamCompletion` applied. Failover only fires before any event
   // streamed this round (`yieldedAny`), so a partially-rendered round is never
   // re-attempted on another provider.
-  const failoverEnabled =
-    process.env.PUSH_PROVIDER_FAILOVER === '1' || process.env.PUSH_PROVIDER_FAILOVER === 'true';
-
   const stream: PushStream<LlmMessage> = (req) =>
     (async function* () {
       const tried = new Set<string>([providerConfig.id]);
@@ -1276,13 +1287,13 @@ export async function runLeadKernelTurn(
         webSearchToolProtocol: '',
         // The CLI's full tool protocol rides the kernel's sandbox slot, same
         // as the daemon's delegated Coder nodes.
-        sandboxToolProtocol: TOOL_PROTOCOL,
+        sandboxToolProtocol: leadToolProtocol,
         // Lead-only extras: GitHub (when a token resolves) plus the Explorer
         // fan-out arc — advertised only when the matching executor paths are
         // wired above (toolExec's delegate_explorer route) and not disabled
         // by policy, so advertising stays aligned with executor support.
         extraToolProtocols: [
-          ...(githubProtocol ? [githubProtocol] : []),
+          ...(leadGitHubProtocol ? [leadGitHubProtocol] : []),
           TODO_TOOL_PROTOCOL,
           ...(explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : []),
         ],

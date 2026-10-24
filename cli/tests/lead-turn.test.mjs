@@ -190,6 +190,75 @@ describe('wrapCliDetectAllToolCalls — malformed signal (Rule 1 source)', () =>
   });
 });
 
+describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLoopback, () => {
+  // With native schemas attached, the prose catalog repeats every tool and its
+  // "Emit only JSON blocks" rule contradicts native calling, so the lead sends
+  // the lean protocol. Text-mode models, and runs that may fail over to one,
+  // keep the full catalog.
+  const NATIVE_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+
+  async function systemPromptFor({ provider, model, env = {} }) {
+    const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, env);
+    try {
+      return await withTempWorkspace(async (cwd) => {
+        const server = await startSequencedProviderServer([{ tokens: ['Done.'] }]);
+        try {
+          await runLeadKernelTurn(
+            makeState(cwd, { provider, model }),
+            { ...PROVIDER_CONFIGS[provider], url: server.url },
+            'mock-key',
+            'Say hi.',
+            5,
+            { emit: () => {} },
+          );
+          const body = server.requests[0];
+          const system = body.messages.find((m) => m.role === 'system');
+          const text =
+            typeof system.content === 'string' ? system.content : JSON.stringify(system.content);
+          return { text, tools: body.tools ?? [] };
+        } finally {
+          await server.stop();
+        }
+      });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it('sends the lean protocol when native schemas are attached', async () => {
+    const { text, tools } = await systemPromptFor({
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+      env: { PUSH_OPENROUTER_TRANSPORT: 'chat', PUSH_PROVIDER_FAILOVER: '0' },
+    });
+    assert.ok(tools.length > 0, 'native schemas missing');
+    assert.ok(!text.includes('Available tools:'), 'prose tool catalog still sent');
+    assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+    assert.ok(text.includes('Per-turn tool budget'), 'protocol rules dropped with the catalog');
+  });
+
+  it('keeps the full catalog for a text-dispatch model', async () => {
+    const { text, tools } = await systemPromptFor({ provider: 'ollama', model: 'mock-model' });
+    assert.equal(tools.length, 0);
+    assert.ok(text.includes('Available tools:'));
+    assert.ok(text.includes('Emit only JSON blocks'));
+  });
+
+  it('keeps the full catalog when provider failover could switch to a text-mode model', async () => {
+    const { text, tools } = await systemPromptFor({
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+      env: { PUSH_OPENROUTER_TRANSPORT: 'chat', PUSH_PROVIDER_FAILOVER: '1' },
+    });
+    assert.ok(tools.length > 0);
+    assert.ok(text.includes('Available tools:'));
+  });
+});
+
 describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopback, () => {
   it('sends the lead identity and commits the kernel summary as the assistant turn', async () => {
     await withTempWorkspace(async (cwd) => {
