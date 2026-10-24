@@ -25,6 +25,7 @@ import {
 import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
+import { isSensitivePath } from '../lib/sensitive-paths.ts';
 import {
   enforceRoleCapability,
   formatRoleCapabilityDenial,
@@ -1292,6 +1293,21 @@ export function detectToolCall(text) {
   return detected.calls[0] || null;
 }
 
+/**
+ * `ensureInsideWorkspace` for the file tools, which also refuse
+ * credential-looking paths (`.env`, keys, `~/.ssh/…`; templates such as
+ * `.env.example` pass). The predicate is the shared lib/sensitive-paths.ts,
+ * so this matches the daemon's file handlers. Path-shape only: `exec` can
+ * still read these files, since a shell command isn't a path.
+ */
+export async function ensureFileToolPath(workspaceRoot, rawPath) {
+  const resolved = await ensureInsideWorkspace(workspaceRoot, rawPath);
+  if (isSensitivePath(rawPath) || isSensitivePath(resolved)) {
+    throw new Error(`sensitive path refused: ${rawPath} looks like a credential file`);
+  }
+  return resolved;
+}
+
 export async function ensureInsideWorkspace(workspaceRoot, rawPath) {
   const trimmed = rawPath.trim();
   if (!trimmed) throw new Error('path is required');
@@ -1407,6 +1423,9 @@ function classifyToolError(err) {
   if (lower.includes('path escapes workspace root')) {
     return { code: 'PATH_ESCAPE', message, retryable: false };
   }
+  if (lower.includes('sensitive path refused')) {
+    return { code: 'SENSITIVE_PATH', message, retryable: false };
+  }
   if (lower.includes('enoent') || lower.includes('no such file')) {
     return { code: 'NOT_FOUND', message, retryable: true };
   }
@@ -1442,7 +1461,24 @@ function classifyToolError(err) {
   return { code: 'TOOL_ERROR', message, retryable: false };
 }
 
+/**
+ * Drop matches in credential-looking files from rg/grep output
+ * (`path:line:text`). Done on the output so one predicate covers both search
+ * backends; the lazy match skips a Windows drive letter's colon.
+ */
+function withoutSensitiveMatches(output) {
+  const kept = output.split('\n').filter((line) => {
+    const m = /^(.*?):\d+:/.exec(line);
+    return !(m && isSensitivePath(m[1]));
+  });
+  return kept.join('\n').trim() || 'No matches';
+}
+
 async function executeSearch(pattern, searchRoot, maxResults) {
+  return withoutSensitiveMatches(await executeRawSearch(pattern, searchRoot, maxResults));
+}
+
+async function executeRawSearch(pattern, searchRoot, maxResults) {
   try {
     const { stdout } = await execFileAsync(
       'rg',
@@ -2515,10 +2551,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_file': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const raw = await fs.readFile(filePath, 'utf8');
         const startLine = asOptionalNumber(call.args.start_line);
         const endLine = asOptionalNumber(call.args.end_line);
@@ -2551,7 +2584,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
       case 'list_dir': {
         const dirArg = typeof call.args.path === 'string' ? call.args.path : '.';
-        const dirPath = await ensureInsideWorkspace(workspaceRoot, dirArg);
+        const dirPath = await ensureFileToolPath(workspaceRoot, dirArg);
         const entries = await fs.readdir(dirPath, { withFileTypes: true });
         const mapped = entries
           .map((entry) => ({
@@ -2587,7 +2620,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         if (!pattern) throw new Error('pattern cannot be empty');
         const searchPath =
           typeof call.args.path === 'string'
-            ? await ensureInsideWorkspace(workspaceRoot, call.args.path)
+            ? await ensureFileToolPath(workspaceRoot, call.args.path)
             : workspaceRoot;
         const maxResults = clamp(
           asOptionalNumber(call.args.max_results) ?? DEFAULT_SEARCH_RESULTS,
@@ -3180,10 +3213,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'write_file': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const content = asString(call.args.content, 'content');
         await backupFile(filePath, workspaceRoot);
         // Prior content feeds the transcript edit card (meta.editDiff); a
@@ -3233,10 +3263,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'edit_file': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const hasArg = (name) => Object.prototype.hasOwnProperty.call(call.args, name);
         const hasEditsArg = hasArg('edits');
         const searchArgNames = ['search', 'replace', 'old_string', 'new_string', 'replace_all'];
@@ -3442,10 +3469,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_symbols': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const content = await fs.readFile(filePath, 'utf8');
         const lines = content.split('\n');
         const symbols = [];
@@ -3469,10 +3493,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_symbol': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const symbolName = asString(call.args.symbol, 'symbol').trim();
         if (!symbolName) throw new Error('symbol cannot be empty');
         const content = await fs.readFile(filePath, 'utf8');
@@ -3616,8 +3637,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'git_diff': {
+        // A diff of a tracked credential file carries its contents.
         const diffPath = call.args.path
-          ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'))
+          ? await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'))
           : null;
         const staged = call.args.staged === true;
         const gitArgs = ['diff', '--stat'];
@@ -3938,10 +3960,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'undo_edit': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const backupDir = path.join(workspaceRoot, '.push', 'backups');
         // Flatten both separators — path.relative emits OS-native ones (backslash
         // on Windows), so matching only `/` would leave the separator in the name
