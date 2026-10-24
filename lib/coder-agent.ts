@@ -111,6 +111,7 @@ import {
   SHARED_OPERATIONAL_CONSTRAINTS,
   CODER_CODE_DISCIPLINE,
   CANONICAL_DOCS_GUIDANCE,
+  TOOL_CALL_PLACEMENT_NATIVE_SECTION,
   TOOL_CALL_PLACEMENT_SECTION,
 } from './system-prompt-sections.js';
 import {
@@ -1215,6 +1216,13 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
    */
   leadToolGuidance?: boolean;
   /**
+   * The caller sent lean tool protocols (native schemas attached, failover
+   * off). The lead's Tool-Call-Placement boundary then uses its native
+   * wording, since native calls are dispatched from stream events, not
+   * content text. Only meaningful with `leadMode`.
+   */
+  leanToolProtocols?: boolean;
+  /**
    * Which lead tool families the caller's surface actually wires. Drives lead
    * guidance so it never instructs the model to use tools that aren't
    * executable here. Defaults to `'full'` (the web inline lead + CLI lead,
@@ -1329,6 +1337,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     harnessContextResetsEnabled,
     persona,
     leadToolGuidance = false,
+    leanToolProtocols = false,
     leadToolScope = 'full',
     nativeToolSchemas,
     repeatExemptTools,
@@ -1441,8 +1450,12 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   // Lead-only operational guidance ported from the Orchestrator prompt.
   if (leadMode) {
     // The reasoning-channel placement boundary is name-free, so it's correct
-    // on every lead surface (web + CLI both dispatch from the content channel).
-    promptBuilder.append('tool_instructions', TOOL_CALL_PLACEMENT_SECTION);
+    // on every lead surface. Lean callers get the native wording: their calls
+    // arrive as stream events, not content text.
+    promptBuilder.append(
+      'tool_instructions',
+      leanToolProtocols ? TOOL_CALL_PLACEMENT_NATIVE_SECTION : TOOL_CALL_PLACEMENT_SECTION,
+    );
     // Tool-routing + structured-error guidance names the canonical web sandbox /
     // GitHub tools, so it ships only when the caller is on that surface (the web
     // inline lane). The CLI lead opts out — see `leadToolGuidance`.
