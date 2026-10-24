@@ -1106,6 +1106,29 @@ export const GITHUB_TOOL_PROTOCOL = `[GitHub tool schema version: ${deriveProtoc
 
 ${GITHUB_TOOL_PROTOCOL_BODY}`;
 
+const TEXT_DISPATCH_HEADER =
+  'When you need tools, output one or more fenced JSON blocks:\n```json\n{"tool":"tool_name","args":{"key":"value"}}\n```\n\n';
+const TEXT_DISPATCH_RULE =
+  'Do not describe tool calls in prose. Emit only JSON blocks for tool calls.';
+
+/**
+ * Lean variant of a text tool protocol block (`TOOL_PROTOCOL`,
+ * `GITHUB_TOOL_PROTOCOL`) for a lead whose tools ride native schemas. The
+ * schemas already describe every tool, so the prose `Available tools:` catalog
+ * repeats them, and the text-dispatch header and "Emit only JSON blocks" rule
+ * contradict native calling. Keeps everything else (the schema-version marker,
+ * the GitHub intro, the Rules block). Derived from the full block rather than
+ * hand-copied so the two can't drift; the fenced-JSON parser stays on, so a
+ * model that answers with a JSON block still dispatches.
+ */
+export function toNativeToolProtocol(protocol: string): string {
+  return protocol
+    .replace(TEXT_DISPATCH_HEADER, '')
+    .replace(/\nAvailable tools:\n(?:- .*\n)+/, '\n')
+    .replace(TEXT_DISPATCH_RULE, 'Do not describe tool calls in prose; make the call.')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
 /**
  * Synchronous GitHub protocol block — env tokens only. Used for the instant
  * (pre-enrichment) base prompt so we don't spawn `gh` on the fast path.

@@ -39,7 +39,10 @@ consumes. So whichever way a model answers — fenced JSON (text-dispatch) or a
 native tool call — both converge at one dispatch path. Consequences:
 
 - The system prompt and text-dispatch path are untouched; no "two instructions
-  fighting." A model can use either route in the same turn.
+  fighting." A model can use either route in the same turn. *(Revised for the
+  CLI lead on 2026-10-24: with native schemas attached it sends a lean prompt
+  without the prose tool catalog; the text-dispatch parser is unchanged. See
+  the addendum below.)*
 - Non-capable models are unaffected — they simply never receive a `tools` array.
 - Loose/best-effort parameter types are safe: executors already accept the
   model's free-form JSON on the text path, and nothing runs in strict mode.
@@ -250,3 +253,36 @@ Two seams the first cut missed (caught in #1219 review):
    capture and emits BOTH on replay; the unused field is ignored. The dual-shape
    read/emit lives in `lib/gemini-thought-signature.ts`, shared by the pump,
    serializer, and normalizer. Absent for every non-Gemini upstream.
+
+## Addendum (2026-10-24) — lean CLI lead prompt when native schemas are attached
+
+The "system prompt untouched" choice above meant a native-capable CLI lead
+received every tool twice: as native schemas and again as the prose
+`Available tools:` catalog in `TOOL_PROTOCOL` / `GITHUB_TOOL_PROTOCOL`, ending
+in "Emit only JSON blocks for tool calls", which contradicts native calling.
+Measured on the harness bake-off (`claude-haiku-5-5`, 79 requests), those two
+catalogs were about 10.8k of the 22.8k-character system prompt, next to 18.7k
+characters of native schemas.
+
+The CLI lead now sends a lean variant (`toNativeToolProtocol`, `cli/tools.ts`)
+when native schemas are attached:
+
+- **Dropped:** the text-dispatch header, the prose `Available tools:` catalog,
+  and the "Emit only JSON blocks" rule (reworded to "make the call").
+- **Kept:** the schema-version marker, the GitHub intro (`repo` is
+  "owner/name", token resolution), and the Rules blocks (paths, per-turn
+  budget, diagnostics, read budget).
+- **Unchanged:** dispatch. The fenced-JSON parser still runs, so a model that
+  answers with a JSON block still dispatches; native calling stays additive at
+  dispatch, which is the part of this decision that holds.
+- **Full catalog kept** for text-dispatch models, and whenever
+  `PUSH_PROVIDER_FAILOVER` is on, since a fallback provider may lack native
+  calling.
+
+The lean variant is derived from the full block, not hand-copied, so the two
+can't drift. Native schemas are generated from the protocol definitions in
+code, so removing the prose catalog removes no tool. The core block shrinks
+from 6,779 to 1,964 characters and the GitHub block from 4,025 to 1,030.
+
+Scope: the CLI lead only. The web lead and the daemon's delegated Coder and
+Explorer still send the full prompt alongside their schemas.
