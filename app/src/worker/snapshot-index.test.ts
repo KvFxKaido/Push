@@ -113,7 +113,13 @@ describe('snapshot-index', () => {
     const written = await putSnapshot(kv, {
       repoFullName: 'a/b',
       branch: 'feature/backup',
-      backupHandle: { id: 'backup-1', dir: '/workspace' },
+      backupHandle: {
+        id: 'backup-1',
+        dir: '/workspace',
+        size: 1,
+        sha256: 'h',
+        format: 'tar+zstd/1',
+      },
       restoreToken: 'tok',
     });
 

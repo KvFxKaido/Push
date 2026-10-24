@@ -58,9 +58,8 @@ ARG PUSH_SANDBOX_YARN_VERSION=4.17.0
 
 # What the 0.12 base provided (git … ca-certificates), then the extras Push has
 # always added: ripgrep is required by Push tool execution; file, git-lfs,
-# rsync, sqlite3 and tree are small readiness conveniences. squashfs-tools
-# converts 0.12 SquashFS backups on first restore (see the facade's
-# restoreBackup) and can go once those have all expired.
+# rsync, sqlite3 and tree are small readiness conveniences. (No squashfs-tools:
+# 0.12 SquashFS backups are refused at cutover, not converted.)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -76,7 +75,6 @@ RUN apt-get update \
       ripgrep \
       rsync \
       sqlite3 \
-      squashfs-tools \
       tree \
  && git lfs install --system --skip-repo \
  && rm -rf /var/lib/apt/lists/*

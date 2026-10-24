@@ -318,8 +318,9 @@ describe('Sandbox facade: backups', () => {
     expect(backups.restore).toHaveBeenCalledWith(record, { dir: '/tmp/stage' });
   });
 
-  it('unpacks a 0.12 SquashFS backup (no format) straight into the target', async () => {
+  it('refuses a 0.12 SquashFS handle (no format) as expired, without starting the container', async () => {
     const id = '11111111-2222-3333-4444-555555555555';
+    // A live 0.12 backup: still within its TTL, archive present. Refused anyway.
     const bucket = makeBucket({
       [`backups/${id}/meta.json`]: JSON.stringify({
         createdAt: new Date().toISOString(),
@@ -327,23 +328,12 @@ describe('Sandbox facade: backups', () => {
       }),
       [`backups/${id}/data.sqsh`]: '"bytes"',
     });
-    const { sandbox, calls } = makeSandbox(undefined, bucket);
-    await expect(sandbox.restoreBackup({ id, dir: '/tmp/stage' })).resolves.toMatchObject({
-      success: true,
-    });
-    expect(calls[0].options.stdin).toBe(`stream:backups/${id}/data.sqsh`);
-    expect(calls[1].argv[2]).toContain('unsquashfs -f -d');
-    expect(backups.restore).not.toHaveBeenCalled();
-  });
-
-  it('refuses an expired 0.12 backup', async () => {
-    const id = '11111111-2222-3333-4444-555555555555';
-    const bucket = makeBucket({
-      [`backups/${id}/meta.json`]: JSON.stringify({ createdAt: '2000-01-01T00:00:00Z', ttl: 3600 }),
-    });
-    const { sandbox } = makeSandbox(undefined, bucket);
-    await expect(sandbox.restoreBackup({ id, dir: '/tmp/stage' })).rejects.toThrow(
-      /^BACKUP_EXPIRED: /,
+    const { sandbox, calls, container } = makeSandbox(undefined, bucket);
+    await expect(sandbox.restoreBackup({ id, dir: '/tmp/stage' } as never)).rejects.toThrow(
+      /^BACKUP_EXPIRED: .*Sandbox SDK 0\.12/,
     );
+    expect(calls).toHaveLength(0);
+    expect(container.start).not.toHaveBeenCalled();
+    expect(backups.restore).not.toHaveBeenCalled();
   });
 });

@@ -19,7 +19,7 @@
  * bump `INDEX_SCHEMA_VERSION`.
  */
 
-import type { LegacyBackupHandle, SandboxBackupHandle } from './sandbox-do';
+import type { SandboxBackupHandle } from './sandbox-do';
 import type { KVNamespace, KVNamespaceListResult, R2Bucket } from '@cloudflare/workers-types';
 
 export const INDEX_SCHEMA_VERSION = 1;
@@ -365,12 +365,13 @@ function validateEntry(raw: unknown): SnapshotIndexEntry | null {
 
 function isBackupHandle(raw: unknown): raw is SandboxBackupHandle {
   if (!raw || typeof raw !== 'object') return false;
-  const handle = raw as Partial<LegacyBackupHandle>;
+  // Deliberately shape-only: a 0.12 descriptor (no `format`) still parses, so
+  // restore reaches the facade's explicit refusal instead of a silent miss.
+  const handle = raw as Partial<SandboxBackupHandle>;
   return (
     typeof handle.id === 'string' &&
     handle.id.length > 0 &&
     typeof handle.dir === 'string' &&
-    handle.dir.startsWith('/') &&
-    (handle.localBucket === undefined || typeof handle.localBucket === 'boolean')
+    handle.dir.startsWith('/')
   );
 }

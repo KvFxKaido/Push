@@ -42,7 +42,7 @@ deploys); use the `versions` variant and promote, or set via dashboard.
 | `PUSH_SESSION_SECRET`, `GITHUB_ALLOWED_USER_IDS`, `PUSH_SESSION_GATE_ENFORCE` | GitHub-identity session gate (see [Private Cloudflare Deployment](Private%20Cloudflare%20Deployment.md)) |
 | `ALLOWED_ORIGINS` | CORS allowlist |
 | At least one provider key (e.g. `MOONSHOT_API_KEY`, `ANTHROPIC_API_KEY`, …) | A model to talk to — or route BYOK through the AI Gateway instead |
-| `BACKUP_BUCKET_NAME`, `CLOUDFLARE_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Sandbox SDK backups (the workspace preservation floor). The R2 keypair comes from dash → R2 → Manage R2 API Tokens → Object Read & Write, scoped to the snapshots bucket |
+| `BACKUP_BUCKET_NAME`, `CLOUDFLARE_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | **Sandbox SDK 0.12 only.** 0.12 backups (the workspace preservation floor) need them; SDK 1.0 backups use the `BACKUP_BUCKET` binding through the `DirectoryBackupGateway` export and need none of them. Delete them after the 1.0 cutover. The R2 keypair comes from dash → R2 → Manage R2 API Tokens → Object Read & Write, scoped to the snapshots bucket |
 
 **Optional:**
 

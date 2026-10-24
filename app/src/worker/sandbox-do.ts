@@ -18,8 +18,8 @@
  * - Background processes have no SDK equivalent; they're tracked in a
  *   per-process directory in the container.
  * - Backups use `DirectoryBackup`. A 0.12 SquashFS handle (no `format`) is
- *   unpacked straight into the target on restore; those expire within seven
- *   days of the switch, after which that path can go.
+ *   refused as expired rather than converted: snapshots live at most seven
+ *   days, so the cutover drops them instead of carrying a SquashFS reader.
  *
  * Errors that callers branch on carry their code in the message
  * (`CODE: detail`) as well as `.code`, because custom error properties
@@ -84,17 +84,8 @@ export interface SandboxProcessInfo {
   endTime?: Date;
 }
 
-/** A 0.12 backup handle: no `format`, stored as SquashFS under backups/<id>/. */
-export interface LegacyBackupHandle {
-  id: string;
-  dir: string;
-  localBucket?: boolean;
-}
-
 /** What createBackup returns and descriptors store; `dir` may be overridden on restore. */
-export type SandboxBackupHandle =
-  | (DirectoryBackupRecord & { expiresAt?: string })
-  | LegacyBackupHandle;
+export type SandboxBackupHandle = DirectoryBackupRecord & { expiresAt?: string };
 
 export interface CreateBackupOptions {
   dir: string;
@@ -215,15 +206,13 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
     await this.#starting;
   }
 
-  async #run(argv: string[], options: SandboxExecOptions & { stdin?: unknown } = {}) {
+  async #run(argv: string[], options: SandboxExecOptions = {}) {
     await this.#ensureRunning();
-    // Built untyped and cast once: the DOM lib's AbortSignal / ReadableStream
-    // and the Workers types' are distinct declarations of the same runtime
-    // objects.
+    // Built untyped and cast once: the DOM lib's AbortSignal and the Workers
+    // types' are distinct declarations of the same runtime object.
     const execOptions = {
       cwd: options.cwd ?? WORKSPACE,
       env: { ...BASE_ENV, ...options.env },
-      ...(options.stdin ? { stdin: options.stdin } : {}),
       ...(options.timeout !== undefined && options.timeout > 0
         ? { signal: AbortSignal.timeout(options.timeout) }
         : {}),
@@ -441,11 +430,19 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
     if (!handle?.id || !handle.dir?.startsWith('/')) {
       throw codedError('INVALID_BACKUP_CONFIG', 'backup handle needs an id and an absolute dir');
     }
-    await this.#ensureRunning();
-    if (!('format' in handle) || !handle.format) {
-      await this.#restoreLegacy(handle);
-      return { success: true, dir: handle.dir, id: handle.id };
+    if (!handle.format) {
+      // A descriptor written by 0.12 (SquashFS). Not converted: it would have
+      // expired within seven days of the cutover anyway, and BACKUP_EXPIRED
+      // routes callers to the same "start fresh" path an aged-out one takes.
+      console.log(
+        JSON.stringify({ level: 'warn', event: 'cf_legacy_backup_refused', backup_id: handle.id }),
+      );
+      throw codedError(
+        'BACKUP_EXPIRED',
+        `backup ${handle.id} was made by Sandbox SDK 0.12 and is not restorable after the 1.0 upgrade`,
+      );
     }
+    await this.#ensureRunning();
     const meta = await this.#bucket().get(`${BACKUP_PREFIX}${handle.id}.meta.json`);
     if (!meta) throw codedError('BACKUP_NOT_FOUND', `backup ${handle.id} has no metadata`);
     const { expiresAt } = (await meta.json()) as { expiresAt?: string };
@@ -462,47 +459,6 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
       );
     }
     return { success: true, dir: handle.dir, id: handle.id };
-  }
-
-  /** A 0.12 SquashFS backup: unpack it straight into the target directory. */
-  async #restoreLegacy(handle: LegacyBackupHandle): Promise<void> {
-    if (!/^[0-9a-f-]{36}$/i.test(handle.id))
-      throw codedError('INVALID_BACKUP_CONFIG', 'legacy backup id is not a UUID');
-    const metaObject = await this.#bucket().get(`${BACKUP_PREFIX}${handle.id}/meta.json`);
-    if (!metaObject)
-      throw codedError('BACKUP_NOT_FOUND', `legacy backup ${handle.id} has no meta.json`);
-    const meta = (await metaObject.json()) as { createdAt?: string; ttl?: number };
-    const expiresAtMs =
-      Date.parse(meta.createdAt ?? '') + (meta.ttl ?? DEFAULT_BACKUP_TTL_SECONDS) * 1000;
-    if (!Number.isFinite(expiresAtMs) || expiresAtMs - BACKUP_EXPIRY_MARGIN_MS <= Date.now()) {
-      throw codedError('BACKUP_EXPIRED', `legacy backup ${handle.id} has expired`);
-    }
-    const image = await this.#bucket().get(`${BACKUP_PREFIX}${handle.id}/data.sqsh`);
-    if (!image) throw codedError('BACKUP_NOT_FOUND', `legacy backup ${handle.id} has no data.sqsh`);
-    const archive = `/tmp/push-legacy-${handle.id}.sqsh`;
-    const staged = await this.#run(['bash', '-c', `cat > ${shellQuote(archive)}`], {
-      cwd: '/',
-      stdin: image.body,
-    });
-    if (staged.exitCode !== 0)
-      throw codedError(
-        'BACKUP_RESTORE_FAILED',
-        `staging legacy backup failed: ${staged.stderr.trim()}`,
-      );
-    const target = shellQuote(handle.dir);
-    const unpacked = await this.#run(
-      [
-        'bash',
-        '-c',
-        `rm -rf -- ${target} && unsquashfs -f -d ${target} ${shellQuote(archive)} >/dev/null; rc=$?; rm -f ${shellQuote(archive)}; exit $rc`,
-      ],
-      { cwd: '/' },
-    );
-    if (unpacked.exitCode !== 0)
-      throw codedError('BACKUP_RESTORE_FAILED', `unsquashfs failed: ${unpacked.stderr.trim()}`);
-    console.log(
-      JSON.stringify({ level: 'info', event: 'cf_legacy_backup_restored', backup_id: handle.id }),
-    );
   }
 
   #bucket(): R2Bucket {

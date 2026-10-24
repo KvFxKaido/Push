@@ -225,9 +225,10 @@
   // objects; BACKUP_BUCKET is the first-party Sandbox SDK archive binding.
   // Both bindings intentionally point at the same physical bucket. Provision:
   //   npx wrangler r2 bucket create push-cf-snapshots
-  // Production SDK backups also require these deploy-time environment/secrets
-  // (names only; never commit their values): BACKUP_BUCKET_NAME,
-  // CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
+  // SDK 1.0 backups go through BACKUP_BUCKET and the DirectoryBackupGateway
+  // export alone: no R2 API keypair. (0.12 needed BACKUP_BUCKET_NAME,
+  // CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY; delete
+  // those secrets once 1.0 is live, not before.)
   // Retention: superseded descriptors/legacy objects are deleted inline, and
   // the daily cron reaps orphaned legacy `cf-snapshots/` objects. SDK archives
   // under `backups/` use the handle TTL for restore validity; the 7-day R2

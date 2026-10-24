@@ -103,12 +103,21 @@ deadline helper.
     reproduces today's toolchain: Node (decide 22 vs the repo's 24 floor), Bun,
     Python 3.11 with pip and venv, git, curl, jq, zip, and the data libraries.
   - **Additions:** `COPY --from=docker.io/cloudflare/sandbox:<1.x>
-    /usr/local/bin/sandbox-shim`, `squashfs-tools` (needed for snapshot
-    conversion), `WORKDIR /workspace` and `CMD ["sleep","infinity"]`.
+    /usr/local/bin/sandbox-shim`, `WORKDIR /workspace` and
+    `CMD ["sleep","infinity"]`. (Conversion would also have needed
+    `squashfs-tools`; snapshots lapse instead, below.)
   - **Removed:** `EXPOSE`. `ENV` lines no longer reach commands, so those
     values move into the facade's `env`.
 
 ## Snapshots: convert, or let them lapse
+
+**Decided 2026-10-24: let them lapse.** The facade refuses a 0.12 handle as
+`BACKUP_EXPIRED` (logged as `cf_legacy_backup_refused`), which the handler
+already maps to `SNAPSHOT_NOT_FOUND`, the same path an aged-out snapshot
+takes. That removes the SquashFS reader, `squashfs-tools` and the R2 API
+keypair from the migration. The cost: any work that exists only in a
+snapshot taken in the last seven days before cutover is lost, so cut over
+when no long CoderJob is mid-run. The options as first weighed:
 
 Hibernate snapshots are SDK `createBackup` archives in SquashFS format, with
 a **7-day TTL** (`snapshot-index.ts`). CoderJob checkpoint and resume depends
@@ -259,8 +268,8 @@ are deferred to the rehearsal, at the owner's call.
   image, Bun 1.4.4, and `sandbox-shim` from `cloudflare/sandbox:1.0.3`.
 - **Parity, checked against the 0.12 base:** a local build reports Node
   22.23.4 / npm 10.9.9 / Bun 1.4.4 / Python 3.11.14, the data libraries, and
-  every tool the old base had. It adds `squashfs-tools`, needed for the legacy
-  restore path.
+  every tool the old base had. (It briefly added `squashfs-tools` for the
+  legacy restore path, since removed.)
 - **The one deliberate difference:** Debian 12 replaces Ubuntu 22.04.
 - **EXPOSE dropped.** The image-contract test now pins its absence.
 
@@ -273,7 +282,9 @@ are deferred to the rehearsal, at the owner's call.
 - **Git:** `gitCheckout` throws git's own message with any token redacted.
 - **Processes:** run detached, in their own process group.
 - **Backups:** `DirectoryBackup` plus an expiry sidecar. 0.12 SquashFS handles
-  are unpacked directly on restore.
+  are refused as `BACKUP_EXPIRED` without starting the container; a break test
+  confirms the refusal test fails when the check is removed. 1.0 backups need
+  only the `BACKUP_BUCKET` binding, not the 0.12 R2 API keypair.
 - **Error codes:** errors lead their message with the code, because custom
   error properties aren't guaranteed to survive Workers RPC.
 - **Tests:** 21 facade tests. Break tests confirmed the `HOME`, dotfile and
@@ -295,7 +306,8 @@ are deferred to the rehearsal, at the owner's call.
   `startTime` and `endTime`.
 - Restore into a staging directory.
 - Process lifetimes beyond the idle window. There's no keep-alive alarm yet.
-- The legacy conversion path against real 0.12 objects.
+- That a real 0.12 snapshot, restored after the switch, reaches the client as
+  `SNAPSHOT_NOT_FOUND` and starts fresh.
 
 ## Phases after staging
 
@@ -354,12 +366,32 @@ same-day workaround: flip the var and fix forward.
    and GitHub, which suits the in-place path. Side by side runs both classes
    and copies `/workspace` per sandbox, which is more code for state Push
    doesn't keep in containers.
-2. **Snapshots: convert or lapse.** Recommended: convert. The code exists in
-   the docs, and lapsing silently drops CoderJob resume state.
+2. **Snapshots: convert or lapse.** **Decided: lapse** (2026-10-24, see
+   "Snapshots" above). First recommended convert; the reader it needed cost
+   more than seven days of snapshots are worth, and the refusal is not silent.
 3. **Staging secrets: shared or separate.**
 4. **Base image Node version: 22, as today, or the repo's 24 floor.**
 5. **Production switch timing**, set by when 0.x support ends on 2026-12-31.
    Recommended: aim for early December, leaving room to fix forward.
+
+## Follow-up: Cloudflare Artifacts for checkpoints
+
+Not part of this migration. [Artifacts](https://developers.cloudflare.com/artifacts/)
+(Git-compatible storage, open beta since 2026-10-01) could replace
+`DirectoryBackup` for checkpoints: `createBackup` already honours
+`.gitignore`, so a commit captures nearly the same tree. The win is
+capability, not simplicity: checkpoint history, forking a session from a
+checkpoint, and reading a checkpoint's files from the Worker without waking a
+container. Unknowns to spike on staging first:
+
+- **Shallow clones.** Sandboxes clone at `depth: 1`. Pushing a HEAD-parented
+  commit into an empty Artifacts repo may be refused; a parentless commit
+  works but flattens unpushed local commits into working-tree changes.
+- **Private repos.** `import` takes only public HTTPS remotes, so the first
+  push carries the whole history, against a 1 GB per-repo cap.
+- **Cleanup.** Repos have no TTL; Push would own deletion (today the R2
+  bucket's 7-day rule does it).
+- **Beta on beta**, the objection in the archived `artifact-fs` doc.
 
 ## Open questions to settle in staging
 
