@@ -169,6 +169,54 @@ Phase 0 is **done** when staging passes the smoke tests on 0.12.14. That's
 useful on its own: Push gains a staging Worker it can rehearse any risky
 change on.
 
+### Phase 0 progress (2026-10-24)
+
+**Stood up**
+- **Worker:** `push-staging` is live at `https://push-staging.ishawnd.workers.dev`,
+  first deployed as version `0e239a98-d8f1-4742-b88e-384e51a86ca0`.
+- **Code and config:** it was deployed from the #1673 branch, so it runs SDK and
+  image 0.12.14. The config is `wrangler.staging.jsonc`, generated from
+  `wrangler.jsonc` with the differences listed in its header.
+- **Container application:** `push-staging-sandbox`, with `max_instances` 3.
+- **Storage:** its own KV namespaces (`push-staging-SNAPSHOT_INDEX`,
+  `-SANDBOX_TOKENS`, `-ARTIFACTS`, `-CHAT_LIBRARY`) and its own R2 bucket,
+  `push-staging-snapshots`. The bucket has a 7-day expire rule and the
+  default multipart-abort rule.
+- **Secrets set:** `BACKUP_BUCKET_NAME` and `CLOUDFLARE_ACCOUNT_ID`.
+
+**First smoke run: blocked on R2 credentials, as expected**
+- Create works. This is the first live run of the 0.12.14 image.
+- Seeding 256 files works.
+- Hibernate fails with "Missing: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY".
+  The 0.12 SDK uploads backups through presigned R2 URLs, so the bucket
+  binding alone isn't enough.
+
+**Owner step to unblock**
+1. Create an R2 API token scoped to `push-staging-snapshots` with Object
+   Read & Write (Cloudflare dashboard → R2 → Manage API tokens).
+2. Set its two values from a checkout that has `wrangler.staging.jsonc`:
+   `npx wrangler secret put R2_ACCESS_KEY_ID -c wrangler.staging.jsonc` and
+   `npx wrangler secret put R2_SECRET_ACCESS_KEY -c wrangler.staging.jsonc`.
+
+**Found along the way**
+- **Instance type renamed.** Wrangler 4.152 warns that the `"standard"`
+  instance type is now `"standard-1"`, so today's size has a 1.0 name. That
+  answers the instance-size open question.
+- **Production's bucket has no expiry rule.** `push-cf-snapshots` has only the
+  default multipart-abort rule. The `wrangler.jsonc` comment says the 7-day
+  rule "is what physically reclaims" SDK archives, so production snapshot
+  archives have probably never expired. `npm run r2:snapshots:lifecycle`
+  adds it. On Windows, wrangler 4.152's `r2 bucket lifecycle add` crashed
+  (libuv assertion), and staging's rule was set through the API instead.
+- **Cold start.** The first sandbox create on staging took 128 s, most likely
+  the first pull of a new container application's image. Re-measure when
+  warm.
+- **Modal fallback unverified.** Production has `MODAL_SANDBOX_BASE_URL` set,
+  but whether the Modal app behind it is still deployed is unverified. The
+  Modal CLI isn't installed on the dev machine. Testing the fallback on
+  staging needs that URL copied in by the owner, because it may embed a
+  credential.
+
 ## Phases after staging
 
 1. **Image:** a new `Dockerfile.sandbox` on its own base. Build it locally and
