@@ -346,11 +346,47 @@ image runs Python 3.12.10, against 3.11.14 on the Cloudflare image. Staging
 was then redeployed on `cloudflare` (version `6eb92269`), and
 `snapshot-smoke.mjs` passed again (restore 3.7 s, GREEN).
 
-**Still open**
-- **`Date` values over RPC** for process `startTime` and `endTime`: no
-  smoke layer starts a background process.
-- **Process lifetimes beyond the idle window.** There's no keep-alive alarm
-  yet.
+**Background processes: two bugs found and fixed on staging.** No smoke
+layer started a background process, so a probe drove `exec-start`,
+`exec-status`, `exec-logs` and `exec-kill` through the real stub.
+1. **Every `exec-start` failed (500).** The launcher joined its steps with
+   ` && `, and the backgrounding step ends in `&`, giving `& &&`, a bash
+   syntax error. The unit tests only compared strings. Fixed: one step per
+   line under `set -e`, plus a test that parses every generated script with
+   a real `bash -n` (confirmed red against the old join).
+2. **A finished process could report `running` forever.** The command ran
+   inline in the wrapper shell, so `exit 3` skipped writing the exit code.
+   And PID 1 (`sleep infinity`) never reaps, so the dead wrapper lingered as
+   a zombie that `kill -0` still found. Fixed: the command runs in its own
+   `bash -c`, and only a non-zombie (`ps -o stat=`) counts as alive.
+
+After the fixes (staging version `fde3fbe3`): a command ending in `exit 3`
+reports `failed`, exit 3, with a 4,010 ms run for a 4 s sleep. Logs come back
+on the right streams. `exec-kill` reports `killed`. A wrapper SIGKILLed
+behind the facade's back (`ps` shows `Zs`) reports `failed`. An unknown id
+is 404.
+
+**`Date` values over RPC: fine.** `started_at` and `ended_at` come back as
+valid ISO strings through the real stub. The Worker and container clocks
+agree within a second. (The dev machine's clock runs about 5 minutes slow,
+which first looked like skew.)
+
+**Keep-alive past the idle window: none, matching 0.12 (decided
+2026-10-24).** In 0.12.4 (`@cloudflare/containers` 0.3.7), the idle timer is
+renewed only by in-flight requests (`isActivityExpired`,
+`renewActivityTimeout`), and Push set `sleepAfter: '1h'` without
+`keepAlive`. So a background process with no requests for an hour was
+stopped on 0.12 too. 1.0's `setInactivityTimeout` behaves the same: the
+lifetime docs say code running in the container is not activity. The 0.12
+code already rejected `keepAlive` for its orphaned-container cost. A process
+someone is watching gets polled, which counts as activity. If a real need
+appears, the 1.0 pattern is an alarm that runs while any process is alive,
+with a cap.
+
+**Noted for the production cutover:** per the 1.0 migration guide, a pending
+0.12 alarm calls the new class's `alarm()` once after the switch. The facade
+has no `alarm()`, so each sandbox that was active logs one internal error,
+which then clears. That's harmless, but expect it in the logs.
 
 ## Phases after staging
 

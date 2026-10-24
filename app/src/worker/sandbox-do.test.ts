@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The runtime base class: Workers RPC needs it, tests only need ctx/env.
@@ -261,6 +262,37 @@ describe('Sandbox facade: background processes', () => {
     expect(script).toContain('timeout -k 5 60');
     expect(calls[0].options.cwd).toBe('/workspace/app');
   });
+
+  it('runs the command in its own bash, so an `exit` in it still records the exit code', async () => {
+    const { sandbox, calls } = makeSandbox();
+    await sandbox.startProcess('echo hi; exit 3');
+    const script = calls[0].argv[2];
+    // The command is quoted into a nested `bash -c`, followed by the bookkeeping.
+    expect(script).toMatch(/bash -c '\\''echo hi; exit 3'\\''; echo \$\? > /);
+  });
+
+  // String assertions can't see a shell syntax error: the first launcher
+  // joined its steps with `&&`, producing `& &&`, and every background process
+  // failed on staging while these tests passed. Parse each generated script
+  // with a real bash.
+  it.skipIf(spawnSync('bash', ['--version']).status !== 0)(
+    'generates scripts that real bash parses',
+    async () => {
+      const id = '11111111-2222-3333-4444-555555555555';
+      const { sandbox, calls } = makeSandbox(() => ({ exitCode: 0, stdout: 'start=1' }));
+      await sandbox.startProcess("echo 'quoted' && sleep 1");
+      await sandbox.startProcess('npm test', { timeout: 60_000 });
+      await sandbox.getProcess(id);
+      await sandbox.killProcess(id, 'SIGTERM');
+      const scripts = calls.filter((c) => c.argv[0] === 'bash').map((c) => c.argv[2]);
+      expect(scripts.length).toBeGreaterThanOrEqual(4);
+      for (const script of scripts) {
+        const parsed = spawnSync('bash', ['-n', '-c', script], { encoding: 'utf8' });
+        expect(parsed.stderr, script).toBe('');
+        expect(parsed.status, script).toBe(0);
+      }
+    },
+  );
 });
 
 describe('Sandbox facade: backups', () => {

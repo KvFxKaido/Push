@@ -319,15 +319,21 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
     const id = crypto.randomUUID();
     const dir = `${PROCESS_ROOT}/${id}`;
     const seconds = options.timeout && options.timeout > 0 ? Math.ceil(options.timeout / 1000) : 0;
-    const body = seconds > 0 ? `timeout -k 5 ${seconds} bash -c ${shellQuote(command)}` : command;
+    // The command gets its own bash, so an `exit` in it can't skip the exit-code
+    // and end-time bookkeeping that follows.
+    const body = `${seconds > 0 ? `timeout -k 5 ${seconds} ` : ''}bash -c ${shellQuote(command)}`;
     // setsid gives the process its own group, so a kill reaches its children.
+    // One step per line under `set -e`: the backgrounding `&` must end its own
+    // line (joining with `&&` made `& &&`, a syntax error), and a failed mkdir
+    // still stops the launch.
     const launcher = [
+      'set -e',
       `mkdir -p ${shellQuote(dir)}`,
       `date +%s%3N > ${shellQuote(`${dir}/start`)}`,
       `setsid bash -c ${shellQuote(`${body}; echo $? > ${dir}/exit.tmp && mv ${dir}/exit.tmp ${dir}/exit && date +%s%3N > ${dir}/end`)} ` +
         `> ${shellQuote(`${dir}/stdout`)} 2> ${shellQuote(`${dir}/stderr`)} < /dev/null &`,
       `echo $! > ${shellQuote(`${dir}/pid`)}`,
-    ].join(' && ');
+    ].join('\n');
     const started = await this.#run(['bash', '-c', launcher], {
       cwd: options.cwd,
       env: options.env,
@@ -349,7 +355,9 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
       `[ -d ${dir} ] || { echo missing; exit 0; }; ` +
         `echo "start=$(cat ${dir}/start 2>/dev/null)"; echo "end=$(cat ${dir}/end 2>/dev/null)"; ` +
         `echo "exit=$(cat ${dir}/exit 2>/dev/null)"; echo "killed=$([ -f ${dir}/killed ] && echo 1)"; ` +
-        `pid=$(cat ${dir}/pid 2>/dev/null); echo "alive=$([ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo 1)"`,
+        // PID 1 (`sleep infinity`) never reaps, so a dead leader lingers as a
+        // zombie that `kill -0` still finds. Count only a non-zombie as alive.
+        `pid=$(cat ${dir}/pid 2>/dev/null); echo "alive=$([ -n "$pid" ] && ps -o stat= -p "$pid" 2>/dev/null | grep -q '^[^Z]' && echo 1)"`,
     ]);
     if (probe.stdout.trim() === 'missing') return null;
     const field = (key: string) =>
