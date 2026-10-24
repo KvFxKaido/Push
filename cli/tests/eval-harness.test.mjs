@@ -222,6 +222,13 @@ test('extractCliRunFields reads both plain and delegated round counters', () => 
   const noAcceptance = extractCliRunFields({ outcome: 'success', rounds: 1 });
   assert.equal(noAcceptance.acceptancePassed, null);
   assert.ok(!isCompleted(noAcceptance));
+
+  // `completed` is the CLI's word for "ended, but no --accept check ran". It
+  // scores only once the harness's own acceptance run supplies the evidence.
+  const completedUnchecked = extractCliRunFields({ outcome: 'completed', rounds: 1 });
+  assert.ok(!isCompleted(completedUnchecked));
+  const completedVerified = { ...completedUnchecked, acceptancePassed: true };
+  assert.ok(isCompleted(completedVerified), 'harness-verified completed run must score');
 });
 
 test('countSessionEvents tallies tool calls, errors, and regression signals', () => {

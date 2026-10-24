@@ -155,7 +155,18 @@ Skill discovery:
 
 Runs a single task and exits. No interaction. High-risk commands are blocked (no approval prompt).
 
-`--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass. The process exits 0 only if the agent succeeds *and* all checks pass.
+`--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass.
+
+The run's outcome says how much Push verified:
+
+| Outcome | Meaning | Exit |
+|---|---|---|
+| `success` | The agent finished and every `--accept` check passed. | 0 |
+| `completed` | The agent finished, but no `--accept` check ran, so nothing confirmed the task is done. In plain mode Push says so on stderr: `[completed, unverified]`. | 0 |
+| `failed` / `acceptance_failed` | A check failed, the output schema didn't validate, or the run errored. `--json` reports a failed check as `acceptance_failed`. | 1 |
+| `max_rounds` | The tool-loop cap ran out. | 1 |
+
+`completed` exits 0, so scripts that only read the exit code behave as before. To require verified work, pass `--accept` and treat only `success` as done. An `--output-schema` checks the answer's shape, not the task, so on its own it gives `completed`.
 
 When `--accept` is present, Push also frames the task using the shared delegation-brief format so acceptance checks are visible to the model during the run, not only after it finishes.
 
@@ -179,7 +190,8 @@ When `--accept` is present, Push also frames the task using the shared delegatio
 line. It uses the same event types and payloads as pushd, including assistant
 tokens, tool lifecycle events, warnings, errors, and acceptance results. The
 last line is always `run_complete`; its outcome reflects acceptance checks as
-well as the agent run. `--json` and `--jsonl` are mutually exclusive.
+well as the agent run, using the outcomes in the table above (`acceptance_failed`
+appears there as `failed`). `--json` and `--jsonl` are mutually exclusive.
 
 `--output-schema <path>` constrains a `push run` final response using a Draft
 2020-12 JSON Schema. Push compiles the schema before starting the run, asks the

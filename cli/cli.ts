@@ -686,7 +686,7 @@ async function runHeadless(
 
   let terminalRunCompleteEmitted = false;
   const emitHeadlessRunComplete = async (
-    outcome: 'success' | 'failed' | 'aborted' | 'max_rounds',
+    outcome: 'success' | 'completed' | 'failed' | 'aborted' | 'max_rounds',
     summary: string,
   ) => {
     if (!ownsTerminalRunComplete || terminalRunCompleteEmitted) return;
@@ -820,18 +820,26 @@ async function runHeadless(
     }
 
     const outputSchemaPassed = !outputSchema || constrainedOutput?.ok === true;
-    const success =
-      result.outcome === 'success' && outputSchemaPassed && (!acceptance || acceptance.passed);
+    // The engine's 'success' only means the model stopped calling tools. Report
+    // `success` when an --accept check verified the work; with no check, the
+    // honest word is `completed` (unverified). Both exit 0, so callers that
+    // only read the exit code are unaffected. An output schema checks the
+    // answer's shape, not the task, so it does not count as verification.
+    const finished = result.outcome === 'success' && outputSchemaPassed;
+    const success = finished && acceptance?.passed === true;
+    const completedUnverified = finished && !acceptance;
 
     const terminalOutcome = success
       ? 'success'
-      : acceptance && !acceptance.passed
-        ? 'failed'
-        : constrainedOutput && !constrainedOutput.ok
+      : completedUnverified
+        ? 'completed'
+        : acceptance && !acceptance.passed
           ? 'failed'
-          : result.outcome === 'error'
+          : constrainedOutput && !constrainedOutput.ok
             ? 'failed'
-            : result.outcome;
+            : result.outcome === 'error'
+              ? 'failed'
+              : result.outcome;
     const terminalSummary =
       constrainedOutput && !constrainedOutput.ok
         ? `Output schema validation failed: ${constrainedOutput.error}`
@@ -848,11 +856,13 @@ async function runHeadless(
             runId: result.runId || null,
             outcome: success
               ? 'success'
-              : acceptance && !acceptance.passed
-                ? 'acceptance_failed'
-                : constrainedOutput && !constrainedOutput.ok
-                  ? 'output_schema_failed'
-                  : result.outcome,
+              : completedUnverified
+                ? 'completed'
+                : acceptance && !acceptance.passed
+                  ? 'acceptance_failed'
+                  : constrainedOutput && !constrainedOutput.ok
+                    ? 'output_schema_failed'
+                    : result.outcome,
             rounds: result.rounds,
             assistant: result.finalAssistantText,
             acceptance,
@@ -880,6 +890,12 @@ async function runHeadless(
       } else {
         process.stdout.write(`${result.finalAssistantText}\n`);
       }
+      if (completedUnverified) {
+        // stderr: stdout stays the assistant's answer for anyone piping it.
+        process.stderr.write(
+          `${fmt.yellow('[completed, unverified]')} no --accept check ran, so Push can't confirm the task is done.\n`,
+        );
+      }
       if (acceptance) {
         const verdict = acceptance.passed ? fmt.green('PASS') : fmt.red('FAIL');
         process.stdout.write(`\nAcceptance checks: ${verdict}\n`);
@@ -890,7 +906,7 @@ async function runHeadless(
       }
     }
 
-    return success ? 0 : 1;
+    return success || completedUnverified ? 0 : 1;
   } catch (err) {
     if (err.name === 'AbortError') {
       await saveSessionState(state);

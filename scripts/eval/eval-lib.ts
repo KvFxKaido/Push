@@ -169,7 +169,12 @@ export function extractCliRunFields(parsed: unknown): CliRunFields {
  * CLI didn't report them (see runHarnessAcceptance in run-evals.ts).
  */
 export function isCompleted(fields: CliRunFields): boolean {
-  return fields.outcome === 'success' && fields.acceptancePassed === true;
+  // `completed` is the CLI's "ended, no --accept check ran"; it scores only
+  // with the harness's own acceptance evidence, same rule as `success`.
+  return (
+    (fields.outcome === 'success' || fields.outcome === 'completed') &&
+    fields.acceptancePassed === true
+  );
 }
 
 // ---------------------------------------------------------------------------

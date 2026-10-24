@@ -52,6 +52,24 @@ export function detectTrailingActionIntent(response: string): boolean {
   const trailingIntent =
     /^(?:(?:so|now|next|then|first|finally|ok(?:ay)?|alright)\b(?:[,:]|\s+[—–-])?\s+)?(?:let'?s|let\s+me|i'?ll|i\s+will|i\s+am\s+going\s+to|i'?m\s+going\s+to|i\s+need\s+to|i\s+should|i\s+want\s+to|we'?ll|we\s+will|we\s+should|we\s+need\s+to)\b(?:\s+(?:now|then|also|quickly|first|next|actually|really|just|go\s+ahead\s+and))*\s+(?:(?:re-?read|read|open|view|inspect|examine|verify|confirm|search|grep|scan|list|fetch|pull|retrieve|explore|investigate|trace|review|execute|diff|cat)\b|dig\s+(?:in|into)\b|check(?!\s+(?:in|back|on)\b)\b|find(?!\s+out\b)\b|run(?!\s+through\b)\b|look\s+(?:at|for|into)\b)/i;
 
+  // Announcements that aren't future-tense, seen as the final line of real runs
+  // that ended with no tool call: a progressive ("I'm reading X now"), a bare
+  // gerund ("Pulling those now."), and a plan fragment ("Starting with those
+  // reads."). The first two require "now" so reports ("Running the tests
+  // confirmed…") and idioms ("I'm reading this as…") stay quiet; the last
+  // rejects a comma clause so a summary ("Starting with the parser, every case
+  // checks out.") does too.
+  const progressiveTools =
+    '(?:reading|opening|checking|running|searching|pulling|fetching|inspecting|reviewing|grepping|listing|scanning)';
+  const nonFutureIntent = [
+    new RegExp(
+      `^(?:i'?m|i\\s+am|we'?re|we\\s+are)\\s+(?:now\\s+)?${progressiveTools}\\b.*\\bnow\\b`,
+      'i',
+    ),
+    new RegExp(`^${progressiveTools}\\b.*\\bnow[.!]?$`, 'i'),
+    /^starting\s+(?:with|on)\b[^,]*$/i,
+  ];
+
   // Sentence splitting is intentionally simple and case-agnostic. Testing the
   // fragments independently makes harmless over-splitting preferable to
   // missing "Found the bug. let me verify the fix."
@@ -60,8 +78,9 @@ export function detectTrailingActionIntent(response: string): boolean {
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence.length > 0);
 
-  return (sentences.length > 0 ? sentences : [cleaned]).some((sentence) =>
-    trailingIntent.test(sentence),
+  return (sentences.length > 0 ? sentences : [cleaned]).some(
+    (sentence) =>
+      trailingIntent.test(sentence) || nonFutureIntent.some((pattern) => pattern.test(sentence)),
   );
 }
 

@@ -294,10 +294,14 @@ async function runTrial(task: EvalTask, trial: number): Promise<TrialResult> {
   const fields = extractCliRunFields(parsed);
   if (timedOut) fields.outcome = 'harness_timeout';
 
-  // Acceptance evidence fallback (Codex P1): if the CLI claims success but
-  // reported no acceptance block (the delegated path doesn't emit one),
+  // Acceptance evidence fallback (Codex P1): if the CLI finished but reported
+  // no acceptance block (its `completed` outcome, or the delegated path),
   // verify the work here — never score a completion nobody checked.
-  if (!timedOut && fields.outcome === 'success' && fields.acceptancePassed === null) {
+  if (
+    !timedOut &&
+    (fields.outcome === 'success' || fields.outcome === 'completed') &&
+    fields.acceptancePassed === null
+  ) {
     fields.acceptancePassed = await runHarnessAcceptance(task, workspace);
   }
 
