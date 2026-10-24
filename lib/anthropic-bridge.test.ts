@@ -439,6 +439,23 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(tools[1]).toEqual({ type: 'web_search_20250305', name: 'web_search' });
   });
 
+  it('drops an empty captured text block from assistant_content_blocks', () => {
+    const serverToolUse = { type: 'server_tool_use', id: 'su_1', name: 'web_search', input: {} };
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-opus-4-7',
+      messages: [
+        { role: 'user', content: 'search' },
+        {
+          role: 'assistant',
+          content: '',
+          assistant_content_blocks: [{ type: 'text', text: '' }, serverToolUse],
+        },
+      ],
+      stream: true,
+    }) as { messages: Array<{ role: string; content: unknown }> };
+    expect(body.messages[1]).toEqual({ role: 'assistant', content: [serverToolUse] });
+  });
+
   it('uses assistant_content_blocks verbatim on the upstream content when present', () => {
     // Pause-turn replay: the prior assistant turn carries an opaque
     // content[] array that Anthropic recognized as continuation context.
@@ -867,6 +884,42 @@ describe('Anthropic structured outputs', () => {
     ]);
     expect(body.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
     expect(body).not.toHaveProperty('output_config');
+  });
+
+  it('uses native output_config for strict:false on models that reject a forced tool_choice', () => {
+    // Verified live 2026-10-24: Opus 5.5, Sonnet 5.5, and Fable 5.1 400 on
+    // tool_choice {type:"tool"} ("not supported for this model"), and they
+    // think always/by default, so the forced-tool fallback can't work. Native
+    // format is stricter than strict:false asked for, which still satisfies it.
+    for (const model of [
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-fable-5-1',
+      'claude-mythos-5-1',
+    ]) {
+      const body = buildAnthropicMessagesRequest({
+        model,
+        messages: [{ role: 'user', content: 'audit' }],
+        stream: true,
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: 'auditor_verdict', schema, strict: false },
+        },
+      });
+      expect(body, model).not.toHaveProperty('tool_choice');
+      expect(body.output_config, model).toEqual({ format: { type: 'json_schema', schema } });
+    }
+    // Haiku 5.5 accepts a forced tool (also verified live), so it keeps the fallback.
+    const haiku = buildAnthropicMessagesRequest({
+      model: 'claude-haiku-5-5',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'auditor_verdict', schema, strict: false },
+      },
+    });
+    expect(haiku.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
   });
 
   it('drops summarized thinking on the forced-tool fallback for think-by-default ids', () => {
@@ -1339,6 +1392,26 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
     const messages = body.messages as Array<Record<string, unknown>>;
     expect(messages[messages.length - 2]).toEqual({ role: 'assistant', content: replayA });
     expect(messages[messages.length - 1]).toEqual({ role: 'assistant', content: replayB });
+  });
+
+  it('drops empty captured text blocks from pause-turn replay turns', () => {
+    // anthropicEventStream captures a text block at content_block_start with
+    // text '' and only grows it on deltas, so a block that got no delta replays
+    // empty, which Anthropic 400s.
+    const serverToolUse = { type: 'server_tool_use', id: 'su_1', name: 'web_search', input: {} };
+    const body = toAnthropicMessages(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6', messages: [llm('1', 'user', 'hi')] },
+      {
+        modelOverride: 'claude-sonnet-4-6',
+        enableWebSearch: false,
+        replayAssistantTurns: [
+          [{ type: 'text', text: '' }, serverToolUse],
+          [{ type: 'text', text: '' }],
+        ],
+      },
+    );
+    const messages = body.messages as Array<Record<string, unknown>>;
+    expect(messages.slice(1)).toEqual([{ role: 'assistant', content: [serverToolUse] }]);
   });
 });
 

@@ -90,6 +90,30 @@ export function anthropicModelEnforcesSamplingExclusivity(
 }
 
 /**
+ * Whether a Claude model rejects a forced `tool_choice` (`{type:"tool"}` or
+ * `{type:"any"}`) with a 400 ("not supported for this model"): Opus 5.5+,
+ * Sonnet 5.5+, and Fable/Mythos 5.1+ (verified live 2026-10-24; Haiku 5.5 and
+ * Opus 5 still accept it). These models also think always or by default, so the
+ * forced-tool structured-output fallback can't work on them at all. Same
+ * family-parse shape as `anthropicModelRejectsSamplingParams`.
+ */
+function anthropicModelRejectsForcedToolChoice(model: string | null | undefined): boolean {
+  if (typeof model !== 'string') return false;
+  const match = model
+    .toLowerCase()
+    .match(/claude[-.](opus|sonnet|haiku|fable|mythos)[-.](\d+)(?:[-.](\d{1,2})(?!\d))?/);
+  if (!match) return false;
+  const family = match[1];
+  const major = Number(match[2]);
+  const minor = match[3] === undefined ? 0 : Number(match[3]);
+  const atLeast = (wantMajor: number, wantMinor: number) =>
+    major > wantMajor || (major === wantMajor && minor >= wantMinor);
+  if (family === 'opus' || family === 'sonnet') return atLeast(5, 5);
+  if (family === 'fable' || family === 'mythos') return atLeast(5, 1);
+  return false;
+}
+
+/**
  * Whether a Claude model runs *thinking by default* — Fable/Mythos 5 and Opus
  * 5.5 have thinking always on (an explicit `{type:"disabled"}` 400s), and
  * Sonnet 5, Opus 5, and Haiku 5 run adaptive thinking whenever `thinking` is
@@ -395,10 +419,15 @@ export function buildAnthropicMessagesRequest(
         Array.isArray(message.assistant_content_blocks) &&
         message.assistant_content_blocks.length > 0
       ) {
-        anthropicMessages.push({
-          role: 'assistant',
-          content: message.assistant_content_blocks,
-        });
+        // Verbatim except empty text: the stream captures a text block at
+        // content_block_start and only grows it on deltas, so one that got no
+        // delta replays empty and 400s.
+        const replayed = withoutEmptyText(message.assistant_content_blocks);
+        if (replayed.length === 0) {
+          logEmptyAssistantTurnDropped('openai-chat-pause-replay');
+          continue;
+        }
+        anthropicMessages.push({ role: 'assistant', content: replayed });
         continue;
       }
       const reasoning = reasoningBlocksToAnthropic(message.reasoning_blocks);
@@ -558,10 +587,14 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   // structured-output request falls back to the forced-tool bridge below, which
   // pins `tool_choice` to a single tool. Computed here so the thinking gate can
   // see it; the structured-output block reuses it.
+  // Models that reject a forced tool_choice take the native path even for
+  // strict:false: native format is stricter than asked, which still satisfies a
+  // best-effort request, while the forced-tool fallback would 400.
   const useNativeOutputConfig =
     parts.structuredOutput != null &&
     parts.structuredOutputMode === 'strict' &&
-    parts.structuredOutput.strict !== false;
+    (parts.structuredOutput.strict !== false ||
+      anthropicModelRejectsForcedToolChoice(parts.samplingModel));
   const usesForcedToolStructuredOutput = parts.structuredOutput != null && !useNativeOutputConfig;
 
   // Fable/Mythos 5 think always-on and Sonnet 5 runs adaptive thinking by
@@ -841,8 +874,13 @@ export function toAnthropicMessages(
   });
 
   for (const blocks of options?.replayAssistantTurns ?? []) {
-    if (blocks.length > 0) {
-      anthropicMessages.push({ role: 'assistant', content: blocks });
+    // Verbatim except empty text (see withoutEmptyText): a captured text block
+    // that got no delta would 400 the continuation.
+    const replayed = withoutEmptyText(blocks);
+    if (replayed.length > 0) {
+      anthropicMessages.push({ role: 'assistant', content: replayed });
+    } else if (blocks.length > 0) {
+      logEmptyAssistantTurnDropped('llm-messages-pause-replay');
     }
   }
 
