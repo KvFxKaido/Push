@@ -9,6 +9,7 @@ import process from 'node:process';
 import {
   PROVIDER_CONFIGS,
   DEPRECATED_PROVIDERS,
+  applyProviderFlagOverrides,
   createProviderStream,
   resolveApiKey,
   getProviderList,
@@ -301,8 +302,8 @@ Usage:
 Options:
   --provider <name>             ollama | openrouter | kimi | zai | huggingface | zen | fireworks | deepseek | sakana | openai | anthropic | google | xai (default: ollama)
   --model <name>                Override model
-  --url <endpoint>              Override provider endpoint URL
-  --api-key <secret>            Set provider API key (for push config set/init)
+  --url <endpoint>              Override provider endpoint URL (run / REPL / TUI, or saved by config set/init)
+  --api-key <secret>            Set provider API key (run / REPL / TUI, or saved by config set/init)
   --tavily-key <secret>         Set Tavily API key (for push config set/init)
   --search-backend <mode>       auto | tavily | ollama | duckduckgo
   --cwd <path>                  Workspace root (default: current directory)
@@ -4260,6 +4261,8 @@ export async function main() {
       sessionId: values.session,
       provider: values.provider,
       model: values.model,
+      url: typeof values.url === 'string' ? values.url.trim() || undefined : undefined,
+      apiKey: String(values['api-key'] || values.apiKey || '').trim() || undefined,
       cwd: values.cwd ? path.resolve(values.cwd) : undefined,
       maxRounds:
         values['max-rounds'] || values.maxRounds
@@ -4277,6 +4280,18 @@ export async function main() {
 
   const provider = parseProvider(values.provider, runtimeConfig.provider);
   const providerConfig = PROVIDER_CONFIGS[provider];
+  // `--url` / `--api-key`, applied per launch path to the provider that path
+  // runs on: headless and the REPL run on `providerConfig`, while the TUI
+  // controller settles its own provider (a resumed session can bring one from
+  // saved state) and applies them there. Relay's --url is a deployment URL and
+  // config set stores the flags, so neither reaches this point's consumers.
+  const flagUrl = typeof values.url === 'string' ? values.url.trim() : '';
+  const flagApiKey = String(values['api-key'] || values.apiKey || '').trim();
+  const applyFlagsTo = (providerId: string) => {
+    if (flagUrl || flagApiKey) {
+      applyProviderFlagOverrides(providerId, { url: flagUrl, apiKey: flagApiKey });
+    }
+  };
   const cwd = path.resolve(values.cwd || process.cwd());
   if (values.cwd) {
     let cwdStat;
@@ -4500,6 +4515,7 @@ export async function main() {
       }
       // Resolve API key late — after all validation — so missing keys
       // don't mask argument or environment errors.
+      applyFlagsTo(provider);
       const apiKey = resolveApiKey(providerConfig);
       const allowExec =
         values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
@@ -4554,6 +4570,8 @@ export async function main() {
         sessionId: state.sessionId,
         maxRounds,
         explicitMaxRounds,
+        url: flagUrl || undefined,
+        apiKey: flagApiKey || undefined,
       });
     }
 
@@ -4561,6 +4579,7 @@ export async function main() {
       exitNonInteractiveNoTask();
     }
 
+    applyFlagsTo(provider);
     const apiKey = resolveApiKey(providerConfig);
     return await runInteractive(state, providerConfig, apiKey, maxRounds, {
       // Resumed sessions (either via --session or via the bare-push picker)
