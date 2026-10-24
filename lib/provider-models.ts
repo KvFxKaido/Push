@@ -325,9 +325,16 @@ export const XAI_MODELS: string[] = [
 ];
 
 // Generally available current Claude models, refreshed against Anthropic's
-// models overview on 2026-07-09. Mythos remains free-text only because it is
+// models overview on 2026-10-24. Mythos remains free-text only because it is
 // limited-availability Project Glasswing access, not a general picker option.
+// The CLI grants native tool calling only to ids listed here
+// (cli/native-tool-gate.ts); an unlisted model silently falls back to
+// JSON-in-text dispatch, so a new generation must land here.
 export const ANTHROPIC_MODELS: string[] = [
+  'claude-fable-5-1',
+  'claude-opus-5-5',
+  'claude-sonnet-5-5',
+  'claude-haiku-5-5',
   'claude-fable-5',
   'claude-opus-4-8',
   'claude-sonnet-5',

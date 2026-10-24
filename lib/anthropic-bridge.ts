@@ -27,9 +27,10 @@ export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
 
 /**
  * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7+, Sonnet 5,
- * and the Fable/Mythos 5 family. Sending any of them returns a 400
- * (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and Opus 4.6-and-earlier
- * still accept them.
+ * Haiku 5, and the Fable/Mythos 5 family. Sending any of them returns a 400
+ * (`invalid_request_error`; Haiku 5.5 says "`temperature` is deprecated for
+ * this model"). Sonnet 4.6, Haiku 4.5, and Opus 4.6-and-earlier still accept
+ * them.
  *
  * The model id reaching this bridge is usually the native Anthropic form
  * (`claude-opus-4-8`, optionally date- or `@`-suffixed, or the `[1m]`
@@ -60,6 +61,7 @@ export function anthropicModelRejectsSamplingParams(model: string | null | undef
   }
 
   if (family === 'sonnet') return major >= 5;
+  if (family === 'haiku') return major >= 5;
   if (family === 'fable' || family === 'mythos') return major >= 5;
   return false;
 }
@@ -88,11 +90,12 @@ export function anthropicModelEnforcesSamplingExclusivity(
 }
 
 /**
- * Whether a Claude model runs *thinking by default* — Fable/Mythos 5 have
- * thinking always on (an explicit `{type:"disabled"}` even 400s), and Sonnet 5
- * runs adaptive thinking whenever `thinking` is omitted. Opus 4.7/4.8 and
- * Sonnet 4.6-and-earlier run thinking *off* when it is omitted, so they keep
- * their existing request surface and return false here.
+ * Whether a Claude model runs *thinking by default* — Fable/Mythos 5 and Opus
+ * 5.5 have thinking always on (an explicit `{type:"disabled"}` 400s), and
+ * Sonnet 5, Opus 5, and Haiku 5 run adaptive thinking whenever `thinking` is
+ * omitted. Opus 4.7/4.8 and Sonnet 4.6-and-earlier run thinking *off* when it
+ * is omitted, so they keep their existing request surface and return false
+ * here.
  *
  * The default thinking `display` is `"omitted"`, which streams thinking blocks
  * with empty text — so a silent think emits no user-visible content and no
@@ -112,7 +115,7 @@ export function anthropicModelThinksByDefault(model: string | null | undefined):
   const family = match[1];
   const major = Number(match[2]);
   if (family === 'fable' || family === 'mythos') return major >= 5;
-  if (family === 'sonnet') return major >= 5;
+  if (family === 'sonnet' || family === 'opus' || family === 'haiku') return major >= 5;
   return false;
 }
 
@@ -145,6 +148,26 @@ function reasoningBlocksToAnthropic(
     }
   }
   return out;
+}
+
+/**
+ * Anthropic rejects empty text blocks with a 400 ("messages: text content
+ * blocks must be non-empty"). The converters below fall back to a `text: ''`
+ * placeholder for empty content, which reaches the wire when a model with
+ * adaptive thinking (Haiku 5.5 by default) returns a thinking-only turn. Every
+ * assistant turn goes through this before it is appended; an empty result
+ * means the turn carried nothing, and the caller drops it.
+ */
+function withoutEmptyText(blocks: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return blocks.filter((b) => !(b.type === 'text' && b.text === ''));
+}
+
+function logEmptyAssistantTurnDropped(path: string): void {
+  // console.error: this lib/ module also runs in the CLI, whose stdout is
+  // reserved for user output and --json payloads.
+  console.error(
+    JSON.stringify({ level: 'info', event: 'anthropic_empty_assistant_turn_dropped', path }),
+  );
 }
 
 function convertOpenAIContentToAnthropic(
@@ -379,10 +402,12 @@ export function buildAnthropicMessagesRequest(
         continue;
       }
       const reasoning = reasoningBlocksToAnthropic(message.reasoning_blocks);
-      anthropicMessages.push({
-        role: 'assistant',
-        content: reasoning.length > 0 ? [...reasoning, ...contentBlocks] : contentBlocks,
-      });
+      const replayed = withoutEmptyText([...reasoning, ...contentBlocks]);
+      if (replayed.length === 0) {
+        logEmptyAssistantTurnDropped('openai-chat');
+        continue;
+      }
+      anthropicMessages.push({ role: 'assistant', content: replayed });
     } else {
       anthropicMessages.push({ role: 'user', content: contentBlocks });
     }
@@ -790,6 +815,13 @@ export function toAnthropicMessages(
       }
     }
     const anthropicRole = m.role === 'assistant' ? 'assistant' : 'user';
+    if (anthropicRole === 'assistant') {
+      anthropicContent = withoutEmptyText(anthropicContent);
+      if (anthropicContent.length === 0) {
+        logEmptyAssistantTurnDropped('llm-messages');
+        return;
+      }
+    }
     // Push's Coder transcript stores batched tool results as consecutive user
     // turns, one `tool_result` each. First-party Anthropic coalesces those, but
     // DeepSeek's Anthropic-compatible endpoint validates the raw `messages[]`

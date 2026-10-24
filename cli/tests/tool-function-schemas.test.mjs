@@ -104,6 +104,19 @@ describe('CLI native tool calling gate', () => {
     assert.equal(cliProviderModelSupportsNativeToolCalling('google', undefined), false);
   });
 
+  it('grants native tools to the current Claude generation', () => {
+    // An id missing from ANTHROPIC_MODELS silently falls back to JSON-in-text
+    // dispatch, where Haiku 5.5 narrates tool calls instead of making them.
+    for (const model of [
+      'claude-fable-5-1',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+    ]) {
+      assert.equal(cliProviderModelSupportsNativeToolCalling('anthropic', model), true, model);
+    }
+  });
+
   it('routes curated CLI evidence through the shared complete profile resolver', () => {
     assert.deepEqual(resolveCliPushCapabilityProfile('anthropic', 'claude-sonnet-4-6'), {
       toolCalling: 'native',
