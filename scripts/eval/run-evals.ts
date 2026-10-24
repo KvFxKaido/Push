@@ -87,6 +87,15 @@ const { values } = parseArgs({
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..');
 const PUSH_BIN = path.join(REPO_ROOT, 'push');
+// `push` is a bash launcher, which Windows can't spawn (ENOENT), and
+// `push.cmd` would need a shell, which re-splits arguments. On Windows, run
+// the CLI source the way the launcher does when tsx is present. The loader is
+// resolved here because trials run in temp workspaces with no node_modules.
+const PUSH_ENTRY = process.platform === 'win32' ? path.join(REPO_ROOT, 'cli', 'cli.ts') : PUSH_BIN;
+const PUSH_SPAWN: [string, string[]] =
+  process.platform === 'win32'
+    ? [process.execPath, ['--import', import.meta.resolve('tsx'), PUSH_ENTRY]]
+    : [PUSH_BIN, []];
 const SESSION_ROOT = process.env.PUSH_SESSION_DIR || path.join(os.homedir(), '.push', 'sessions');
 const RESULTS_DIR = values.out ? path.resolve(values.out) : path.join(SCRIPT_DIR, 'results');
 
@@ -144,7 +153,7 @@ function runPush(args: string[], cwd: string, timeoutMs: number): Promise<SpawnO
     // it's a child test shard and exits 0 without running anything.
     const env = { ...process.env, PUSH_TUI_ENABLED: '0' };
     delete env.NODE_TEST_CONTEXT;
-    const child = spawn(PUSH_BIN, args, {
+    const child = spawn(PUSH_SPAWN[0], [...PUSH_SPAWN[1], ...args], {
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -493,9 +502,9 @@ async function main(): Promise<number> {
   }
 
   try {
-    await fs.access(PUSH_BIN, fsConstants.X_OK);
+    await fs.access(PUSH_ENTRY, process.platform === 'win32' ? fsConstants.R_OK : fsConstants.X_OK);
   } catch {
-    log(`error: ${PUSH_BIN} not found or not executable.`);
+    log(`error: ${PUSH_ENTRY} not found or not executable.`);
     return 2;
   }
 
