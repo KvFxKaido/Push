@@ -70,9 +70,14 @@ describe('resolvePushCapabilityProfile', () => {
     expect(
       resolvePushCapabilityProfile('anthropic', 'claude-unknown', lookup({ toolCall: false })),
     ).toMatchObject({ toolCalling: 'json-text', structuredOutput: 'best-effort' });
+    // A provider outside the native set stays text-dispatch even with evidence.
     expect(
-      resolvePushCapabilityProfile('deepseek', 'deepseek-model', lookup({ toolCall: true })),
+      resolvePushCapabilityProfile('demo', 'demo-model', lookup({ toolCall: true })),
     ).toMatchObject({ toolCalling: 'json-text' });
+    // DeepSeek's /anthropic endpoint returns native tool_use (verified 2026-10-24).
+    expect(
+      resolvePushCapabilityProfile('deepseek', 'deepseek-flash', lookup({ toolCall: true })),
+    ).toMatchObject({ toolCalling: 'native' });
   });
 
   it('uses Cloudflare name fallback only when the surface has no catalog evidence', () => {

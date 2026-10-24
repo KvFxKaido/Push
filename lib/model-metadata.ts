@@ -225,6 +225,8 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
   },
   deepseek: {
     'deepseek-v4-pro': M(1000000, true, true, true, TEXT, TEXT, false),
+    // DeepSeek-V4.1-Flash: 1M context and text + image input per DeepSeek's /models (2026-10-24).
+    'deepseek-flash': M(1048576, true, true, true, TEXT_IMAGE),
     'deepseek-v4-flash': M(1000000, true, true, true, TEXT, TEXT, false),
   },
   fireworks: {
