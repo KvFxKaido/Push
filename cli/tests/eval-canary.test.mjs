@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import {
   CANARY_SECRET,
   catalogDrift,
+  stripRoutingSuffix,
   classifyRequest,
   costOf,
   failures,
@@ -43,7 +44,7 @@ test('reads usage from a JSON body and from an SSE stream', () => {
 
 test('flags only models newer than the catalog on an ordered list', () => {
   const live = ['claude-new-6', 'claude-haiku-5-5', 'claude-opus-5', 'claude-old-4'];
-  assert.deepEqual(catalogDrift(live, ['claude-haiku-5-5', 'claude-gone'], true), {
+  assert.deepEqual(catalogDrift(live, ['claude-haiku-5-5', 'claude-gone'], 'newest-first'), {
     newer: ['claude-new-6'],
     unlisted: ['claude-gone'],
   });
@@ -51,7 +52,7 @@ test('flags only models newer than the catalog on an ordered list', () => {
     catalogDrift(
       ['deepseek-flash', 'deepseek-v4-pro'],
       ['deepseek-v4-pro', 'deepseek-v4-flash'],
-      false,
+      'all',
     ),
     {
       newer: ['deepseek-flash'],
@@ -123,4 +124,21 @@ test('retried requests are reported without turning the run red', () => {
     error: null,
   };
   assert.deepEqual(failures({ startedAt: '', commit: 'abc', drift: {}, results: [result] }), []);
+});
+
+test('large provider lists flag only catalog ids that disappeared', () => {
+  // OpenAI lists 100+ models the curated catalog deliberately omits; those
+  // aren't drift. A catalog id the provider stopped offering is.
+  assert.deepEqual(
+    catalogDrift(['gpt-a', 'gpt-b', 'gpt-c'], ['gpt-a', 'gpt-gone'], 'unlisted-only'),
+    {
+      newer: [],
+      unlisted: ['gpt-gone'],
+    },
+  );
+  assert.equal(
+    stripRoutingSuffix('anthropic/claude-sonnet-4.6:nitro'),
+    'anthropic/claude-sonnet-4.6',
+  );
+  assert.equal(stripRoutingSuffix('cohere/command-a'), 'cohere/command-a');
 });
