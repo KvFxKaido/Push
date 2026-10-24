@@ -476,6 +476,8 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    *   user sends anything)
    *
    * Gateways that don't support prefix caching ignore this field entirely.
+   * Callers opt in per surface: the web lane via `transformContextBeforeLLM`,
+   * the CLI for every request at `createProviderStream` (cli/provider.ts).
    */
   cacheBreakpointIndices?: number[];
   /** Scope-filtered `MemoryRecord` rows pre-fetched by the caller for the
