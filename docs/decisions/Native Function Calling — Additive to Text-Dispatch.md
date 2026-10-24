@@ -39,9 +39,10 @@ consumes. So whichever way a model answers — fenced JSON (text-dispatch) or a
 native tool call — both converge at one dispatch path. Consequences:
 
 - The system prompt and text-dispatch path are untouched; no "two instructions
-  fighting." A model can use either route in the same turn. *(Revised for the
-  CLI lead on 2026-10-24: with native schemas attached it sends a lean prompt
-  without the prose tool catalog; the text-dispatch parser is unchanged. See
+  fighting." A model can use either route in the same turn. *(Revised for both
+  leads on 2026-10-24, the CLI lead and the web lead in `inline-coder-run.ts`:
+  with native schemas attached and failover off, each sends a lean prompt
+  without the prose tool catalogs; the text-dispatch parser is unchanged. See
   the addendum below.)*
 - Non-capable models are unaffected — they simply never receive a `tools` array.
 - Loose/best-effort parameter types are safe: executors already accept the
