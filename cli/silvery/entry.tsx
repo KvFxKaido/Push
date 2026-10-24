@@ -19,6 +19,9 @@ export interface RunTuiOptions {
   cwd?: string;
   maxRounds?: number;
   explicitMaxRounds?: boolean;
+  /** `--url` / `--api-key`, applied to the provider the session runs on. */
+  url?: string;
+  apiKey?: string;
 }
 
 function logRenderFault(layer: 'recoverable' | 'root', error: Error) {
