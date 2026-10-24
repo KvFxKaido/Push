@@ -50,6 +50,7 @@ import {
   fmtMs,
   isCompleted,
   parseCliJsonOutput,
+  preflightPassed,
   summarizeTrials,
   validateTasks,
   type EvalTask,
@@ -369,7 +370,7 @@ async function preflight(): Promise<boolean> {
     );
     const { parsed } = parseCliJsonOutput(stdout);
     const fields = extractCliRunFields(parsed);
-    if (fields.outcome === 'success' || fields.outcome === 'max_rounds') return true;
+    if (preflightPassed(fields)) return true;
     log(`preflight failed (exit ${exitCode}, outcome ${fields.outcome}).`);
     log(`stderr tail:\n${stderr.trim().split('\n').slice(-6).join('\n')}`);
     return false;

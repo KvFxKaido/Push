@@ -168,6 +168,19 @@ export function extractCliRunFields(parsed: unknown): CliRunFields {
  * closes the gap by executing the acceptance commands itself when the
  * CLI didn't report them (see runHarnessAcceptance in run-evals.ts).
  */
+/**
+ * Whether the preflight sanity run shows a working provider. The preflight
+ * passes no --accept, so a correct answer ends `completed` ("finished, nothing
+ * verified"); `max_rounds` also proves the provider answered.
+ */
+export function preflightPassed(fields: CliRunFields): boolean {
+  return (
+    fields.outcome === 'success' ||
+    fields.outcome === 'completed' ||
+    fields.outcome === 'max_rounds'
+  );
+}
+
 export function isCompleted(fields: CliRunFields): boolean {
   // `completed` is the CLI's "ended, no --accept check ran"; it scores only
   // with the harness's own acceptance evidence, same rule as `success`.

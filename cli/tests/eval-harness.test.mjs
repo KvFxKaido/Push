@@ -24,6 +24,7 @@ import {
   isCompleted,
   median,
   parseCliJsonOutput,
+  preflightPassed,
   summarizeTrials,
   validateTasks,
 } from '../../scripts/eval/eval-lib.ts';
@@ -524,4 +525,16 @@ test('buildCacheProbePlan stamps gatewayRoute from the final probe URL', () => {
   });
   assert.ok('request' in gemini);
   assert.equal(gemini.request.gatewayRoute, true);
+});
+
+test('preflightPassed accepts a healthy sanity run, which now ends completed', () => {
+  // The preflight runs push run --json with no --accept, so a provider that
+  // answers correctly comes back `completed`, not `success`. Rejecting it
+  // aborted the whole suite before the first trial (Codex P1 on #1662).
+  assert.ok(preflightPassed(extractCliRunFields({ outcome: 'completed', rounds: 1 })));
+  assert.ok(preflightPassed(extractCliRunFields({ outcome: 'success', rounds: 1 })));
+  assert.ok(preflightPassed(extractCliRunFields({ outcome: 'max_rounds', rounds: 2 })));
+  assert.ok(!preflightPassed(extractCliRunFields({ outcome: 'failed' })));
+  assert.ok(!preflightPassed(extractCliRunFields({ outcome: 'error' })));
+  assert.ok(!preflightPassed(extractCliRunFields({})));
 });
