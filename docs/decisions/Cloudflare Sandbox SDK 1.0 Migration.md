@@ -300,14 +300,50 @@ are deferred to the rehearsal, at the owner's call.
   names (`push-sandbox-do`, `push-staging-sandbox-do`).
 - **Checks:** both configs dry-run cleanly, and app vitest passes 7,553.
 
-**Still unverified until the staging rehearsal**
-- Real container start and RPC.
-- Whether `Date` values survive RPC: the facade returns them for process
-  `startTime` and `endTime`.
-- Restore into a staging directory.
-- Process lifetimes beyond the idle window. There's no keep-alive alarm yet.
-- That a real 0.12 snapshot, restored after the switch, reaches the client as
-  `SNAPSHOT_NOT_FOUND` and starts fresh.
+### Rehearsal on push-staging (2026-10-24, branch at `691e9d57`)
+
+**Sequence:** a real 0.12 snapshot was made on the 0.12.14 Worker first,
+then `wrangler deploy -c wrangler.staging.jsonc` shipped the 1.0 branch as
+version `f28f86e0-0641-4932-8e87-eaa86dbaea12`, with the container now
+`Sandbox (durable_object)`. Staging can't go back to 0.12 now; that was the
+point.
+
+**Layers 1–2 (`snapshot-smoke.mjs`): PASS, twice.**
+
+| Step | 0.12.14 baseline | 1.0, first run | 1.0, second run |
+|---|---|---|---|
+| Create sandbox | 5,124 ms warm (128 s cold) | 23,024 ms (first start of the new image) | 2,737 ms |
+| Seed 256 files | 532 ms | 357 ms | 386 ms |
+| Hibernate | 2,827 ms | 2,029 ms | 1,808 ms |
+| Wrong token / missing id | 403 / 404 | 403 / 404 | 403 / 404 |
+| Restore | 14,495 ms, YELLOW | 3,561 ms, GREEN | 3,686 ms, GREEN |
+| Integrity | 256 files, digest match | 256 files, digest match | 256 files, digest match |
+
+Restore is about 4× faster on 1.0. The smoke prints "0KB compressed" for
+the snapshot because the backup path doesn't report a size; that predates
+1.0 and isn't a regression.
+
+**Layer 3 (`coder-resume-smoke.mjs`): PASS.** Workers AI (`kimi-k2.6`)
+through the staging `AI` binding, so no provider secrets were needed. The
+sandbox was killed mid-run and the job still completed (114 s total). The
+tail showed 4 `coder_checkpoint_captured`, 1 `coder_job_resumed`, and the
+checkpoint restored into a fresh sandbox (`cf_backup_materialized`,
+`cf_backup_restored`).
+
+**A real 0.12 snapshot after the switch: refused as designed.** Three
+restores of the snapshot made before the deploy each returned
+`404 SNAPSHOT_NOT_FOUND` in about 1.3 s. The tail showed
+`cf_legacy_backup_refused` and `BACKUP_EXPIRED: backup … was made by Sandbox
+SDK 0.12 and is not restorable after the 1.0 upgrade` each time, so it was
+the refusal, not some other miss.
+
+**Still open**
+- **Modal fallback:** needs `MODAL_SANDBOX_BASE_URL` on staging (owner step;
+  see Phase 0).
+- **`Date` values over RPC** for process `startTime` and `endTime`: no
+  smoke layer starts a background process.
+- **Process lifetimes beyond the idle window.** There's no keep-alive alarm
+  yet.
 
 ## Phases after staging
 
