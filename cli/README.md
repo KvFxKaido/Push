@@ -155,7 +155,21 @@ Skill discovery:
 
 Runs a single task and exits. No interaction. High-risk commands are blocked (no approval prompt).
 
-`--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass. The process exits 0 only if the agent succeeds *and* all checks pass.
+`--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass.
+
+The run's outcome says how much Push verified:
+
+| What happened | `run_complete` (`--jsonl`) | `--json` `outcome` | Exit |
+|---|---|---|---|
+| The agent finished and every `--accept` check passed | `success` | `success` | 0 |
+| The agent finished, but no `--accept` check ran, so nothing confirmed the task is done. Plain mode says so on stderr: `[completed, unverified]` | `completed` | `completed` | 0 |
+| An `--accept` check failed | `failed` | `acceptance_failed` | 1 |
+| The output schema didn't validate | `failed` | `output_schema_failed` | 1 |
+| The run errored (provider or runtime error) | `failed` | `error` | 1 |
+| The tool-loop cap ran out | `max_rounds` | `max_rounds` | 1 |
+| The run was aborted (e.g. Ctrl-C) | `aborted` | `aborted` | 130 |
+
+`completed` exits 0, so scripts that only read the exit code behave as before. To require verified work, pass `--accept` and treat only `success` as done. An `--output-schema` checks the answer's shape, not the task, so on its own it gives `completed`.
 
 When `--accept` is present, Push also frames the task using the shared delegation-brief format so acceptance checks are visible to the model during the run, not only after it finishes.
 
@@ -179,7 +193,8 @@ When `--accept` is present, Push also frames the task using the shared delegatio
 line. It uses the same event types and payloads as pushd, including assistant
 tokens, tool lifecycle events, warnings, errors, and acceptance results. The
 last line is always `run_complete`; its outcome reflects acceptance checks as
-well as the agent run. `--json` and `--jsonl` are mutually exclusive.
+well as the agent run, using the `run_complete` column of the table above.
+`--json` and `--jsonl` are mutually exclusive.
 
 `--output-schema <path>` constrains a `push run` final response using a Draft
 2020-12 JSON Schema. Push compiles the schema before starting the run, asks the

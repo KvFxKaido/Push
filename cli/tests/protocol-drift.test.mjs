@@ -810,6 +810,13 @@ describe('protocol drift characterization — run_complete outcomes', () => {
   it('accepts run_complete with summary omitted', () => {
     assertStrictBroadcastPass(makeEnvelope('run_complete', { outcome: 'success' }));
   });
+
+  it('accepts completed, the headless outcome for a run no acceptance check verified', () => {
+    // `push run` reports `success` only when an --accept check passed; a run
+    // that just ended is `completed`. Pinned so the CLI's verdict can't drift
+    // from the shared RUN_COMPLETE_OUTCOMES.
+    assertStrictBroadcastPass(makeEnvelope('run_complete', { outcome: 'completed' }));
+  });
 });
 
 describe('protocol drift characterization — session_started / user_message', () => {
