@@ -36,6 +36,7 @@ import {
   type CanaryReport,
   type CatalogDrift,
   catalogDrift,
+  classifyRequest,
   costOf,
   failures,
   type ModelResult,
@@ -78,20 +79,24 @@ function pickMatrix(): Target[] {
   return new Date().getDate() <= 7 ? [...WEEKLY, ...MONTHLY] : WEEKLY;
 }
 
-function loadEnvFile(file: string): void {
-  if (!existsSync(file)) return;
+// Gateway credentials stay in this process. They're read into a local object,
+// never into process.env, and stripped from the children's env too: the agent
+// runs shell commands, and an `env` dump would otherwise hand the real gateway
+// token to the model in a tool result.
+const GATEWAY_ENV_KEYS = ['CF_AI_GATEWAY_ACCOUNT_ID', 'CF_AI_GATEWAY_SLUG', 'CF_AI_GATEWAY_TOKEN'];
+
+function readEnvFile(file: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!existsSync(file)) return out;
   for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2];
+    if (m) out[m[1]] = m[2];
   }
+  return out;
 }
 
-loadEnvFile(path.join(SCRIPT_DIR, '.canary.env'));
-const {
-  CF_AI_GATEWAY_ACCOUNT_ID: account,
-  CF_AI_GATEWAY_SLUG: slug,
-  CF_AI_GATEWAY_TOKEN: token,
-} = process.env;
+const fileEnv = readEnvFile(path.join(SCRIPT_DIR, '.canary.env'));
+const [account, slug, token] = GATEWAY_ENV_KEYS.map((k) => process.env[k] ?? fileEnv[k]);
 if (!account || !slug || !token) {
   process.stderr.write(
     'canary: set CF_AI_GATEWAY_ACCOUNT_ID, CF_AI_GATEWAY_SLUG and CF_AI_GATEWAY_TOKEN (env or scripts/eval/.canary.env)\n',
@@ -108,74 +113,105 @@ const gatewayHeaders = { 'cf-aig-authorization': `Bearer ${token}`, 'cf-aig-skip
 interface WireRecord {
   label: string;
   model: string;
-  status: number;
+  /** null until the upstream response finishes; stays null if it never does. */
+  status: number | null;
+  /** Upstream error text for a non-2xx response, to tell quota 429s from transient ones. */
+  errorText: string;
   at: Date;
   usage: Usage;
   leaked: boolean;
 }
 
 const wire: WireRecord[] = [];
+const inFlight = new Set<Promise<void>>();
 
 function startForwarder(): Promise<http.Server> {
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (c) => chunks.push(c));
-    req.on('end', async () => {
-      const [, label, ...rest] = (req.url ?? '').split('/');
-      const body = Buffer.concat(chunks).toString('utf8');
-      const headers: Record<string, string> = { ...gatewayHeaders };
-      for (const [k, v] of Object.entries(req.headers)) {
-        // The CLI's placeholder key is dropped; the gateway supplies the real one.
-        if (['host', 'content-length', 'connection', 'authorization', 'x-api-key'].includes(k))
-          continue;
-        if (typeof v === 'string') headers[k] = v;
-      }
-      let model = '';
-      try {
-        model = JSON.parse(body).model ?? '';
-      } catch {
-        // Non-JSON body; leave the model blank.
-      }
-      const at = new Date();
-      try {
-        const upstream = await fetch(`${GATEWAY}/${rest.join('/')}`, {
-          method: req.method,
-          headers,
-          body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
-        });
-        const text = await upstream.text();
-        wire.push({
-          label,
-          model,
-          status: upstream.status,
-          at,
-          usage: usageOf(text),
-          leaked: body.includes(CANARY_SECRET),
-        });
-        const outHeaders: Record<string, string> = {};
-        upstream.headers.forEach((v, k) => {
-          if (
-            !['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(k)
-          )
-            outHeaders[k] = v;
-        });
-        res.writeHead(upstream.status, outHeaders);
-        res.end(text);
-      } catch (err) {
-        wire.push({
-          label,
-          model,
-          status: 0,
-          at,
-          usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
-          leaked: body.includes(CANARY_SECRET),
-        });
-        res.writeHead(502, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: { type: 'canary_forwarder', message: String(err) } }));
-      }
+    req.on('end', () => {
+      const done = forward(req, res, Buffer.concat(chunks).toString('utf8'));
+      inFlight.add(done);
+      done.finally(() => inFlight.delete(done));
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
+async function forward(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  body: string,
+): Promise<void> {
+  const [, label, ...rest] = (req.url ?? '').split('/');
+  const headers: Record<string, string> = { ...gatewayHeaders };
+  for (const [k, v] of Object.entries(req.headers)) {
+    // The CLI's placeholder key is dropped; the gateway supplies the real one.
+    if (['host', 'content-length', 'connection', 'authorization', 'x-api-key'].includes(k))
+      continue;
+    if (typeof v === 'string') headers[k] = v;
+  }
+  let model = '';
+  try {
+    model = JSON.parse(body).model ?? '';
+  } catch {
+    // Non-JSON body; leave the model blank.
+  }
+  // Recorded before the upstream call, so a request that stalls or is cut off
+  // still counts toward the leak check: the secret already left in its body.
+  const record: WireRecord = {
+    label,
+    model,
+    status: null,
+    errorText: '',
+    at: new Date(),
+    usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
+    leaked: body.includes(CANARY_SECRET) || body.includes(token as string),
+  };
+  wire.push(record);
+  // A client that gives up (a CLI timeout) cancels the upstream call too.
+  const abort = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) abort.abort();
+  });
+  try {
+    const upstream = await fetch(`${GATEWAY}/${rest.join('/')}`, {
+      method: req.method,
+      headers,
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
+      signal: abort.signal,
+    });
+    const outHeaders: Record<string, string> = {};
+    upstream.headers.forEach((v, k) => {
+      if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(k))
+        outHeaders[k] = v;
+    });
+    res.writeHead(upstream.status, outHeaders);
+    // Stream through as bytes arrive, so the CLI sees production timing, and
+    // keep a copy to meter usage once the stream ends.
+    let text = '';
+    const decoder = new TextDecoder();
+    if (upstream.body) {
+      for await (const chunk of upstream.body) {
+        res.write(chunk);
+        text += decoder.decode(chunk, { stream: true });
+      }
+    }
+    text += decoder.decode();
+    res.end();
+    record.status = upstream.status;
+    record.usage = usageOf(text);
+    if (upstream.status < 200 || upstream.status >= 300) record.errorText = text.slice(0, 2000);
+  } catch (err) {
+    record.status = 0;
+    record.errorText = String(err);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { type: 'canary_forwarder', message: String(err) } }));
+    } else {
+      res.end();
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -188,8 +224,10 @@ function runEvals(target: Target, base: string, outDir: string): Promise<number>
     target.provider === 'anthropic' ? 'PUSH_ANTHROPIC_API_KEY' : 'PUSH_DEEPSEEK_API_KEY';
   const gatewayPath =
     target.provider === 'anthropic' ? 'anthropic/v1/messages' : 'deepseek/anthropic/v1/messages';
+  const parentEnv = { ...process.env };
+  for (const k of GATEWAY_ENV_KEYS) delete parentEnv[k];
   const env = {
-    ...process.env,
+    ...parentEnv,
     [urlEnv]: `${base}/${target.label}/${gatewayPath}`,
     [keyEnv]: 'via-canary-forwarder',
     // Parity with the bake-off: no server-side tools for the model.
@@ -242,6 +280,9 @@ async function runTarget(target: Target, base: string, stampDir: string): Promis
   await fs.mkdir(outDir, { recursive: true });
   process.stderr.write(`canary: ${target.label} …\n`);
   const exit = await runEvals(target, base, outDir);
+  // The child is gone, so anything still in flight was abandoned. Let those
+  // settle (their client closed, which aborts the upstream call).
+  await Promise.allSettled([...inFlight]);
   const trials = await readTrials(outDir);
   const mine = wire.filter((w) => w.label === target.label);
   const usage = mine.reduce<Usage>(
@@ -264,6 +305,9 @@ async function runTarget(target: Target, base: string, stampDir: string): Promis
     error = `run-evals produced no trials (exit ${exit}; preflight may have failed)`;
   else if (trials.length < expected)
     error = `only ${trials.length}/${expected} trials recorded (exit ${exit})`;
+  // run-evals exits nonzero only when its measurement is unusable, never for a
+  // failed trial, so any nonzero exit is a harness problem worth a red.
+  else if (exit !== 0) error = `run-evals exited ${exit} after recording its trials`;
   return {
     label: target.label,
     provider: target.provider,
@@ -273,7 +317,9 @@ async function runTarget(target: Target, base: string, stampDir: string): Promis
     falseSuccess: trials.filter((t) => t.outcome === 'success' && t.acceptancePassed === false)
       .length,
     requests: mine.length,
-    failedRequests: mine.filter((w) => w.status < 200 || w.status >= 300).length,
+    hardFailures: mine.filter((w) => classifyRequest(w.status, w.errorText) === 'hard').length,
+    retriedRequests: mine.filter((w) => classifyRequest(w.status, w.errorText) === 'transient')
+      .length,
     leakedRequests: mine.filter((w) => w.leaked).length,
     usage,
     costUsd,

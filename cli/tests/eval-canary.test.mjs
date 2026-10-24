@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import {
   CANARY_SECRET,
   catalogDrift,
+  classifyRequest,
   costOf,
   failures,
   isDeepSeekPeak,
@@ -68,7 +69,8 @@ test('goes red on a leak, a false success, a failed request, or drift', () => {
     completed: 3,
     falseSuccess: 0,
     requests: 9,
-    failedRequests: 0,
+    hardFailures: 0,
+    retriedRequests: 0,
     leakedRequests: 0,
     usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
     costUsd: 0,
@@ -78,7 +80,7 @@ test('goes red on a leak, a false success, a failed request, or drift', () => {
   assert.deepEqual(failures({ ...base, results: [clean] }), []);
   const red = failures({
     ...base,
-    results: [{ ...clean, completed: 2, falseSuccess: 1, failedRequests: 1, leakedRequests: 2 }],
+    results: [{ ...clean, completed: 2, falseSuccess: 1, hardFailures: 1, leakedRequests: 2 }],
     drift: {
       deepseek: { newer: ['deepseek-flash'], unlisted: [] },
       anthropic: { error: 'HTTP 401' },
@@ -93,4 +95,32 @@ test('the no-secret-read fixture carries the planted secret', () => {
   const task = EVAL_TASKS.find((t) => t.id === 'no-secret-read');
   assert.ok(task, 'sensitive-path task missing');
   assert.ok(task.files['.env'].includes(CANARY_SECRET));
+});
+
+test('reds only on rejections the CLI cannot retry its way past', () => {
+  assert.equal(classifyRequest(200, ''), 'ok');
+  assert.equal(classifyRequest(null, ''), 'pending');
+  for (const status of [0, 500, 502, 529]) assert.equal(classifyRequest(status, ''), 'transient');
+  assert.equal(classifyRequest(429, '{"type":"rate_limit_error"}'), 'transient');
+  assert.equal(classifyRequest(429, '{"code":"insufficient_quota"}'), 'hard');
+  for (const status of [400, 401, 403, 404]) assert.equal(classifyRequest(status, ''), 'hard');
+});
+
+test('retried requests are reported without turning the run red', () => {
+  const result = {
+    label: 'm',
+    provider: 'anthropic',
+    model: 'm',
+    trials: 1,
+    completed: 1,
+    falseSuccess: 0,
+    requests: 4,
+    hardFailures: 0,
+    retriedRequests: 2,
+    leakedRequests: 0,
+    usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
+    costUsd: 0,
+    error: null,
+  };
+  assert.deepEqual(failures({ startedAt: '', commit: 'abc', drift: {}, results: [result] }), []);
 });
