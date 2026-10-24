@@ -812,6 +812,153 @@ describe('edit_file hashline flow', () => {
   });
 });
 
+// ─── secret redaction in tool output ────────────────────────────
+
+describe('tool output redacts values from sensitive files', () => {
+  // The file tools refuse .env, but `exec cat .env` is a shell command, not a
+  // path: the drift canary saw deepseek-v4-pro take exactly that route. So the
+  // values themselves are scrubbed from whatever a tool returns.
+  const SECRET = 'PUSH-TEST-SECRET-9c2e7a';
+  const KEY_LINE = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC';
+  let root;
+
+  before(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-'));
+    await fs.writeFile(
+      path.join(root, '.env'),
+      `# comment\nAPI_KEY="${SECRET}"\nPORT=3000\nDEBUG=true\n`,
+      'utf8',
+    );
+    await fs.mkdir(path.join(root, 'keys'));
+    await fs.writeFile(
+      path.join(root, 'keys', 'server.pem'),
+      `-----BEGIN PRIVATE KEY-----\n${KEY_LINE}\n-----END PRIVATE KEY-----\n`,
+      'utf8',
+    );
+    await fs.writeFile(path.join(root, 'README.md'), 'hello world\n', 'utf8');
+  });
+
+  after(async () => {
+    await rmWithRetry(root);
+  });
+
+  it('scrubs .env values from exec output and says so', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat .env README.md' } },
+      root,
+      { allowExec: true },
+    );
+    assert.equal(result.ok, true, result.text);
+    assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    assert.ok(result.text.includes('[redacted: .env]'), result.text);
+    assert.ok(result.text.includes('hello world'), 'ordinary output dropped');
+    // Short, non-secret-shaped values stay: redacting "3000" would mangle output.
+    assert.ok(result.text.includes('PORT=3000'), result.text);
+    assert.ok(/1 value from sensitive files redacted/.test(result.text), result.text);
+  });
+
+  it('scrubs key-file lines found below the workspace root', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat keys/server.pem' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(!JSON.stringify(result).includes(KEY_LINE), `key leaked: ${result.text}`);
+  });
+
+  it('scrubs a secret the command spells out a different way', async () => {
+    // A command-text check would miss this; output redaction doesn't care how.
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat .e""nv | tr -d "#"' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+  });
+
+  it('scrubs a value printed by a command that then overwrites the file', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-rw-'));
+    try {
+      await fs.writeFile(path.join(dir, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'cat .env && echo "API_KEY=placeholder" > .env' } },
+        dir,
+        { allowExec: true },
+      );
+      assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    } finally {
+      await rmWithRetry(dir);
+    }
+  });
+
+  it('scrubs values reached through a symlinked .env', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-link-'));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-target-'));
+    try {
+      await fs.writeFile(path.join(outside, 'shared-config'), `API_KEY=${SECRET}\n`, 'utf8');
+      await fs.symlink(path.join(outside, 'shared-config'), path.join(dir, '.env'));
+      const result = await executeToolCall({ tool: 'exec', args: { command: 'cat .env' } }, dir, {
+        allowExec: true,
+      });
+      assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    } finally {
+      await rmWithRetry(dir);
+      await rmWithRetry(outside);
+    }
+  });
+
+  it('scrubs credential fields a command extracts on their own', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-fields-'));
+    const NPM = 'npm-token-7e1b2c9d4a';
+    const NETRC = 'netrc-pass-3f8e0a1c';
+    const GIT = 'ghp_gitcredtoken5b2';
+    try {
+      await fs.writeFile(
+        path.join(dir, '.npmrc'),
+        `//registry.npmjs.org/:_authToken=${NPM}\n`,
+        'utf8',
+      );
+      await fs.writeFile(
+        path.join(dir, '.netrc'),
+        `machine example.com login dev password ${NETRC}\n`,
+        'utf8',
+      );
+      await fs.writeFile(
+        path.join(dir, '.git-credentials'),
+        `https://dev:${GIT}@github.com\n`,
+        'utf8',
+      );
+      const result = await executeToolCall(
+        {
+          tool: 'exec',
+          args: {
+            command:
+              "cut -d= -f2 .npmrc; awk '{print $6}' .netrc; cut -d: -f3 .git-credentials | cut -d@ -f1",
+          },
+        },
+        dir,
+        { allowExec: true },
+      );
+      const out = JSON.stringify(result);
+      for (const secret of [NPM, NETRC, GIT]) {
+        assert.ok(!out.includes(secret), `${secret} leaked: ${result.text}`);
+      }
+    } finally {
+      await rmWithRetry(dir);
+    }
+  });
+
+  it('leaves output untouched when nothing sensitive appears', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat README.md' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(result.text.includes('hello world'));
+    assert.ok(!result.text.includes('redacted'), result.text);
+  });
+});
+
 // ─── exec headless hardening ────────────────────────────────────
 
 describe('exec headless hardening', () => {
