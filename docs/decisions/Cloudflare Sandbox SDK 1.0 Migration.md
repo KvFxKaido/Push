@@ -191,7 +191,31 @@ change on.
   The 0.12 SDK uploads backups through presigned R2 URLs, so the bucket
   binding alone isn't enough.
 
-**Owner step to unblock**
+**Baseline on 0.12.14: PASS (2026-10-24, after the owner set the R2 keys)**
+
+`snapshot-smoke.mjs` against staging passed both layers:
+
+| Step | Result |
+|---|---|
+| Create sandbox (warm) | 5,124 ms. The first, cold run took 128 s. |
+| Seed 256 files | 532 ms |
+| Hibernate to R2 | 2,827 ms |
+| Wrong restore_token / nonexistent id | 403 `AUTH_FAILURE` / 404 `SNAPSHOT_NOT_FOUND` |
+| Restore into a fresh sandbox | 14,495 ms, graded YELLOW (green ≤ 5 s, yellow ≤ 15 s) |
+| Integrity | 256 files, content digest matches |
+
+These are the numbers 1.0 must match or beat on the same harness. There's no
+production figure to compare the restore time against yet. Running the smoke
+on production would create and delete production sandboxes, so that waits for
+the owner's go-ahead.
+
+**Still open in Phase 0**
+- **Layer 3 (`coder-resume-smoke.mjs`):** it drives a real model through
+  CoderJob, and staging has no AI provider secrets. It needs owner-set
+  credentials, or can be deferred to the 1.0 rehearsal.
+- **Modal fallback:** see "Found along the way" below.
+
+**Owner step to unblock (done)**
 1. Create an R2 API token scoped to `push-staging-snapshots` with Object
    Read & Write (Cloudflare dashboard → R2 → Manage API tokens).
 2. Set its two values from a checkout that has `wrangler.staging.jsonc`:
