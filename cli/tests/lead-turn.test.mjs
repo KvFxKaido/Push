@@ -300,6 +300,104 @@ describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLo
     });
   });
 
+  it('runs a native tool_use from DeepSeek end to end', async () => {
+    // Anthropic-format SSE, which is what api.deepseek.com/anthropic returns:
+    // round 1 asks for read_file natively, round 2 answers in text. The second
+    // request must carry the tool's real output back as a tool_result.
+    const requests = [];
+    const sse = (events) =>
+      events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+    const rounds = [
+      sse([
+        {
+          type: 'message_start',
+          message: {
+            id: 'm1',
+            role: 'assistant',
+            content: [],
+            usage: { input_tokens: 10, output_tokens: 0 },
+          },
+        },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'toolu_1', name: 'read_file', input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'input_json_delta', partial_json: '{"path":"notes.txt"}' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+        { type: 'message_stop' },
+      ]),
+      sse([
+        {
+          type: 'message_start',
+          message: {
+            id: 'm2',
+            role: 'assistant',
+            content: [],
+            usage: { input_tokens: 20, output_tokens: 0 },
+          },
+        },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'The note says deepseek-sentinel. All done.' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 9 } },
+        { type: 'message_stop' },
+      ]),
+    ];
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => {
+        body += c;
+      });
+      req.on('end', () => {
+        requests.push(JSON.parse(body));
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(rounds[Math.min(requests.length - 1, rounds.length - 1)]);
+      });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.address().port}/anthropic/v1/messages`;
+    try {
+      await withTempWorkspace(async (cwd) => {
+        await fs.writeFile(path.join(cwd, 'notes.txt'), 'deepseek-sentinel', 'utf8');
+        const result = await runLeadKernelTurn(
+          makeState(cwd, { provider: 'deepseek', model: 'deepseek-flash' }),
+          { ...PROVIDER_CONFIGS.deepseek, url },
+          'mock-key',
+          'What does notes.txt say?',
+          5,
+          { emit: () => {} },
+        );
+        assert.ok(result.finalAssistantText.includes('All done.'), result.finalAssistantText);
+        assert.ok(
+          requests.length >= 2,
+          `expected a tool round trip, got ${requests.length} request(s)`,
+        );
+        // The transport parses tool_use either way, so pin that the model was
+        // offered native tools; without the gate this round trip is luck.
+        assert.ok((requests[0].tools ?? []).length > 0, 'DeepSeek was offered no native tools');
+        const followUp = JSON.stringify(requests[1].messages);
+        assert.ok(followUp.includes('tool_result'), 'round 2 carries no tool_result');
+        assert.ok(
+          followUp.includes('deepseek-sentinel'),
+          'the tool never ran: file content missing',
+        );
+      });
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('keeps the full catalog for a text-dispatch model', async () => {
     const { text, tools } = await systemPromptFor({ provider: 'ollama', model: 'mock-model' });
     assert.equal(tools.length, 0);
