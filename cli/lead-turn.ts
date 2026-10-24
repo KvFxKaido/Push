@@ -1298,6 +1298,7 @@ export async function runLeadKernelTurn(
           ...(explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : []),
         ],
         nativeToolSchemas,
+        leanToolProtocols,
         projectInstructions: instructions?.content || undefined,
         instructionFilename: instructions?.file || undefined,
         verificationPolicyBlock: null,

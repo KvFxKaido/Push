@@ -243,6 +243,8 @@ describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLo
     assert.ok(!text.includes('Available tools:'), 'prose tool catalog still sent');
     assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
     assert.ok(text.includes('Per-turn tool budget'), 'protocol rules dropped with the catalog');
+    assert.ok(text.includes('native tool interface'), 'placement boundary not worded for native');
+    assert.ok(!text.includes('content channel only'), 'content-text-only dispatch still claimed');
   });
 
   it('drops the GitHub catalog but keeps its intro and rules when a token resolves', async () => {
@@ -273,6 +275,7 @@ describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLo
     assert.equal(tools.length, 0);
     assert.ok(text.includes('Available tools:'));
     assert.ok(text.includes('Emit only JSON blocks'));
+    assert.ok(text.includes('content channel only'));
   });
 
   it('keeps the full catalog when provider failover could switch to a text-mode model', async () => {

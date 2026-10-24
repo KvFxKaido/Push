@@ -298,5 +298,10 @@ is off, full otherwise.
 - **Unchanged:** the small ask-user, scratchpad, todo, artifact and explorer
   delegation blocks keep their JSON examples.
 
+Both leads also swap the kernel's Tool Call Placement section for a native
+wording when lean (`leanToolProtocols` on `runCoderAgent`). The text version
+says calls dispatch from content text only, which is false for native calls:
+they arrive as structured stream events. The reasoning-channel rule is kept.
+
 Scope: both leads. The daemon's delegated Coder and Explorer still send the
 full prompt alongside their schemas.

@@ -1322,6 +1322,7 @@ export async function runInPageCoderKernel(
     // so opt into that guidance here. The CLI lead leaves it off (its
     // TOOL_PROTOCOL uses different names).
     leadToolGuidance: spec.leadToolSurface,
+    leanToolProtocols,
     // Native function calling for models that support it. Additive: the binding
     // emits native tool_calls which the stream carries directly into dispatch.
     // Two guards:

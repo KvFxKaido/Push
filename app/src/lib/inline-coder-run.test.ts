@@ -232,6 +232,10 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         // Coder uses the non-lead guidelines, which ignore it). The inline lead
         // sets 'full'; the background DO lead sets 'sandbox'.
         'leadToolScope',
+        // Parity decision: the delegated arc threads `leanToolProtocols: false`
+        // (lean needs native schemas, which only a lead runtime attaches), so
+        // the delegated Coder keeps the full placement wording.
+        'leanToolProtocols',
         'memoryToolProtocol',
         'modelId',
         // Parity decision: the delegated arc threads `nativeToolSchemas:
