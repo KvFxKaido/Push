@@ -909,7 +909,7 @@ describe('providerModelSupportsStructuredOutput', () => {
       vision: true,
       contextLimit: 400_000,
     });
-    expect(resolvePushCapabilityProfile('zen', 'big-pickle')).toMatchObject({
+    expect(resolvePushCapabilityProfile('zen', 'deepseek-v4-pro')).toMatchObject({
       toolCalling: 'native',
       structuredOutput: 'strict',
       context: 'large',
@@ -1193,9 +1193,11 @@ describe('providerModelSupportsStructuredOutput', () => {
 
   it('gates Zen native tool calling against the curated catalog allowlist', () => {
     stubWindow();
-    // Standard-tier ids (including the proprietary big-pickle default that has
-    // no models.dev metadata) pass via the name-based allowlist.
-    expect(providerModelSupportsNativeToolCalling('zen', 'big-pickle')).toBe(true);
+    // Standard-tier seeded ids pass via the name-based allowlist.
+    expect(providerModelSupportsNativeToolCalling('zen', 'deepseek-v4-pro')).toBe(true);
+    // Unseeded ids (big-pickle and the free tier, OpenCode-client-only) are not
+    // in the catalog, so they stay text-dispatch like any free-text id.
+    expect(providerModelSupportsNativeToolCalling('zen', 'big-pickle')).toBe(false);
     expect(providerModelSupportsNativeToolCalling('zen', 'claude-sonnet-4-6')).toBe(true);
     expect(providerModelSupportsNativeToolCalling('zen', 'gpt-5.4')).toBe(true);
     // Go-tier-only ids are included too (they share the catalog union).

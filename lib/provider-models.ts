@@ -42,8 +42,8 @@ export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 // Paid, Chat Completions, verified answering through Push on 2026-10-25. Not
-// `big-pickle`: OpenCode's free stealth model hung with no response from Push
-// (its docs say free-tier models require the OpenCode client).
+// `big-pickle`: OpenCode's free stealth model hung with no response from Push,
+// and free-tier models are OpenCode-client-only (see ZEN_UNSEEDED_MODELS).
 export const ZEN_DEFAULT_MODEL = 'deepseek-v4-pro';
 // Verified serverless slug (fireworks.ai/models/deepseek-ai/deepseek-v4-pro, 2026-06-17) —
 // DeepSeek's flagship MoE: frontier reasoning, strong coding, up to 1M context. Re-check
@@ -212,7 +212,7 @@ export const CLOUDFLARE_GATEWAY_MODELS: string[] = [
 // `/v1/models` listing use a flat `owned_by: opencode` namespace. The
 // `opencode/<id>` form some docs show is only OpenCode's own config prefix —
 // Push posts straight to /zen/v1/chat/completions, so the provider prefix
-// would make the model non-routable. Free variants keep the `-free` suffix.
+// would make the model non-routable.
 //
 // Claude ids are dash-versioned (`claude-opus-4-8`, not `claude-opus-4.8`) —
 // Zen renamed them, and the dotted forms are no longer listed.
@@ -271,13 +271,11 @@ export const ZEN_MODELS: string[] = [
   'gemini-4-argon',
   'deepseek-v4-flash',
   'deepseek-v4.1-flash',
-  'deepseek-v4.1-flash-free',
   'glm-5',
   'glm-5.1',
   'glm-5.2',
   'glm-5.3',
   'glm-5.3-flash',
-  'glm-5.3-flash-free',
   'kimi-k2.5',
   'kimi-k2.6',
   'kimi-k2.7-code',
@@ -297,19 +295,17 @@ export const ZEN_MODELS: string[] = [
   'muse-spark-1.2',
   'muse-spark-1.3',
   'muse-wonder-1.0',
-  'mimo-v2.6-flash-free',
-  'nemotron-3.5-lightning-free',
-  'nemotron-3.5-super-vl-free',
-  'beam-free',
-  'flint-40b-free',
-  'big-pickle',
 ];
 
 // Live standard-tier ids deliberately left out of ZEN_MODELS: Claude Fable 5 /
 // 5.1 (intentionally not seeded); `test` and `claude-opus-5-5-backup`, which
 // are not user-facing models; and `jev-1.13` / `jev-1.13-free`, which no
 // source publishes limits for, so they would seed with no declared metadata
-// (live discovery and free-text still reach them). The canary's catalog-drift check
+// (live discovery and free-text still reach them); and every free-tier model
+// (`big-pickle` and the `-free` ids), because the Console docs say "Free-tier
+// chat models require OpenCode; use paid models or Go from other clients" —
+// from Push they hang with no response (big-pickle, twice, 2026-10-25). The
+// canary's catalog-drift check
 // (`scripts/eval/canary.ts`) ignores these, so adding a live id here is the
 // recorded decision not to seed it.
 export const ZEN_UNSEEDED_MODELS: string[] = [
@@ -319,6 +315,14 @@ export const ZEN_UNSEEDED_MODELS: string[] = [
   'jev-1.13',
   'jev-1.13-free',
   'test',
+  'big-pickle',
+  'beam-free',
+  'deepseek-v4.1-flash-free',
+  'flint-40b-free',
+  'glm-5.3-flash-free',
+  'mimo-v2.6-flash-free',
+  'nemotron-3.5-lightning-free',
+  'nemotron-3.5-super-vl-free',
 ];
 
 // Zen renamed its Claude ids from dotted to dash versions (2026-10). A
