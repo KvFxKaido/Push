@@ -37,6 +37,8 @@ import {
   OPENAI_MODELS,
   OPENROUTER_MODELS,
   XAI_MODELS,
+  ZEN_MODELS,
+  ZEN_UNSEEDED_MODELS,
 } from '../../lib/provider-models.js';
 import {
   CANARY_SECRET,
@@ -339,11 +341,13 @@ async function runTarget(target: Target, base: string, stampDir: string): Promis
 // Catalog drift: the provider's live model list against Push's catalog.
 // ---------------------------------------------------------------------------
 
+// Headers default to the gateway's; a list fetched straight from a provider
+// passes its own, so the gateway token never leaves for a third-party host.
 async function liveModels(
   url: string,
-  extraHeaders: Record<string, string> = {},
+  headers: Record<string, string> = gatewayHeaders,
 ): Promise<string[]> {
-  const res = await fetch(url, { headers: { ...gatewayHeaders, ...extraHeaders } });
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = (await res.json()) as {
     data?: Array<{ id: string }>;
@@ -362,6 +366,7 @@ async function checkCatalogs(): Promise<CanaryReport['drift']> {
       async () =>
         catalogDrift(
           await liveModels(`${GATEWAY}/anthropic/v1/models?limit=100`, {
+            ...gatewayHeaders,
             'anthropic-version': '2023-06-01',
           }),
           ANTHROPIC_MODELS,
@@ -401,6 +406,18 @@ async function checkCatalogs(): Promise<CanaryReport['drift']> {
           await liveModels(`${GATEWAY}/openrouter/v1/models`),
           OPENROUTER_MODELS.map(stripRoutingSuffix),
           'unlisted-only',
+        ),
+    ],
+    // Zen's list is public and fetched direct, like the Worker does: the
+    // gateway's custom-zen proxy truncates /v1/models. No auth header at all.
+    [
+      'zen',
+      async () =>
+        catalogDrift(
+          await liveModels('https://opencode.ai/zen/v1/models', {}),
+          ZEN_MODELS,
+          'all',
+          ZEN_UNSEEDED_MODELS,
         ),
     ],
   ];

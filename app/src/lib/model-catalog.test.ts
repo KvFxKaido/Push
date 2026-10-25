@@ -1196,7 +1196,7 @@ describe('providerModelSupportsStructuredOutput', () => {
     // Standard-tier ids (including the proprietary big-pickle default that has
     // no models.dev metadata) pass via the name-based allowlist.
     expect(providerModelSupportsNativeToolCalling('zen', 'big-pickle')).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('zen', 'claude-sonnet-4.6')).toBe(true);
+    expect(providerModelSupportsNativeToolCalling('zen', 'claude-sonnet-4-6')).toBe(true);
     expect(providerModelSupportsNativeToolCalling('zen', 'gpt-5.4')).toBe(true);
     // Go-tier-only ids are included too (they share the catalog union).
     expect(providerModelSupportsNativeToolCalling('zen', 'glm-5.2')).toBe(true);
