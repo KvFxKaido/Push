@@ -1280,6 +1280,49 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(tokens.join('')).toBe('ok');
     expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
   });
+
+  it('parses standard-tier Claude as native Anthropic SSE', async () => {
+    // Standard Zen serves Claude only on /messages; handleZenChat proxies that
+    // raw Anthropic SSE, so the adapter must not run it through pumpSseBody.
+    providerHandlerMocks.handleZenChat.mockResolvedValue(
+      sseResponse([
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n',
+      ]),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'zen',
+      modelId: 'claude-sonnet-4-6',
+      jobId: 'job-zen-claude',
+    });
+    const { tokens, errors } = await drainAs(stream, 'zen', 'claude-sonnet-4-6');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('ok');
+  });
+
+  it('sends standard-tier GPT a Responses body and parses Responses SSE', async () => {
+    providerHandlerMocks.handleZenChat.mockResolvedValue(
+      sseResponse([
+        'data: {"type":"response.output_text.delta","delta":"ok"}\n\n',
+        'data: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+      ]),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'zen',
+      modelId: 'gpt-6-luna',
+      jobId: 'job-zen-gpt',
+    });
+    const { tokens, errors } = await drainAs(stream, 'zen', 'gpt-6-luna');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('ok');
+    const req = providerHandlerMocks.handleZenChat.mock.calls[0]![0] as Request;
+    const body = JSON.parse(await req.text());
+    expect(body.input).toBeDefined();
+    expect(body.messages).toBeUndefined();
+  });
 });
 
 describe('createWebStreamAdapter — user-stored key injection', () => {

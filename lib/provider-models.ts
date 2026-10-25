@@ -41,7 +41,10 @@ export const HUGGINGFACE_DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V4-Pro';
 export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
-export const ZEN_DEFAULT_MODEL = 'big-pickle';
+// Paid, Chat Completions, verified answering through Push on 2026-10-25. Not
+// `big-pickle`: OpenCode's free stealth model hung with no response from Push
+// (its docs say free-tier models require the OpenCode client).
+export const ZEN_DEFAULT_MODEL = 'deepseek-v4-pro';
 // Verified serverless slug (fireworks.ai/models/deepseek-ai/deepseek-v4-pro, 2026-06-17) —
 // DeepSeek's flagship MoE: frontier reasoning, strong coding, up to 1M context. Re-check
 // against /api/fireworks/models if it 404s.
@@ -267,7 +270,6 @@ export const ZEN_MODELS: string[] = [
   'gemini-3.8-flash',
   'gemini-4-argon',
   'deepseek-v4-flash',
-  'deepseek-v4-pro',
   'deepseek-v4.1-flash',
   'deepseek-v4.1-flash-free',
   'glm-5',
@@ -300,6 +302,7 @@ export const ZEN_MODELS: string[] = [
   'nemotron-3.5-super-vl-free',
   'beam-free',
   'flint-40b-free',
+  'big-pickle',
 ];
 
 // Live standard-tier ids deliberately left out of ZEN_MODELS: Claude Fable 5 /

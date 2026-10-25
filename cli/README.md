@@ -383,9 +383,9 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_HUGGINGFACE_URL` | Hugging Face router endpoint (default: `https://router.huggingface.co/v1/chat/completions`) |
 | `PUSH_HUGGINGFACE_API_KEY` | Hugging Face access token |
 | `PUSH_HUGGINGFACE_MODEL` | Hugging Face model (default: `deepseek-ai/DeepSeek-V4-Pro`) |
-| `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
+| `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`; Claude and GPT/Grok/Muse models swap the suffix for `/messages` / `/responses`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
-| `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
+| `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `deepseek-v4-pro`) |
 | `PUSH_FIREWORKS_URL` | Fireworks AI endpoint (default: `https://api.fireworks.ai/inference/v1/responses`) |
 | `PUSH_FIREWORKS_API_KEY` | Fireworks AI API key |
 | `PUSH_FIREWORKS_MODEL` | Fireworks AI model (default: `accounts/fireworks/models/deepseek-v4-pro`) |
@@ -444,7 +444,7 @@ The CLI ships thirteen providers. Five (`ollama`, `kimi`, `zai`, `huggingface`, 
 | `kimi` | `kimi-k2.7-code-highspeed` | Yes |
 | `zai` | `glm-5.2` | Yes |
 | `huggingface` | `deepseek-ai/DeepSeek-V4-Pro` | Yes |
-| `zen` | `big-pickle` | Yes |
+| `zen` | `deepseek-v4-pro` | Yes |
 | `fireworks` | `accounts/fireworks/models/deepseek-v4-pro` | Yes |
 | `deepseek` | `deepseek-v4-pro` | Yes |
 | `sakana` | `fugu` | Yes |

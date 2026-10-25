@@ -23,6 +23,7 @@ import {
   toOpenAIResponseFormat,
 } from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
+import { getZenTransport } from '@push/lib/zen-transport';
 import {
   ANTHROPIC_MODELS,
   CLOUDFLARE_GATEWAY_MODELS,
@@ -975,9 +976,45 @@ export async function handleCloudflareGatewayModels(request: Request, env: Env):
   );
 }
 
-// --- OpenCode Zen (OpenAI-compatible endpoint) ---
+// --- OpenCode Zen (standard / pay-as-you-go tier) ---
 
-export const handleZenChat = createStreamProxyHandler({
+// Standard Zen serves each model on exactly one endpoint (lib/zen-transport.ts)
+// and answers the others with `400 ModelProtocolUnsupported`, so the model in the
+// body picks the upstream: Claude (and some Qwen) → /messages via the same
+// tier-parameterised path Go uses, GPT / Grok / Muse → /responses via the shared
+// Responses proxy, everything else → /chat/completions below, unchanged.
+export async function handleZenChat(request: Request, env: Env): Promise<Response> {
+  const transport = getZenTransport(await peekRequestModel(request));
+  if (transport === 'anthropic') return handleZenTierChat(request, env, ZEN_STANDARD_TIER);
+  if (transport === 'responses') {
+    return handleResponsesProxy(request, env, {
+      providerLabel: 'OpenCode Zen',
+      authSecret: 'ZEN_API_KEY',
+      keyMissingError:
+        'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
+      upstreamUrl: 'https://opencode.ai/zen/v1/responses',
+      route: 'api/zen/chat',
+      timeoutError: 'OpenCode Zen request timed out after 120 seconds',
+      gateway: { provider: 'custom-zen', pathSuffix: '/zen/v1/responses' },
+    });
+  }
+  return handleZenChatCompletions(request, env);
+}
+
+/** The body's top-level `model` (every wire shape Zen clients send carries one), read
+ *  from a clone so the downstream handler still owns the original body. */
+async function peekRequestModel(request: Request): Promise<string> {
+  try {
+    const parsed = JSON.parse(await request.clone().text()) as { model?: unknown };
+    return typeof parsed.model === 'string' ? parsed.model : '';
+  } catch {
+    // Malformed bodies fall through to the Chat Completions handler, whose
+    // validation returns the proper 400.
+    return '';
+  }
+}
+
+const handleZenChatCompletions = createStreamProxyHandler({
   name: 'OpenCode Zen API',
   logTag: 'api/zen/chat',
   upstreamUrl: 'https://opencode.ai/zen/v1/chat/completions',
@@ -1266,7 +1303,46 @@ export function getZenGoAuthHeaders(
   };
 }
 
+interface ZenTierConfig {
+  /** Go and standard Zen are separate services with separate transport tables. */
+  go: boolean;
+  /** Upstream path prefix under https://opencode.ai, e.g. `/zen/go/v1`. */
+  basePath: string;
+  route: string;
+  label: string;
+  /** Structured-log prefix: `<prefix>_store_key_used` / `_empty` / `_failed`. */
+  logPrefix: string;
+  /** Named in the keyless-Anthropic 401 so the user knows which models need a key. */
+  anthropicFamilies: string;
+}
+
+const ZEN_GO_TIER: ZenTierConfig = {
+  go: true,
+  basePath: '/zen/go/v1',
+  route: 'api/zen/go/chat',
+  label: 'OpenCode Zen Go',
+  logPrefix: 'zen_go',
+  anthropicFamilies: 'MiniMax/Qwen families',
+};
+
+const ZEN_STANDARD_TIER: ZenTierConfig = {
+  go: false,
+  basePath: '/zen/v1',
+  route: 'api/zen/chat',
+  label: 'OpenCode Zen',
+  logPrefix: 'zen',
+  anthropicFamilies: 'Claude and some Qwen',
+};
+
 export async function handleZenGoChat(request: Request, env: Env): Promise<Response> {
+  return handleZenTierChat(request, env, ZEN_GO_TIER);
+}
+
+async function handleZenTierChat(
+  request: Request,
+  env: Env,
+  tier: ZenTierConfig,
+): Promise<Response> {
   // Gateway targets per transport (custom-zen binding: base_url
   // https://opencode.ai, full path in the suffix). BYOK keyless routing
   // applies to the OPENAI transport only: the gateway's stored-key injection
@@ -1278,13 +1354,13 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   // the gateway as passthrough when the slug is enabled.
   const openaiTarget = resolveAiGatewayFetchTarget(
     env,
-    'https://opencode.ai/zen/go/v1/chat/completions',
-    { provider: 'custom-zen', pathSuffix: '/zen/go/v1/chat/completions' },
+    `https://opencode.ai${tier.basePath}/chat/completions`,
+    { provider: 'custom-zen', pathSuffix: `${tier.basePath}/chat/completions` },
   );
   const anthropicTarget = resolveAiGatewayFetchTarget(
     env,
-    'https://opencode.ai/zen/go/v1/messages',
-    { provider: 'custom-zen', pathSuffix: '/zen/go/v1/messages' },
+    `https://opencode.ai${tier.basePath}/messages`,
+    { provider: 'custom-zen', pathSuffix: `${tier.basePath}/messages` },
   );
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth('ZEN_API_KEY'),
@@ -1308,7 +1384,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   // until that flip. See
   // docs/runbooks/Anthropic Worker Contract Migration.md.
   const dual = parseDualAcceptRequest(bodyText, {
-    routeLabel: 'OpenCode Zen Go',
+    routeLabel: tier.label,
     maxOutputTokens: 12_288,
     provider: 'zen',
   });
@@ -1318,7 +1394,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   if (dual.adjustments.length > 0) {
     wlog('warn', 'chat_request_adjusted', {
       requestId,
-      route: 'api/zen/go/chat',
+      route: tier.route,
       adjustments: dual.adjustments,
     });
   }
@@ -1337,7 +1413,10 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       : typeof dual.parsed.model === 'string'
         ? dual.parsed.model.trim()
         : '';
-  const transport = getZenGoTransport(model);
+  // Only the two transports this path serves: standard Zen's Responses models
+  // never reach here (handleZenChat dispatches them to handleResponsesProxy).
+  const transport: 'openai' | 'anthropic' =
+    getZenTransport(model, { go: tier.go }) === 'anthropic' ? 'anthropic' : 'openai';
   const target = transport === 'anthropic' ? anthropicTarget : openaiTarget;
   // BYOK precedence matches the shared handlers: when the gateway holds the
   // key and the route is gatewayed, dispatch keyless and let the gateway
@@ -1355,16 +1434,16 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       const storeKey = (await env.ZEN_KEY_STORE.get())?.trim();
       if (storeKey) {
         effectiveAuthHeader = `Bearer ${storeKey}`;
-        wlog('info', 'zen_go_store_key_used', { requestId, route: 'api/zen/go/chat' });
+        wlog('info', `${tier.logPrefix}_store_key_used`, { requestId, route: tier.route });
       } else {
-        wlog('warn', 'zen_go_store_key_empty', { requestId, route: 'api/zen/go/chat' });
+        wlog('warn', `${tier.logPrefix}_store_key_empty`, { requestId, route: tier.route });
       }
     } catch (err) {
       // Fall through to the 401 below — loudly, so an unreadable binding is
       // distinguishable from "no binding configured".
-      wlog('warn', 'zen_go_store_key_failed', {
+      wlog('warn', `${tier.logPrefix}_store_key_failed`, {
         requestId,
-        route: 'api/zen/go/chat',
+        route: tier.route,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -1375,8 +1454,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     // other key source resolved.
     return Response.json(
       {
-        error:
-          'OpenCode Zen API key not configured. Anthropic-transport Zen Go models (MiniMax/Qwen families) cannot use the gateway-injected key — add a Zen key in Settings, set ZEN_API_KEY, or bind ZEN_KEY_STORE.',
+        error: `OpenCode Zen API key not configured. Anthropic-transport ${tier.label} models (${tier.anthropicFamilies}) cannot use the gateway-injected key — add a Zen key in Settings, set ZEN_API_KEY, or bind ZEN_KEY_STORE.`,
       },
       { status: 401 },
     );
@@ -1409,7 +1487,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
             );
     } catch (err) {
       return Response.json(
-        { error: `OpenCode Zen Go request: ${err instanceof Error ? err.message : String(err)}` },
+        { error: `${tier.label} request: ${err instanceof Error ? err.message : String(err)}` },
         { status: 400 },
       );
     }
@@ -1422,7 +1500,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
 
   wlog('info', 'request', {
     requestId,
-    route: 'api/zen/go/chat',
+    route: tier.route,
     transport,
     model,
     contract: dual.contractKind,
@@ -1455,7 +1533,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
 
     wlog('info', 'upstream_ok', {
       requestId,
-      route: 'api/zen/go/chat',
+      route: tier.route,
       transport,
       status: upstream.status,
     });
@@ -1464,7 +1542,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       const errBody = await upstream.text().catch(() => '');
       wlog('error', 'upstream_error', {
         requestId,
-        route: 'api/zen/go/chat',
+        route: tier.route,
         transport,
         status: upstream.status,
         body: errBody.slice(0, 500),
@@ -1476,7 +1554,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
         : errBody.slice(0, 200);
       return Response.json(
         {
-          error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
+          error: `${tier.label} API error ${upstream.status}: ${errDetail}`,
           // Tag 429s like the native providers so a Go-tier quota / rate limit
           // is classified the same way everywhere (see handleZenChat above).
           code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
@@ -1506,13 +1584,13 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     const isTimeout = err instanceof Error && err.name === 'AbortError';
     wlog('error', 'unhandled', {
       requestId,
-      route: 'api/zen/go/chat',
+      route: tier.route,
       transport,
       message,
       timeout: isTimeout,
     });
     return Response.json(
-      { error: isTimeout ? 'OpenCode Zen Go request timed out after 120 seconds' : message },
+      { error: isTimeout ? `${tier.label} request timed out after 120 seconds` : message },
       { status: isTimeout ? 504 : 502 },
     );
   }
@@ -1722,6 +1800,7 @@ interface ResponsesProxyOptions {
     | 'OPENROUTER_API_KEY'
     | 'XAI_API_KEY'
     | 'SAKANA_API_KEY'
+    | 'ZEN_API_KEY'
     | 'FIREWORKS_API_KEY';
   keyMissingError: string;
   upstreamUrl: string;
