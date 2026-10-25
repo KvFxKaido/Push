@@ -69,11 +69,12 @@ import {
   handleItemsUpdate,
 } from './src/worker/worker-chat-library';
 
-// Re-export the Sandbox Durable Object class so wrangler can bind to it.
-// The Cloudflare Sandbox SDK ships the DO implementation; we only need to
-// expose the class symbol from the Worker entry. Subclass here later if we
-// need outbound handlers (outboundByHost) or custom lifecycle hooks.
-export { Sandbox } from '@cloudflare/sandbox';
+// The Sandbox Durable Object. Since Sandbox SDK 1.0 the app writes it (the
+// package no longer ships one): a compatibility facade over `ctx.container`.
+// DirectoryBackupGateway is the package's R2 gateway for directory backups;
+// the facade reaches it through `ctx.exports`.
+export { Sandbox } from './src/worker/sandbox-do';
+export { DirectoryBackupGateway } from '@cloudflare/sandbox';
 
 // Background-jobs DO — Phase 1 of Background Coder Tasks.
 export { CoderJob } from './src/worker/coder-job-do';

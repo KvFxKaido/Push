@@ -225,9 +225,10 @@
   // objects; BACKUP_BUCKET is the first-party Sandbox SDK archive binding.
   // Both bindings intentionally point at the same physical bucket. Provision:
   //   npx wrangler r2 bucket create push-cf-snapshots
-  // Production SDK backups also require these deploy-time environment/secrets
-  // (names only; never commit their values): BACKUP_BUCKET_NAME,
-  // CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
+  // SDK 1.0 backups go through BACKUP_BUCKET and the DirectoryBackupGateway
+  // export alone: no R2 API keypair. (0.12 needed BACKUP_BUCKET_NAME,
+  // CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY; delete
+  // those secrets once 1.0 is live, not before.)
   // Retention: superseded descriptors/legacy objects are deleted inline, and
   // the daily cron reaps orphaned legacy `cf-snapshots/` objects. SDK archives
   // under `backups/` use the handle TTL for restore validity; the 7-day R2
@@ -252,14 +253,22 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "./Dockerfile.sandbox",
-      // "standard" = 4 GiB / ½ vCPU. "basic" (1 GiB / ¼ vCPU) gets OOM-killed
-      // by repo test suites — node --test / vitest size their worker pools for
-      // the host CPU count, and the kernel killing the container takes the
-      // whole sandbox (and the session riding on it) with it. Pairs with the
-      // per-exec resource env caps in worker-cf-sandbox.ts.
-      "instance_type": "standard",
-      "max_instances": 10
+      // Sandbox SDK 1.0: the Durable Object (app/src/worker/sandbox-do.ts)
+      // starts the container itself, so the policy is "durable_object" and
+      // the image is named, not attached. A new `name` is required: the 0.12
+      // application keeps its derived name until it's deleted. Deploying this
+      // policy for the class is ONE-WAY; see
+      // docs/decisions/Cloudflare Sandbox SDK 1.0 Migration.md.
+      //
+      // The instance size moved into `start()` in sandbox-do.ts
+      // ("standard-1", the renamed "standard" = 4 GiB / ½ vCPU; "basic" gets
+      // OOM-killed by repo test suites). `instance_type` and `max_instances`
+      // aren't accepted with this policy.
+      "name": "push-sandbox-do",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": { "dockerfile": "./Dockerfile.sandbox", "build_context": "." }
+      }
     }
   ],
   "durable_objects": {
@@ -360,5 +369,138 @@
   // This flag is NOT optional and NOT implied by the Logpush job existing. A
   // job with no opted-in scripts reports `last_complete: null` and *no error* —
   // it looks exactly like batch lag. Deleting this line silently stops delivery.
-  "logpush": true
+  "logpush": true,
+  // Worker Previews (Workers Builds runs `npx wrangler preview` for non-main
+  // branches once the dashboard switch is made). Each Preview gets its own
+  // Durable Object namespaces, so a branch cannot reach production's sandboxes,
+  // chats or jobs. Nothing is inherited from the top level:
+  //  - Data bindings point at push-staging's KV, R2, rate-limit namespace and
+  //    analytics dataset, never production's.
+  //  - No containers: Previews reject the durable_object policy, so Preview
+  //    sandboxes run on Modal (PUSH_SANDBOX_PROVIDER=modal). Cloudflare-container
+  //    changes are rehearsed on push-staging (wrangler.staging.jsonc) instead.
+  //  - No crons, logpush or routes; those target production only.
+  // Preview secrets are set once on the Previews Base config, not here; see
+  // docs/runbooks/Deployment Requirements.md ("Worker Previews").
+  "previews": {
+    "vars": {
+      "PUSH_SANDBOX_PROVIDER": "modal",
+      "PUSH_RELAY_ENABLED": "1",
+      "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,zen,zai,moonshot,huggingface",
+      "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen,zai,moonshot,grok,huggingface"
+    },
+    "define": {
+      "import.meta.env.DEV": "false",
+      "import.meta.env.PROD": "true",
+      "import.meta.env.MODE": "\"production\"",
+      "import.meta.env.BASE_URL": "\"/\"",
+      "import.meta.env.SSR": "true",
+      "import.meta.env.VITE_ANTHROPIC_API_KEY": "\"\"",
+      "import.meta.env.VITE_API_BASE_URL": "\"\"",
+      "import.meta.env.VITE_CLOUDFLARE_GATEWAY_COMPAT_TOKEN": "\"\"",
+      "import.meta.env.VITE_DEEPSEEK_API_KEY": "\"\"",
+      "import.meta.env.VITE_FIREWORKS_API_KEY": "\"\"",
+      "import.meta.env.VITE_GITHUB_APP_REDIRECT_URI": "\"\"",
+      "import.meta.env.VITE_GITHUB_CLIENT_ID": "\"\"",
+      "import.meta.env.VITE_GITHUB_OAUTH_PROXY": "\"\"",
+      "import.meta.env.VITE_GITHUB_REDIRECT_URI": "\"\"",
+      "import.meta.env.VITE_GITHUB_TOKEN": "\"\"",
+      "import.meta.env.VITE_GITHUB_TOOL_BACKEND": "\"\"",
+      "import.meta.env.VITE_GOOGLE_API_KEY": "\"\"",
+      "import.meta.env.VITE_LOCAL_PC_MODE": "\"\"",
+      "import.meta.env.VITE_NATIVE_WORKING_COPY": "\"\"",
+      "import.meta.env.VITE_OLLAMA_API_KEY": "\"\"",
+      "import.meta.env.VITE_OPENAI_API_KEY": "\"\"",
+      "import.meta.env.VITE_OPENROUTER_API_KEY": "\"\"",
+      "import.meta.env.VITE_OPENROUTER_TRANSPORT": "\"\"",
+      "import.meta.env.VITE_RELAY_MODE": "\"\"",
+      "import.meta.env.VITE_SAKANA_API_KEY": "\"\"",
+      "import.meta.env.VITE_TAVILY_API_KEY": "\"\"",
+      "import.meta.env.VITE_USE_STREAMDOWN": "\"\"",
+      "import.meta.env.VITE_XAI_API_KEY": "\"\"",
+      "import.meta.env.VITE_ZAI_API_KEY": "\"\"",
+      "import.meta.env.VITE_KIMI_API_KEY": "\"\"",
+      "import.meta.env.VITE_HUGGINGFACE_API_KEY": "\"\"",
+      "import.meta.env.VITE_ZEN_API_KEY": "\"\""
+    },
+    "ai": {
+      "binding": "AI",
+      "remote": true
+    },
+    "secrets_store_secrets": [
+      {
+        "binding": "ZEN_KEY_STORE",
+        "store_id": "13a7421a93df46e6bea9230445e057fd",
+        "secret_name": "push-gate_zen_default"
+      }
+    ],
+    "ratelimits": [
+      {
+        "name": "RATE_LIMITER",
+        "namespace_id": "9001",
+        "simple": {
+          "limit": 120,
+          "period": 60
+        }
+      }
+    ],
+    "kv_namespaces": [
+      {
+        "binding": "SNAPSHOT_INDEX",
+        "id": "580ed61b973c48dea0ace2abec4edb3a"
+      },
+      {
+        "binding": "SANDBOX_TOKENS",
+        "id": "aa4bd99905e74901ba2bc7baff43a288"
+      },
+      {
+        "binding": "ARTIFACTS",
+        "id": "e99b0e009c3041749be4064d8d88a698"
+      },
+      {
+        "binding": "CHAT_LIBRARY",
+        "id": "585b42cdbc664a1dbab505a4cd128dcd"
+      }
+    ],
+    "r2_buckets": [
+      {
+        "binding": "SNAPSHOTS",
+        "bucket_name": "push-staging-snapshots"
+      },
+      {
+        "binding": "BACKUP_BUCKET",
+        "bucket_name": "push-staging-snapshots"
+      }
+    ],
+    "analytics_engine_datasets": [
+      {
+        "binding": "PROVIDER_STATS",
+        "dataset": "push_provider_stats_staging"
+      }
+    ],
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "Sandbox",
+          "class_name": "Sandbox"
+        },
+        {
+          "name": "CoderJob",
+          "class_name": "CoderJob"
+        },
+        {
+          "name": "RELAY_SESSIONS",
+          "class_name": "RelaySessionDO"
+        },
+        {
+          "name": "PrReviewJob",
+          "class_name": "PrReviewJob"
+        },
+        {
+          "name": "RUN_HOST",
+          "class_name": "RunHost"
+        }
+      ]
+    }
+  }
 }
