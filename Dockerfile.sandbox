@@ -105,6 +105,10 @@ RUN npm install -g bun@"${PUSH_SANDBOX_BUN_VERSION}" corepack@"${PUSH_SANDBOX_CO
 # because pnpm's per-package node_modules are relative symlinks into the root
 # .pnpm virtual store. `HUSKY=0 CI=1` skips the husky install (no .git here);
 # build scripts stay on so packages like esbuild fetch their native binaries.
+# ONNXRUNTIME_NODE_INSTALL=skip stops onnxruntime-node's postinstall from
+# downloading its CUDA/TensorRT providers (~330 MB, near-incompressible): the
+# sandbox has no GPU, so they can never load, and they were the heaviest part of
+# the layer Workers Builds times out pushing. The CPU runtime ships in the package.
 WORKDIR /opt/push-cache
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY app/package.json ./app/
@@ -112,7 +116,7 @@ COPY mcp/github-server/package.json ./mcp/github-server/
 # app/ depends on the in-repo Capacitor plugin via `file:../plugins/...`, so its
 # source (not just a manifest) must be in the build context.
 COPY plugins/capacitor-native-git ./plugins/capacitor-native-git
-RUN HUSKY=0 CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile
+RUN HUSKY=0 CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 ONNXRUNTIME_NODE_INSTALL=skip pnpm install --frozen-lockfile
 
 COPY sandbox/bin/push-sandbox-doctor /usr/local/bin/push-sandbox-doctor
 RUN chmod 0755 /usr/local/bin/push-sandbox-doctor
