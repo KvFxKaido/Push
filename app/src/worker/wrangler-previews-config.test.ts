@@ -30,6 +30,11 @@ type WranglerConfig = {
   ratelimits?: Array<Binding & { namespace_id: string }>;
   durable_objects?: { bindings: Array<{ name: string; class_name: string }> };
   triggers?: unknown;
+  observability?: {
+    enabled?: boolean;
+    logs?: { enabled?: boolean; persist?: boolean };
+    traces?: { enabled?: boolean; persist?: boolean };
+  };
   previews?: WranglerConfig;
 };
 
@@ -95,6 +100,14 @@ describe.each([
 
   it('has no crons', () => {
     expect(previews?.triggers).toBeUndefined();
+  });
+
+  // Preview telemetry is configured separately from production; without this a
+  // Preview's logs and traces are simply not collected.
+  it('keeps Preview logs and traces on and persisted', () => {
+    expect(previews?.observability?.enabled).toBe(true);
+    expect(previews?.observability?.logs).toMatchObject({ enabled: true, persist: true });
+    expect(previews?.observability?.traces).toMatchObject({ enabled: true, persist: true });
   });
 
   it('copies every define shim exactly', () => {

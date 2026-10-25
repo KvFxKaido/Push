@@ -380,9 +380,17 @@
   //    sandboxes run on Modal (PUSH_SANDBOX_PROVIDER=modal). Cloudflare-container
   //    changes are rehearsed on push-staging (wrangler.staging.jsonc) instead.
   //  - No crons, logpush or routes; those target production only.
+  //  - Observability is declared again: Preview logs and traces are separate
+  //    from production's and would otherwise not be configured.
   // Preview secrets are set once on the Previews Base config, not here; see
   // docs/runbooks/Deployment Requirements.md ("Worker Previews").
   "previews": {
+    "observability": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "logs": { "enabled": true, "invocation_logs": true, "persist": true },
+      "traces": { "enabled": true, "head_sampling_rate": 1, "persist": true }
+    },
     "vars": {
       "PUSH_SANDBOX_PROVIDER": "modal",
       "PUSH_RELAY_ENABLED": "1",

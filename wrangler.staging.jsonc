@@ -182,13 +182,19 @@
     }
   },
   // Worker Previews (`npx wrangler preview -c wrangler.staging.jsonc`): each
-  // Preview gets its own Durable Object namespaces and its own container app,
-  // so a branch can never touch this Worker's live sandboxes. Nothing here is
-  // inherited from the top level, so every binding the Worker reads from `env`
-  // is declared again. The container entry deliberately has NO `name`: a fixed
-  // name would point the Preview at the top-level app instead of a per-Preview
-  // one (the failure that broke production sandboxes on 2026-10-25).
+  // Preview gets its own Durable Object namespaces, so a branch can never touch
+  // this Worker's live sandboxes. Nothing here is inherited from the top level,
+  // so every binding the Worker reads from `env` is declared again, and so is
+  // observability (Preview logs and traces are configured separately). There
+  // are no containers: Previews reject the durable_object policy, so Preview
+  // sandboxes run on Modal. See wrangler.jsonc's previews block for the rest.
   "previews": {
+    "observability": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "logs": { "enabled": true, "invocation_logs": true, "persist": true },
+      "traces": { "enabled": true, "head_sampling_rate": 1, "persist": true }
+    },
     "vars": {
       "PUSH_SANDBOX_PROVIDER": "modal",
       "PUSH_RELAY_ENABLED": "1",
