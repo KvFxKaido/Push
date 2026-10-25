@@ -942,7 +942,10 @@ export function buildCuratedOpencodeModelList(
   const unseeded = new Set<string>(ZEN_UNSEEDED_MODELS);
 
   const candidates = modelIds.filter((id) => {
-    if (unseeded.has(id)) return false;
+    // Named exclusions, plus the `-free` suffix by pattern: Zen's free tier is
+    // OpenCode-client-only (it hangs from Push), so a newly listed free model
+    // must not reach the uncapped picker before anyone records it.
+    if (unseeded.has(id) || id.endsWith('-free')) return false;
     const meta = metadataById[id];
     if (!isOpencodeChatModel(id, meta)) return false;
 

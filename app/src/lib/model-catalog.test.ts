@@ -547,7 +547,15 @@ describe('buildCuratedOpencodeModelList', () => {
   });
 
   it('never shows ids deliberately left unseeded, though the live list carries them', () => {
-    const live = ['deepseek-v4-pro', 'big-pickle', 'glm-5.3-flash-free', 'claude-fable-5', 'test'];
+    // `brand-new-x-free` is in no list: the `-free` suffix alone must exclude it.
+    const live = [
+      'deepseek-v4-pro',
+      'big-pickle',
+      'glm-5.3-flash-free',
+      'claude-fable-5',
+      'test',
+      'brand-new-x-free',
+    ];
     const curated = buildCuratedOpencodeModelList(
       live,
       Object.fromEntries(live.map((id) => [id, chatMeta(id)])),
