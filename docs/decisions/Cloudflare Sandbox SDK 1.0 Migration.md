@@ -1,0 +1,325 @@
+# Cloudflare Sandbox SDK 1.0 Migration
+
+**Status:** Draft. Phase 0 (staging Worker) is ready to start. Every later
+phase needs an owner commitment, and the production switch is one-way.
+
+**Date:** 2026-10-24
+
+**Related:**
+- `app/src/worker/worker-cf-sandbox.ts` (the Cloudflare sandbox handler)
+- `app/src/worker/snapshot-index.ts`
+- `app/src/worker/coder-job-do.ts` (checkpoint and resume)
+- `scripts/snapshot-smoke/` (the rehearsal harness)
+- `docs/archive/decisions/Cloudflare Sandbox Provider Design.md`
+- Cloudflare: [Migrate from Sandbox SDK 0.x](https://developers.cloudflare.com/sandbox/sdk/migrate/)
+
+## Why this is a project, not a bump
+
+Sandbox SDK 1.0 (Dependabot #1652) removes the `Sandbox` class and
+`getSandbox()`. In 1.0 the app writes its own Durable Object, and that object
+drives the container directly through `this.ctx.container`. Commands, files,
+background processes, git checkout and directory backups all move into code
+Push owns. The 0.12 container server is gone, and the image no longer derives
+from `cloudflare/sandbox`.
+
+Three facts shape the plan:
+
+1. **The switch can't be undone.** The deploy that sets the class to
+   `scheduling_policy: "durable_object"` is permanent. Cloudflare's docs say
+   "a `wrangler rollback` to 0.12 either fails or deploys code that cannot
+   start containers." Wrangler also refuses a multi-version deploy that mixes
+   the two, so there's no gradual rollout.
+2. **Merges deploy production.** Workers Builds deploys `main`, so merging the
+   1.0 branch *is* the one-way switch, unless the deploy is taken off
+   auto-deploy for that one change.
+3. **There's time.** 0.x gets bug and security fixes until **2026-12-31**.
+   Push is pinned to 0.12.14 for SDK and image together (#1673), which is the
+   docs' required starting point.
+
+## What Push uses (inventory, main @ 0.12.14)
+
+| 0.12 surface | Push usage | 1.0 replacement |
+|---|---|---|
+| `getSandbox(env.Sandbox, id, { sleepAfter: '1h', transport: 'rpc', enableDefaultSession: false })` | One accessor, `sandboxFor()` | `env.Sandbox.getByName(id)`. `sleepAfter` becomes `setInactivityTimeout()`; `transport` and `enableDefaultSession` go away. |
+| `sandbox.exec(cmdString, opts)` | 44 call sites, shell strings | `container.exec(argv)` runs **without a shell**: wrap in `["bash","-c",cmd]`. cwd defaults to `/`; env is not inherited (only `PATH`); a timeout kills the command. |
+| `writeFile` (8), `readFile` (2), `listFiles` (1), `deleteFile` (1) | read/write/upload/batch-write/list/delete routes | `Files` class, which needs `sandbox-shim` in the image. `writeFile` no longer creates parent directories, `readDirectory` returns dotfiles, `remove` needs `recursive` for directories. |
+| `gitCheckout` (4) | clone with an `x-access-token` URL | A DO method that runs `git clone` through `exec` |
+| `startProcess`, `getProcess`, `getProcessLogs`, `killProcess` | `exec-start`, `exec-status`, `exec-logs`, `exec-kill` | Per-ID process directories in the container, plus a `process:<id>` key in DO storage and an alarm (the docs' pattern) |
+| `createBackup` / `restoreBackup` | hibernate, restore-snapshot, CoderJob checkpoint and resume | `DirectoryBackup` + the `DirectoryBackupGateway` export, on the same `BACKUP_BUCKET` |
+| `destroy` | cleanup | `container.destroy()` |
+
+**Not used, so no work needed:** preview URLs (`exposePort`/`proxyToSandbox`),
+tunnels, terminals, bucket mounts, the code interpreter, `schedule()`, outbound
+rules, and default sessions (already disabled).
+
+## Design: a compatibility facade
+
+Rewriting 22 routes in a 3,600-line handler against a new API is where bugs
+come from. Instead, the new Durable Object exposes **the same small method set
+Push already calls**, with 0.12-shaped inputs and results. The handler then
+changes in a few places only: `sandboxFor()`, the backup record type, and the
+deadline helper.
+
+- **New file `app/src/worker/sandbox-do.ts`:**
+  - It exports `class Sandbox extends DurableObject`. The class name stays the
+    same, so no DO migration is needed and existing DO storage and names carry
+    over.
+  - **`ensureRunning()` / `startContainer()`:** start with `env`,
+    `enableInternet: true` (the 0.12 default) and `setInactivityTimeout(1h)`.
+    The constructor re-applies the timeout, because it doesn't survive a DO
+    restart.
+  - **`exec(cmd, { cwd = '/workspace', env, timeout })`:** runs
+    `bash -c cmd`. It decodes stdout and stderr and returns
+    `{ success, exitCode, stdout, stderr }`. Timeouts use GNU `timeout`, where
+    exit 124 or 137 means it timed out. This one adapter absorbs the shell,
+    cwd and env differences for all 44 call sites.
+  - **`writeFile`:** runs `mkdir -p` on the parent first, then writes to a temp
+    path and renames it, so a reader never sees a partial file.
+  - **`listFiles`:** filters dotfiles unless asked, to keep 0.12's output.
+  - **`readFile` / `deleteFile`:** keep 0.12 semantics.
+  - **Processes:** `startProcess` / `getProcess` / `getProcessLogs` /
+    `killProcess` follow the docs' pattern, with 0.12 status names mapped back
+    to what the routes expect.
+  - **`createBackup` / `restoreBackup`:** wrap `DirectoryBackup` and keep the
+    `ttl` sidecar (`.meta.json`). `restoreBackup` converts a 0.12 SquashFS
+    record on first sight (see "Snapshots" below).
+  - **`gitCheckout`:** `git clone` through `exec`, same token-in-URL as today.
+    Credential injection at the outbound layer is a later improvement, not
+    part of this migration.
+- **`app/worker.ts`:**
+  - It exports the new class instead of re-exporting the package's.
+  - It also exports `DirectoryBackupGateway`.
+- **`wrangler.jsonc`:**
+  - **Containers entry:** gets a new `name` and
+    `scheduling_policy: "durable_object"`, with `images.sandbox.dockerfile`
+    pointing at `./Dockerfile.sandbox`.
+  - **Removed:** `image`, `instance_type` and `max_instances`, which the policy
+    rejects. The instance size moves to `start()` (`standard-1`; today's
+    "standard" is 4 GiB / ½ vCPU, so verify the 1.0 equivalent).
+  - **Unchanged:** `compatibility_date` is 2026-04-20, already past the
+    2025-11-17 that `ctx.exports` needs.
+- **`Dockerfile.sandbox`:**
+  - **New base:** drop `FROM cloudflare/sandbox:*-python`. Pick a base that
+    reproduces today's toolchain: Node (decide 22 vs the repo's 24 floor), Bun,
+    Python 3.11 with pip and venv, git, curl, jq, zip, and the data libraries.
+  - **Additions:** `COPY --from=docker.io/cloudflare/sandbox:<1.x>
+    /usr/local/bin/sandbox-shim`, `squashfs-tools` (needed for snapshot
+    conversion), `WORKDIR /workspace` and `CMD ["sleep","infinity"]`.
+  - **Removed:** `EXPOSE`. `ENV` lines no longer reach commands, so those
+    values move into the facade's `env`.
+
+## Snapshots: convert, or let them lapse
+
+Hibernate snapshots are SDK `createBackup` archives in SquashFS format, with
+a **7-day TTL** (`snapshot-index.ts`). CoderJob checkpoint and resume depends
+on restoring them. 1.0 writes a different format.
+
+1. **Convert on first restore (recommended).** The docs give the code: unpack
+   the SquashFS into `<dir>.convert`, swap it in, re-back it up with
+   `DirectoryBackup`, then delete the old objects. Needs `squashfs-tools` and
+   enough disk for the archive, the extracted copy and the existing directory
+   at once.
+2. **Let them lapse.** Restoring a pre-switch snapshot fails clearly, falls
+   back to a fresh clone, and the UI says so. This is simpler, but any work
+   that existed only in a snapshot is lost, which matters for long CoderJobs.
+
+Either way, the switch must not leave a restore that fails silently. The
+fallback path needs a structured log and a user-visible message.
+
+## Phase 0: staging Worker (first)
+
+A separate Worker that mirrors production. The rehearsal deploys 1.0 onto a
+staging Worker that *already runs 0.12.14 with live sandboxes and snapshots*,
+then checks it. That's the only way to test the one-way switch before it's
+real.
+
+**Setup**
+- **Config:** `wrangler.staging.jsonc`, copied from `wrangler.jsonc`:
+  - `name: "push-staging"`. Containers need their own `name` too; the docs warn
+    that `wrangler deploy --name` doesn't rename container applications.
+  - **Its own storage:** new KV namespaces for `SNAPSHOT_INDEX`,
+    `SANDBOX_TOKENS`, `ARTIFACTS` and `CHAT_LIBRARY`, and a new R2 bucket
+    (`push-staging-snapshots`) bound as both `SNAPSHOTS` and `BACKUP_BUCKET`.
+    Staging must never touch production snapshots.
+  - **Removed for staging:** `triggers` (no duplicate cron jobs) and
+    `logpush`. Staging serves on `*.workers.dev`; production's config has no
+    `routes` to strip.
+  - **Renamed or re-pointed:** the `analytics_engine_datasets` dataset gets a
+    staging name. Give `ratelimits` their own `namespace_id`s, so staging
+    traffic doesn't spend production's limits.
+  - **Kept:** Durable Objects and migrations (they're per-Worker
+    automatically) and `PUSH_SANDBOX_PROVIDER: "cloudflare"`.
+- **Secrets:** decide whether staging reads the same Secrets Store entries
+  (simplest; Push is single-user) or gets its own (cleaner). Set Worker
+  secrets with `wrangler versions secret put … -c wrangler.staging.jsonc`.
+- **Deploys:** by hand from a local checkout (`wrangler deploy -c
+  wrangler.staging.jsonc`), never Workers Builds. Docker is available
+  locally to build the image. Confirm Workers Builds ignores the staging
+  config.
+- **Ignore files:** add `.wrangler/` state and any staging-only outputs.
+
+**Baseline on 0.12.14 (before any 1.0 code exists)**
+1. Deploy staging from `main`.
+2. Run `scripts/snapshot-smoke/snapshot-smoke.mjs` against the staging URL.
+   Layers 1 and 2 must pass. That proves staging is a faithful copy.
+3. Run `coder-resume-smoke.mjs` (Layer 3), which needs model keys.
+4. Check the Modal fallback (below) on staging.
+
+Phase 0 is **done** when staging passes the smoke tests on 0.12.14. That's
+useful on its own: Push gains a staging Worker it can rehearse any risky
+change on.
+
+### Phase 0 progress (2026-10-24)
+
+**Stood up**
+- **Worker:** `push-staging` is live at `https://push-staging.ishawnd.workers.dev`,
+  first deployed as version `0e239a98-d8f1-4742-b88e-384e51a86ca0`.
+- **Code and config:** it was deployed from the #1673 branch, so it runs SDK and
+  image 0.12.14. The config is `wrangler.staging.jsonc`, generated from
+  `wrangler.jsonc` with the differences listed in its header.
+- **Container application:** `push-staging-sandbox`, with `max_instances` 3.
+- **Storage:** its own KV namespaces (`push-staging-SNAPSHOT_INDEX`,
+  `-SANDBOX_TOKENS`, `-ARTIFACTS`, `-CHAT_LIBRARY`) and its own R2 bucket,
+  `push-staging-snapshots`. The bucket has a 7-day expire rule and the
+  default multipart-abort rule.
+- **Secrets set:** `BACKUP_BUCKET_NAME` and `CLOUDFLARE_ACCOUNT_ID`.
+
+**First smoke run: blocked on R2 credentials, as expected**
+- Create works. This is the first live run of the 0.12.14 image.
+- Seeding 256 files works.
+- Hibernate fails with "Missing: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY".
+  The 0.12 SDK uploads backups through presigned R2 URLs, so the bucket
+  binding alone isn't enough.
+
+**Baseline on 0.12.14: PASS (2026-10-24, after the owner set the R2 keys)**
+
+`snapshot-smoke.mjs` against staging passed both layers:
+
+| Step | Result |
+|---|---|
+| Create sandbox (warm) | 5,124 ms. The first, cold run took 128 s. |
+| Seed 256 files | 532 ms |
+| Hibernate to R2 | 2,827 ms |
+| Wrong restore_token / nonexistent id | 403 `AUTH_FAILURE` / 404 `SNAPSHOT_NOT_FOUND` |
+| Restore into a fresh sandbox | 14,495 ms, graded YELLOW (green ≤ 5 s, yellow ≤ 15 s) |
+| Integrity | 256 files, content digest matches |
+
+These are the numbers 1.0 must match or beat on the same harness. There's no
+production figure to compare the restore time against yet. Running the smoke
+on production would create and delete production sandboxes, so that waits for
+the owner's go-ahead.
+
+**Still open in Phase 0**
+- **Layer 3 (`coder-resume-smoke.mjs`):** it drives a real model through
+  CoderJob, and staging has no AI provider secrets. It needs owner-set
+  credentials, or can be deferred to the 1.0 rehearsal.
+- **Modal fallback:** see "Found along the way" below.
+
+**Owner step to unblock (done)**
+1. Create an R2 API token scoped to `push-staging-snapshots` with Object
+   Read & Write (Cloudflare dashboard → R2 → Manage API tokens).
+2. Set its two values from a checkout that has `wrangler.staging.jsonc`:
+   `npx wrangler secret put R2_ACCESS_KEY_ID -c wrangler.staging.jsonc` and
+   `npx wrangler secret put R2_SECRET_ACCESS_KEY -c wrangler.staging.jsonc`.
+
+**Found along the way**
+- **Instance type renamed.** Wrangler 4.152 warns that the `"standard"`
+  instance type is now `"standard-1"`, so today's size has a 1.0 name. That
+  answers the instance-size open question.
+- **Production's bucket had no expiry rule (fixed 2026-10-24).**
+  `push-cf-snapshots` had only the default multipart-abort rule, although the
+  `wrangler.jsonc` comment says the 7-day rule "is what physically reclaims"
+  SDK archives.
+  - **Before the fix,** the bucket held 29 objects, all older than 7 days and
+    the oldest 96 days: 24 objects under `backups/` (135.7 MB) and 5
+    descriptors under `cf-backups/`. Every one was past the 7-day handle TTL,
+    so none was restorable. The storage cost was negligible.
+  - **The fix:** an `expire-7d` rule (whole bucket, 7 days) was added through
+    the API alongside the existing multipart-abort rule, at the owner's
+    request. `npm run r2:snapshots:lifecycle` is the scripted equivalent, but
+    on Windows wrangler 4.152's `r2 bucket lifecycle add` crashed (libuv
+    assertion), on staging too.
+- **Cold start.** The first sandbox create on staging took 128 s, most likely
+  the first pull of a new container application's image. Re-measure when
+  warm.
+- **Modal fallback unverified.** Production has `MODAL_SANDBOX_BASE_URL` set,
+  but whether the Modal app behind it is still deployed is unverified. The
+  Modal CLI isn't installed on the dev machine. Testing the fallback on
+  staging needs that URL copied in by the owner, because it may embed a
+  credential.
+
+## Phases after staging
+
+1. **Image:** a new `Dockerfile.sandbox` on its own base. Build it locally and
+   confirm the toolchain versions match today's, or record the deliberate
+   changes.
+2. **Facade:** `sandbox-do.ts` with the methods above, and unit tests against
+   a mocked `ctx.container` for each semantic difference (shell, cwd, env,
+   parent directories, dotfiles, timeouts, process states, backup round trip,
+   SquashFS conversion).
+3. **Handler:** switch `sandboxFor()` to `getByName()`, and the record type
+   from `DirectoryBackup` to `DirectoryBackupRecord` (`localBucket` is gone;
+   `size`, `name`, `sha256` and `format` are added). Update the test mocks
+   that stub `getSandbox`.
+4. **Rehearse on staging** (the docs' in-place path):
+   - Seed staging on 0.12.14 with a hibernated snapshot, a running sandbox
+     with a connected client, and a CoderJob mid-run.
+   - Upload the 1.0 version with `wrangler versions upload -c …` and note the
+     version ID, then deploy it with `wrangler versions deploy <id>@100% -y`.
+   - Wait a few minutes; requests can briefly reach the old container.
+   - Pass criteria:
+     - smoke Layers 1–3 are green;
+     - a pre-switch snapshot restores, converted if option 1 is chosen;
+     - the running sandbox's commands fail cleanly and recover on the next
+       request, instead of hanging;
+     - `wrangler containers list` shows the new application.
+5. **Production switch:**
+   - Pick a quiet window with no running CoderJobs.
+   - Hibernate any workspace worth keeping.
+   - Confirm the Modal fallback works.
+   - Deploy with `versions upload` + `versions deploy`, not by merging into
+     auto-deploy.
+   - Run the smoke tests against production, then watch logs for a day.
+6. **Cleanup:**
+   - Delete the old container application (`wrangler containers delete`),
+     which otherwise keeps running and billing.
+   - Delete 0.12 DO storage keys by name, never with `deleteAll()`, which
+     would also delete unconverted backup handles.
+   - Remove 0.12-only code and fix `scripts/snapshot-smoke/README.md`, which
+     still says snapshots are tar.gz although they're SDK backups.
+   - Flip this doc to Current.
+
+## Escape hatch: Modal
+
+The class can't go back to 0.12, but **Push can route around it**.
+`PUSH_SANDBOX_PROVIDER=modal` sends `/api/sandbox/*` to the Modal backend
+(`sandbox/app.py`). That needs the Modal app deployed and
+`MODAL_SANDBOX_BASE_URL` set, both of which have drifted unchecked. Phase 0
+should verify the fallback works on staging, so a broken 1.0 deploy has a
+same-day workaround: flip the var and fix forward.
+
+## Decisions for the owner
+
+1. **In place or side by side.** Recommended: in place. Push sandboxes are
+   short-lived (1-hour idle sleep) and their durable state lives in snapshots
+   and GitHub, which suits the in-place path. Side by side runs both classes
+   and copies `/workspace` per sandbox, which is more code for state Push
+   doesn't keep in containers.
+2. **Snapshots: convert or lapse.** Recommended: convert. The code exists in
+   the docs, and lapsing silently drops CoderJob resume state.
+3. **Staging secrets: shared or separate.**
+4. **Base image Node version: 22, as today, or the repo's 24 floor.**
+5. **Production switch timing**, set by when 0.x support ends on 2026-12-31.
+   Recommended: aim for early December, leaving room to fix forward.
+
+## Open questions to settle in staging
+
+- **Instance size:** confirm the 1.0 `start({ instance })` name that matches
+  today's `standard` (4 GiB / ½ vCPU). The docs' example uses `standard-1`.
+- **Timeouts:** check whether the facade's `exec` timeout (GNU `timeout`)
+  covers every `withExecDeadline` case, or whether some calls need an
+  `AbortSignal`.
+- **Output size:** check whether exec output above 0.12's size limits behaves
+  the same way. The 1.0 docs don't say.
+- **Cost:** check the cost of the staging Worker's idle containers, and whether
+  `max_instances` (removed in 1.0) has a replacement Push should set.
