@@ -87,7 +87,17 @@ Run the poll with `run_in_background: true`.
   infra). Re-run just the failed job and re-poll:
   `gh run rerun <run-id> --failed`. A CSS/TS-only change can't break the native
   build — if it "fails", check for the 403 before assuming it's you.
-- Docs-only PRs path-filter some checks (fewer than 9 is normal there).
+- Docs-only PRs path-filter some checks (fewer than 9 is normal there). CI's
+  filters also skip `Dockerfile.sandbox`, the wrangler configs and
+  `.github/dependabot.yml`, so a change to those gets no CI. Run its tests
+  locally.
+- **`Workers Builds: push`** on a branch is a **Worker Preview** build
+  (`npx wrangler preview`): an isolated, sign-in-gated copy of the Worker at
+  `<branch>-push.ishawnd.workers.dev`, with its own Durable Objects. Sandboxes
+  run on Modal there, not Cloudflare containers. Use it to try a change before
+  merging. A branch older than #1683 fails this check ("needs a `previews`
+  block") until main is merged in. Cloudflare-container changes still get
+  rehearsed by hand on push-staging.
 
 ## 6. Address reviews BEFORE merging
 
@@ -107,7 +117,12 @@ gh api repos/KvFxKaido/Push/issues/<n>/reactions --jq '.[] | {user: .user.login,
 
 - **Codex**: 👀 = still reviewing, 👍 = clean. **No reaction + a P-badge inline
   comment = it has suggestions** — treat as unresolved. If neither reaction nor
-  comments have appeared yet, wait; Codex can lag the CI checks.
+  comments have appeared yet, wait; Codex can lag the CI checks. Codex is
+  unreliable while Shawn's ChatGPT subscription lapses: its summary card can sit
+  at "running" and never finish. Don't block a merge on that card.
+- **fugu** runs as the `Push review` check. If that check says **skipping**, no
+  review happened: CI plus local validation is the whole bar, so say so when
+  merging.
 - **Verify findings by executing the claim**, per the repo's self-review rule —
   reproduce the scenario before accepting OR dismissing it. Fugu's tally is
   ~12 real / 3 confabulated with control-flow claims needing the hardest
@@ -127,8 +142,11 @@ gh api repos/KvFxKaido/Push/issues/<n>/reactions --jq '.[] | {user: .user.login,
 ```bash
 gh pr merge <n> --squash --delete-branch
 ```
-Workers Builds auto-deploys `main` (~2 min) — **don't** `wrangler deploy` (no
-interactive token). If a device/web test depends on it, poll the deploy:
+Workers Builds auto-deploys `main`. It takes a few minutes, and up to ~7 when
+the sandbox container image rebuilds. **Don't** `wrangler deploy` (no
+interactive token). Every merge to `main` deploys production, so merge
+one PR at a time and confirm each deploy before the next. If a device/web test
+depends on it, poll the deploy:
 
 ```bash
 gh api repos/KvFxKaido/Push/commits/<merge-sha>/check-runs \
