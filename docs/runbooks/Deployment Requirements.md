@@ -73,3 +73,45 @@ deliberately skips default branches), write an uncommitted file, hibernate,
 recreate, and confirm the file comes back. A fresh deployment with missing
 backup secrets fails **visibly** (503 `INVALID_BACKUP_CONFIG`) rather than
 silently claiming durability.
+
+## Worker Previews
+
+Non-`main` branches deploy as [Worker Previews](https://developers.cloudflare.com/workers/previews/) (`npx wrangler preview`), configured by the `previews` block in `wrangler.jsonc`. Each Preview gets its own Durable Object namespaces, so a branch can't reach production's sandboxes, chats or jobs. **Never point non-production builds back at `wrangler versions upload`.** That runs against the production Worker, and on 2026-10-25 it attached production's Sandbox namespace to a new container app and took production sandboxes down.
+
+**How Previews differ from production**
+- **Sandboxes run on Modal.** Previews reject `durable_object`-policy containers, so the block has no containers and sets `PUSH_SANDBOX_PROVIDER=modal`. Rehearse Cloudflare-container changes on push-staging (`wrangler.staging.jsonc`) by hand instead.
+- **Data lives on push-staging's resources:** its KV namespaces, the `push-staging-snapshots` bucket, rate-limit namespace `9001` and the `push_provider_stats_staging` dataset. `wrangler-previews-config.test.ts` fails if any Preview binding points at a production resource.
+- **No crons, logpush or routes.** These only target production.
+
+**Preview secrets.** Set these once on the Previews Base config. Each new Preview copies them when it's created; existing Previews keep what they had. Set the values yourself. Use the absolute config path so the folder you run from doesn't matter:
+
+```bash
+npx wrangler preview base-config secret put <NAME> -c C:/dev/Push-v1/wrangler.jsonc
+```
+
+| Secret | Why a Preview needs it |
+|---|---|
+| `PUSH_SESSION_SECRET` | Signs sessions. **Use a new random value, not production's**, so a session minted on a Preview can't be replayed against production. |
+| `GITHUB_ALLOWED_USER_IDS` | Who may sign in. Same value as production. |
+| `PUSH_SESSION_GATE_ENFORCE` | Turns the session gate on (any non-empty value). **Required:** Preview URLs are public, and without it the gate only observes. |
+| `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` | Sign-in (installation-ID flow, which works on any origin) and repo access. |
+| `GITHUB_ALLOWED_INSTALLATION_IDS` | Which installations may sign in. Same value as production. |
+| `MODAL_SANDBOX_BASE_URL` | Preview sandboxes. |
+| `CF_AI_GATEWAY_ACCOUNT_ID`, `CF_AI_GATEWAY_SLUG`, `CF_AI_GATEWAY_TOKEN` | Models through the AI Gateway. |
+
+**Deliberately not set on Previews**
+- **Production-only operations:** `ADMIN_TOKEN`, `STATS_ADMIN_TOKEN`, `CF_ANALYTICS_TOKEN`, `PUSH_DEPLOYMENT_TOKEN`.
+- **Webhooks:** `GITHUB_WEBHOOK_SECRET`. Webhooks go to production.
+- **Relay:** `PUSH_RELAY_TOKEN`. Add it only to test the relay on a Preview.
+- **Not needed:** `ALLOWED_ORIGINS`. A Worker always allows its own origin.
+- **0.12 backups only:** `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `BACKUP_BUCKET_NAME`, `CLOUDFLARE_ACCOUNT_ID`.
+
+**Turning Previews on (one time, can't be undone)**
+1. Merge the PR that adds the `previews` block, with Workers Builds still disabled.
+2. Set the Preview secrets above.
+3. Dashboard: **Workers & Pages → push → Settings → Build → Set up Worker Previews → Switch to Worker Previews**. Cloudflare replaces the non-production command with `npx wrangler preview`. The switch can't be reversed.
+4. Re-enable builds, with preview builds turned on.
+5. Push a scratch branch. Then check three things:
+   - `GET /accounts/<id>/containers/applications` shows no new or changed app;
+   - the Preview URL asks you to sign in;
+   - a sandbox create on the Preview succeeds.
