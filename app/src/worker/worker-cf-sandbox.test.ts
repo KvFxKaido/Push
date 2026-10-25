@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { getSandbox } from '@cloudflare/sandbox';
 import {
   createWorkspaceSnapshot,
   handleCloudflareSandbox,
@@ -11,11 +10,9 @@ import {
 import type { Env } from './worker-middleware';
 import { MAX_TOKEN_BYTES } from './sandbox-token-store';
 
-vi.mock('@cloudflare/sandbox', () => ({
-  getSandbox: vi.fn(),
-}));
-
-const getSandboxMock = vi.mocked(getSandbox);
+// Since Sandbox SDK 1.0 the handler reaches the sandbox through the binding's
+// `getByName()`; the env's binding routes to this mock.
+const getSandboxMock = vi.fn();
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 const DEFAULT_OWNER_TOKEN = 'test-owner-token';
 const REPO_ROOT = new URL('../../..', import.meta.url);
@@ -134,7 +131,7 @@ function createFakeSandbox(): FakeSandbox {
 }
 
 function mockSandbox(sandbox = createFakeSandbox()): FakeSandbox {
-  getSandboxMock.mockReturnValue(sandbox as unknown as ReturnType<typeof getSandbox>);
+  getSandboxMock.mockReturnValue(sandbox);
   return sandbox;
 }
 
@@ -164,7 +161,9 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
       limit: vi.fn(async () => ({ success: true })),
     } as unknown as Env['RATE_LIMITER'],
     ASSETS: {} as Env['ASSETS'],
-    Sandbox: {} as Env['Sandbox'],
+    Sandbox: {
+      getByName: (name: string) => getSandboxMock(name),
+    } as unknown as Env['Sandbox'],
     BACKUP_BUCKET: {} as Env['BACKUP_BUCKET'],
     SANDBOX_TOKENS: makeDefaultTokensKV() as unknown as Env['SANDBOX_TOKENS'],
     ALLOWED_ORIGINS: 'https://push.example.test',
@@ -380,13 +379,9 @@ describe('handleCloudflareSandbox happy paths', () => {
         writable_root: '/workspace',
       },
     });
-    // Every accessor applies Push's raised idle-sleep policy (not CF's 10-min
-    // default) so a foregrounded idle session doesn't get wiped from under it.
-    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, sandboxId, {
-      sleepAfter: '1h',
-      transport: 'rpc',
-      enableDefaultSession: false,
-    });
+    // The sandbox is addressed by its id as-is. The raised idle-sleep policy
+    // now lives in the Sandbox Durable Object (sandbox-do.test.ts).
+    expect(getSandboxMock).toHaveBeenCalledWith(sandboxId);
     expect(sandbox.exec).toHaveBeenNthCalledWith(
       1,
       "git config --global user.name 'Push Bot' && git config --global user.email 'bot@example.test'",
@@ -1285,11 +1280,7 @@ describe('handleCloudflareSandbox happy paths', () => {
         writable_root: '/workspace',
       },
     });
-    expect(getSandboxMock).toHaveBeenCalledWith(expect.anything(), 'sb-1', {
-      sleepAfter: '1h',
-      transport: 'rpc',
-      enableDefaultSession: false,
-    });
+    expect(getSandboxMock).toHaveBeenCalledWith('sb-1');
     expect(sandbox.exec.mock.calls[0]?.[0]).toContain(`head -c ${MAX_TOKEN_BYTES + 1}`);
     expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'true');
     expect(sandbox.exec).toHaveBeenCalledTimes(3);
@@ -1792,14 +1783,16 @@ describe('handleCloudflareSandbox happy paths', () => {
 });
 
 describe('Cloudflare sandbox image contract', () => {
-  it('keeps doctor exposed_ports aligned with Dockerfile EXPOSE metadata', () => {
+  it('keeps the doctor port list pinned and the 1.0 image free of EXPOSE', () => {
     const dockerfile = readFileSync(new URL('Dockerfile.sandbox', REPO_ROOT), 'utf8');
     const doctor = readFileSync(new URL('sandbox/bin/push-sandbox-doctor', REPO_ROOT), 'utf8');
 
-    const exposeMatch = dockerfile.match(/^EXPOSE\s+(.+)$/m);
+    // Sandbox SDK 1.0 reaches ports through `ctx.container.getTcpPort()`, and
+    // its migration guide drops EXPOSE (0.12 used it only for `wrangler dev`
+    // port mapping). The doctor's list stays as advisory metadata: the
+    // conventional dev-server ports it reports to the model.
+    expect(dockerfile).not.toMatch(/^EXPOSE\s/m);
     const doctorMatch = doctor.match(/^EXPOSED_PORTS = \[(.+)\]$/m);
-
-    expect(exposeMatch?.[1].trim().split(/\s+/).map(Number)).toEqual(DOCTOR_EXPOSED_PORTS);
     expect(
       doctorMatch?.[1]
         .split(',')
@@ -2728,6 +2721,30 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
       await expect(response.json()).resolves.toMatchObject({ code: 'SNAPSHOT_NOT_FOUND' });
     },
   );
+
+  it('restore-snapshot reads the code from the message when RPC drops error properties', async () => {
+    // The Sandbox Durable Object's errors cross Workers RPC, which isn't
+    // guaranteed to carry a custom `.code`; the facade leads the message
+    // with it instead ("CODE: detail").
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.restoreBackup.mockRejectedValue(new Error('BACKUP_EXPIRED: backup b1 expired'));
+    const r2 = makeR2({
+      'cf-backups/backup-1': {
+        body: JSON.stringify({ v: 1, backupHandle: { id: 'backup-1', dir: '/workspace' } }),
+        customMetadata: { rt: 'tok-abc' },
+      },
+    });
+
+    const response = await callRoute(
+      'restore-snapshot',
+      { snapshot_id: 'cf-backups/backup-1', restore_token: 'tok-abc' },
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({ code: 'SNAPSHOT_NOT_FOUND' });
+  });
 
   it('restore-snapshot maps BACKUP_RESTORE_FAILED to SNAPSHOT_FAILED', async () => {
     const sandbox = mockSandbox();

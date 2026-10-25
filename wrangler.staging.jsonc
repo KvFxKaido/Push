@@ -5,8 +5,9 @@
 // dataset suffixed _staging; no cron triggers; no logpush; its own container
 // name; max_instances 3. Deploy by hand only, never Workers Builds:
 //   npx wrangler deploy -c wrangler.staging.jsonc
-// Backups also need these Worker secrets (values never committed):
+// On 0.12, backups also needed these Worker secrets (values never committed):
 //   BACKUP_BUCKET_NAME, CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
+// SDK 1.0 doesn't use them; they stay set so staging can still run 0.12.
 // See docs/decisions/Cloudflare Sandbox SDK 1.0 Migration.md (Phase 0).
 {
   "name": "push-staging",
@@ -113,10 +114,11 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "./Dockerfile.sandbox",
-      "instance_type": "standard",
-      "max_instances": 3,
-      "name": "push-staging-sandbox"
+      "name": "push-staging-sandbox-do",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": { "dockerfile": "./Dockerfile.sandbox", "build_context": "." }
+      }
     }
   ],
   "durable_objects": {

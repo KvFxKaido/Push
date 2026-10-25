@@ -225,9 +225,10 @@
   // objects; BACKUP_BUCKET is the first-party Sandbox SDK archive binding.
   // Both bindings intentionally point at the same physical bucket. Provision:
   //   npx wrangler r2 bucket create push-cf-snapshots
-  // Production SDK backups also require these deploy-time environment/secrets
-  // (names only; never commit their values): BACKUP_BUCKET_NAME,
-  // CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
+  // SDK 1.0 backups go through BACKUP_BUCKET and the DirectoryBackupGateway
+  // export alone: no R2 API keypair. (0.12 needed BACKUP_BUCKET_NAME,
+  // CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY; delete
+  // those secrets once 1.0 is live, not before.)
   // Retention: superseded descriptors/legacy objects are deleted inline, and
   // the daily cron reaps orphaned legacy `cf-snapshots/` objects. SDK archives
   // under `backups/` use the handle TTL for restore validity; the 7-day R2
@@ -252,14 +253,22 @@
   "containers": [
     {
       "class_name": "Sandbox",
-      "image": "./Dockerfile.sandbox",
-      // "standard" = 4 GiB / ½ vCPU. "basic" (1 GiB / ¼ vCPU) gets OOM-killed
-      // by repo test suites — node --test / vitest size their worker pools for
-      // the host CPU count, and the kernel killing the container takes the
-      // whole sandbox (and the session riding on it) with it. Pairs with the
-      // per-exec resource env caps in worker-cf-sandbox.ts.
-      "instance_type": "standard",
-      "max_instances": 10
+      // Sandbox SDK 1.0: the Durable Object (app/src/worker/sandbox-do.ts)
+      // starts the container itself, so the policy is "durable_object" and
+      // the image is named, not attached. A new `name` is required: the 0.12
+      // application keeps its derived name until it's deleted. Deploying this
+      // policy for the class is ONE-WAY; see
+      // docs/decisions/Cloudflare Sandbox SDK 1.0 Migration.md.
+      //
+      // The instance size moved into `start()` in sandbox-do.ts
+      // ("standard-1", the renamed "standard" = 4 GiB / ½ vCPU; "basic" gets
+      // OOM-killed by repo test suites). `instance_type` and `max_instances`
+      // aren't accepted with this policy.
+      "name": "push-sandbox-do",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sandbox": { "dockerfile": "./Dockerfile.sandbox", "build_context": "." }
+      }
     }
   ],
   "durable_objects": {

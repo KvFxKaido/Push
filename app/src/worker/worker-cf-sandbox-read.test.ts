@@ -1,11 +1,10 @@
-import { getSandbox } from '@cloudflare/sandbox';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleCloudflareSandbox } from './worker-cf-sandbox';
 import type { Env } from './worker-middleware';
 
-vi.mock('@cloudflare/sandbox', () => ({
-  getSandbox: vi.fn(),
-}));
+// Since Sandbox SDK 1.0 the handler reaches the sandbox through the binding's
+// `getByName()`; the env's binding routes to this mock.
+const getSandbox = vi.fn();
 
 const MAX_READ_BYTES = 5_000_000;
 const PROBE_BYTES = MAX_READ_BYTES + 1;
@@ -36,7 +35,9 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
       limit: vi.fn(async () => ({ success: true })),
     } as unknown as Env['RATE_LIMITER'],
     ASSETS: {} as Env['ASSETS'],
-    Sandbox: {} as Env['Sandbox'],
+    Sandbox: {
+      getByName: (name: string) => getSandbox(name),
+    } as unknown as Env['Sandbox'],
     SANDBOX_TOKENS: makeTokensKV() as unknown as Env['SANDBOX_TOKENS'],
     ...overrides,
   };

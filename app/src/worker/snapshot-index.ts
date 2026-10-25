@@ -19,7 +19,7 @@
  * bump `INDEX_SCHEMA_VERSION`.
  */
 
-import type { DirectoryBackup } from '@cloudflare/sandbox';
+import type { SandboxBackupHandle } from './sandbox-do';
 import type { KVNamespace, KVNamespaceListResult, R2Bucket } from '@cloudflare/workers-types';
 
 export const INDEX_SCHEMA_VERSION = 1;
@@ -30,7 +30,7 @@ export const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 export interface SnapshotIndexEntry {
   v: typeof INDEX_SCHEMA_VERSION;
   /** First-party Cloudflare Sandbox backup handle (current CF transport). */
-  backupHandle?: DirectoryBackup;
+  backupHandle?: SandboxBackupHandle;
   /**
    * Legacy Modal image / CF base64-R2 pointer.
    *
@@ -49,7 +49,7 @@ export interface SnapshotIndexEntry {
 export interface PutSnapshotInput {
   repoFullName: string;
   branch: string;
-  backupHandle?: DirectoryBackup;
+  backupHandle?: SandboxBackupHandle;
   imageId?: string;
   restoreToken: string;
   sizeBytes?: number;
@@ -363,14 +363,15 @@ function validateEntry(raw: unknown): SnapshotIndexEntry | null {
   return parsed as SnapshotIndexEntry;
 }
 
-function isBackupHandle(raw: unknown): raw is DirectoryBackup {
+function isBackupHandle(raw: unknown): raw is SandboxBackupHandle {
   if (!raw || typeof raw !== 'object') return false;
-  const handle = raw as Partial<DirectoryBackup>;
+  // Deliberately shape-only: a 0.12 descriptor (no `format`) still parses, so
+  // restore reaches the facade's explicit refusal instead of a silent miss.
+  const handle = raw as Partial<SandboxBackupHandle>;
   return (
     typeof handle.id === 'string' &&
     handle.id.length > 0 &&
     typeof handle.dir === 'string' &&
-    handle.dir.startsWith('/') &&
-    (handle.localBucket === undefined || typeof handle.localBucket === 'boolean')
+    handle.dir.startsWith('/')
   );
 }

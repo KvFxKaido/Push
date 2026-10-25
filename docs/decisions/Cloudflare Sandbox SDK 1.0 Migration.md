@@ -103,12 +103,21 @@ deadline helper.
     reproduces today's toolchain: Node (decide 22 vs the repo's 24 floor), Bun,
     Python 3.11 with pip and venv, git, curl, jq, zip, and the data libraries.
   - **Additions:** `COPY --from=docker.io/cloudflare/sandbox:<1.x>
-    /usr/local/bin/sandbox-shim`, `squashfs-tools` (needed for snapshot
-    conversion), `WORKDIR /workspace` and `CMD ["sleep","infinity"]`.
+    /usr/local/bin/sandbox-shim`, `WORKDIR /workspace` and
+    `CMD ["sleep","infinity"]`. (Conversion would also have needed
+    `squashfs-tools`; snapshots lapse instead, below.)
   - **Removed:** `EXPOSE`. `ENV` lines no longer reach commands, so those
     values move into the facade's `env`.
 
 ## Snapshots: convert, or let them lapse
+
+**Decided 2026-10-24: let them lapse.** The facade refuses a 0.12 handle as
+`BACKUP_EXPIRED` (logged as `cf_legacy_backup_refused`), which the handler
+already maps to `SNAPSHOT_NOT_FOUND`, the same path an aged-out snapshot
+takes. That removes the SquashFS reader, `squashfs-tools` and the R2 API
+keypair from the migration. The cost: any work that exists only in a
+snapshot taken in the last seven days before cutover is lost, so cut over
+when no long CoderJob is mid-run. The options as first weighed:
 
 Hibernate snapshots are SDK `createBackup` archives in SquashFS format, with
 a **7-day TTL** (`snapshot-index.ts`). CoderJob checkpoint and resume depends
@@ -248,6 +257,156 @@ the owner's go-ahead.
   staging needs that URL copied in by the owner, because it may embed a
   credential.
 
+### Phases 1–3 progress (2026-10-24, branch `feat/sandbox-sdk-1.0`)
+
+Built on a branch and **not deployed anywhere**. Layer 3 and the Modal check
+are deferred to the rehearsal, at the owner's call.
+
+**Image (Phase 1)**
+- **Base and pins:** `Dockerfile.sandbox` now builds on
+  `python:3.11.14-slim-bookworm` with Node 22.23.4 copied from the official
+  image, Bun 1.4.4, and `sandbox-shim` from `cloudflare/sandbox:1.0.3`.
+- **Parity, checked against the 0.12 base:** a local build reports Node
+  22.23.4 / npm 10.9.9 / Bun 1.4.4 / Python 3.11.14, the data libraries, and
+  every tool the old base had. (It briefly added `squashfs-tools` for the
+  legacy restore path, since removed.)
+- **The one deliberate difference:** Debian 12 replaces Ubuntu 22.04.
+- **EXPOSE dropped.** The image-contract test now pins its absence.
+
+**Facade (Phase 2):** `app/src/worker/sandbox-do.ts` implements a
+`SandboxFacade` interface that the handler types its stub with.
+- **Commands:** `bash -c`, cwd `/workspace`, `HOME`/`LANG` passed explicitly,
+  and timeouts through an `AbortSignal`, reported as exit 124.
+- **Files:** `writeFile` creates parent directories and writes through a temp
+  file; `listFiles` hides dotfiles.
+- **Git:** `gitCheckout` throws git's own message with any token redacted.
+- **Processes:** run detached, in their own process group.
+- **Backups:** `DirectoryBackup` plus an expiry sidecar. 0.12 SquashFS handles
+  are refused as `BACKUP_EXPIRED` without starting the container; a break test
+  confirms the refusal test fails when the check is removed. 1.0 backups need
+  only the `BACKUP_BUCKET` binding, not the 0.12 R2 API keypair.
+- **Error codes:** errors lead their message with the code, because custom
+  error properties aren't guaranteed to survive Workers RPC.
+- **Tests:** 21 facade tests. Break tests confirmed the `HOME`, dotfile and
+  error-code guards each fail when removed.
+
+**Handler and config (Phase 3)**
+- **Handler:** `sandboxFor()` is now `env.Sandbox.getByName(id)`, with the same
+  id as before (no normalization), so Durable Object identities carry over.
+  The backup handle type moved to the facade's, `localBucket` was dropped, and
+  `backupErrorCode` also parses the message prefix.
+- **Wrangler config:** both containers entries use
+  `scheduling_policy: "durable_object"` with a named image and new application
+  names (`push-sandbox-do`, `push-staging-sandbox-do`).
+- **Checks:** both configs dry-run cleanly, and app vitest passes 7,553.
+
+### Rehearsal on push-staging (2026-10-24, branch at `691e9d57`)
+
+**Sequence:** a real 0.12 snapshot was made on the 0.12.14 Worker first,
+then `wrangler deploy -c wrangler.staging.jsonc` shipped the 1.0 branch as
+version `f28f86e0-0641-4932-8e87-eaa86dbaea12`, with the container now
+`Sandbox (durable_object)`. Staging can't go back to 0.12 now; that was the
+point.
+
+**Layers 1–2 (`snapshot-smoke.mjs`): PASS, twice.**
+
+| Step | 0.12.14 baseline | 1.0, first run | 1.0, second run |
+|---|---|---|---|
+| Create sandbox | 5,124 ms warm (128 s cold) | 23,024 ms (first start of the new image) | 2,737 ms |
+| Seed 256 files | 532 ms | 357 ms | 386 ms |
+| Hibernate | 2,827 ms | 2,029 ms | 1,808 ms |
+| Wrong token / missing id | 403 / 404 | 403 / 404 | 403 / 404 |
+| Restore | 14,495 ms, YELLOW | 3,561 ms, GREEN | 3,686 ms, GREEN |
+| Integrity | 256 files, digest match | 256 files, digest match | 256 files, digest match |
+
+Restore is about 4× faster on 1.0. The smoke prints "0KB compressed" for
+the snapshot because the backup path doesn't report a size; that predates
+1.0 and isn't a regression.
+
+**Layer 3 (`coder-resume-smoke.mjs`): PASS.** Workers AI (`kimi-k2.6`)
+through the staging `AI` binding, so no provider secrets were needed. The
+sandbox was killed mid-run and the job still completed (114 s total). The
+tail showed 4 `coder_checkpoint_captured`, 1 `coder_job_resumed`, and the
+checkpoint restored into a fresh sandbox (`cf_backup_materialized`,
+`cf_backup_restored`).
+
+**A real 0.12 snapshot after the switch: refused as designed.** Three
+restores of the snapshot made before the deploy each returned
+`404 SNAPSHOT_NOT_FOUND` in about 1.3 s. The tail showed
+`cf_legacy_backup_refused` and `BACKUP_EXPIRED: backup … was made by Sandbox
+SDK 0.12 and is not restorable after the 1.0 upgrade` each time, so it was
+the refusal, not some other miss.
+
+**Modal fallback: alive.** With `MODAL_SANDBOX_BASE_URL` copied to staging
+by the owner, staging was redeployed with `--var PUSH_SANDBOX_PROVIDER:modal`
+(version `88edc5a4`) and driven through `/api/sandbox/*`: create 200 in 51 s
+(cold), exec 200 (exit 0), write and read-back 200, cleanup 200. It's a
+working escape hatch if 1.0 has to be abandoned. One parity gap: Modal's
+image runs Python 3.12.10, against 3.11.14 on the Cloudflare image. Staging
+was then redeployed on `cloudflare` (version `6eb92269`), and
+`snapshot-smoke.mjs` passed again (restore 3.7 s, GREEN).
+
+**Background processes: two bugs found and fixed on staging.** No smoke
+layer started a background process, so a probe drove `exec-start`,
+`exec-status`, `exec-logs` and `exec-kill` through the real stub.
+1. **Every `exec-start` failed (500).** The launcher joined its steps with
+   ` && `, and the backgrounding step ends in `&`, giving `& &&`, a bash
+   syntax error. The unit tests only compared strings. Fixed: one step per
+   line under `set -e`, plus a test that parses every generated script with
+   a real `bash -n` (confirmed red against the old join).
+2. **A finished process could report `running` forever.** The command ran
+   inline in the wrapper shell, so `exit 3` skipped writing the exit code.
+   And PID 1 (`sleep infinity`) never reaps, so the dead wrapper lingered as
+   a zombie that `kill -0` still found. Fixed: the command runs in its own
+   `bash -c`, and only a non-zombie (`ps -o stat=`) counts as alive.
+
+After the fixes (staging version `fde3fbe3`): a command ending in `exit 3`
+reports `failed`, exit 3, with a 4,010 ms run for a 4 s sleep. Logs come back
+on the right streams. `exec-kill` reports `killed`. A wrapper SIGKILLed
+behind the facade's back (`ps` shows `Zs`) reports `failed`. An unknown id
+is 404.
+
+**`Date` values over RPC: fine.** `started_at` and `ended_at` come back as
+valid ISO strings through the real stub. The Worker and container clocks
+agree within a second. (The dev machine's clock runs about 5 minutes slow,
+which first looked like skew.)
+
+**Keep-alive past the idle window: none, matching 0.12 (decided
+2026-10-24).** In 0.12.4 (`@cloudflare/containers` 0.3.7), the idle timer is
+renewed only by in-flight requests (`isActivityExpired`,
+`renewActivityTimeout`), and Push set `sleepAfter: '1h'` without
+`keepAlive`. So a background process with no requests for an hour was
+stopped on 0.12 too. 1.0's `setInactivityTimeout` behaves the same: the
+lifetime docs say code running in the container is not activity. The 0.12
+code already rejected `keepAlive` for its orphaned-container cost. A process
+someone is watching gets polled, which counts as activity. If a real need
+appears, the 1.0 pattern is an alarm that runs while any process is alive,
+with a cap.
+
+**Noted for the production cutover:** per the 1.0 migration guide, a pending
+0.12 alarm calls the new class's `alarm()` once after the switch. The facade
+has no `alarm()`, so each sandbox that was active logs one internal error,
+which then clears. That's harmless, but expect it in the logs.
+
+### Production cutover (2026-10-25, forced; deployed by hand)
+
+**How it happened:**
+- A Workers Builds non-production branch build of this branch ran `wrangler versions upload` against the **production** `push` Worker (00:56 UTC).
+- That created the `push-sandbox-do` (`durable_object`) application and attached it to production's Sandbox namespace, alongside the old `push-sandbox` app.
+- The next main deploy (01:43, still 0.12 code) could not start any container: "Image or container snapshot must be set for the new runtime". Sandboxes hung on "starting".
+- The docs line "versions upload does not publish a new image or roll out container instances" is true. It says nothing about container *applications* or namespace links.
+
+**The fix forward:**
+1. Workers Builds disabled on `push`.
+2. This branch (`e86ff4e0`) deployed by hand with `wrangler deploy` as version `028cf905` (02:05 UTC).
+3. Verified: health OK, and a real sandbox create went end to end in 23 s (git identity 18.8 s, which absorbed the first image start; clone 2.3 s; cache populate 82 ms), then exec and read returned 200.
+
+**Still to do:**
+- Merge #1674 and this PR into main so main matches production. Builds stay disabled until then.
+- Set up Worker Previews: per-branch DO namespaces and container apps, tested on staging. Until then, branch builds are not isolated from production.
+- Delete the leftover 0.12 `push-sandbox` container application.
+- Delete the 0.12-only R2 secrets.
+
 ## Phases after staging
 
 1. **Image:** a new `Dockerfile.sandbox` on its own base. Build it locally and
@@ -305,12 +464,32 @@ same-day workaround: flip the var and fix forward.
    and GitHub, which suits the in-place path. Side by side runs both classes
    and copies `/workspace` per sandbox, which is more code for state Push
    doesn't keep in containers.
-2. **Snapshots: convert or lapse.** Recommended: convert. The code exists in
-   the docs, and lapsing silently drops CoderJob resume state.
+2. **Snapshots: convert or lapse.** **Decided: lapse** (2026-10-24, see
+   "Snapshots" above). First recommended convert; the reader it needed cost
+   more than seven days of snapshots are worth, and the refusal is not silent.
 3. **Staging secrets: shared or separate.**
 4. **Base image Node version: 22, as today, or the repo's 24 floor.**
 5. **Production switch timing**, set by when 0.x support ends on 2026-12-31.
    Recommended: aim for early December, leaving room to fix forward.
+
+## Follow-up: Cloudflare Artifacts for checkpoints
+
+Not part of this migration. [Artifacts](https://developers.cloudflare.com/artifacts/)
+(Git-compatible storage, open beta since 2026-10-01) could replace
+`DirectoryBackup` for checkpoints: `createBackup` already honours
+`.gitignore`, so a commit captures nearly the same tree. The win is
+capability, not simplicity: checkpoint history, forking a session from a
+checkpoint, and reading a checkpoint's files from the Worker without waking a
+container. Unknowns to spike on staging first:
+
+- **Shallow clones.** Sandboxes clone at `depth: 1`. Pushing a HEAD-parented
+  commit into an empty Artifacts repo may be refused; a parentless commit
+  works but flattens unpushed local commits into working-tree changes.
+- **Private repos.** `import` takes only public HTTPS remotes, so the first
+  push carries the whole history, against a 1 GB per-repo cap.
+- **Cleanup.** Repos have no TTL; Push would own deletion (today the R2
+  bucket's 7-day rule does it).
+- **Beta on beta**, the objection in the archived `artifact-fs` doc.
 
 ## Open questions to settle in staging
 
