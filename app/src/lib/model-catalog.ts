@@ -36,6 +36,7 @@ import {
 } from '@push/lib/capability-profile';
 import type { PushCapabilityProfile } from './capabilities';
 import { lookupDeclaredModelMetadata, type DeclaredModelMetadata } from '@push/lib/model-metadata';
+import { ZEN_UNSEEDED_MODELS } from '@push/lib/provider-models';
 
 export type { PushCapabilityProfileOptions } from '@push/lib/capability-profile';
 
@@ -55,7 +56,6 @@ const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const CLOUDFLARE_CATALOG_CACHE_KEY = 'push:cloudflare:catalog';
 const CLOUDFLARE_CATALOG_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const OLLAMA_MAX_CURATED_MODELS = 40;
-const OPENCODE_MAX_CURATED_MODELS = 48;
 export const MIN_CONTEXT_TOKENS = MIN_PUSH_CONTEXT_TOKENS;
 // Use the shared curated list as the single source of truth for priority ordering.
 // To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
@@ -76,20 +76,6 @@ const OLLAMA_PRIORITY_MODELS = [
   'gemma4:31b',
   'nemotron-3-super',
   'minimax-m2.5',
-] as const;
-const OPENCODE_PRIORITY_MODELS = [
-  'openai/gpt-5.3-codex',
-  'openai/gpt-5.2-codex',
-  'claude-sonnet-4-6',
-  'claude-opus-4-6',
-  'gemini-3.1-pro',
-  'gemini-3-flash',
-  'openai/gpt-5.4',
-  'openai/gpt-5.4-pro',
-  'qwen3-coder',
-  'kimi-k2.5',
-  'glm-5',
-  'openai/gpt-5.1-codex-mini',
 ] as const;
 const IMAGE_GENERATION_MODEL_FAMILY_REGEX =
   /nanobanana|(?:^|\/)gpt-image(?:$|[-./:_])|(?:^|\/)imagen(?:$|[-./:_])|(?:^|\/)seedream(?:$|[-./:_])|(?:^|\/)recraft(?:$|[-./:_])|(?:^|\/)(?:black-forest-labs\/)?flux(?:$|[-./:_])/i;
@@ -947,9 +933,16 @@ export function buildCuratedOpencodeModelList(
   modelIds: string[],
   metadataById: Record<string, ModelsDevProviderMetadata>,
 ): string[] {
-  const prioritySet = new Set<string>(OPENCODE_PRIORITY_MODELS);
+  // The seeded catalog (lib/provider-models.ts) orders the picker and bypasses
+  // the context floor; ids deliberately left unseeded (free tier, Fable, test
+  // ids) never appear even though the live list carries them. No length cap:
+  // a fixed cut on an alphabetical tail silently hid every model past ~`gpt-5.4`
+  // once the live list outgrew it (2026-10-25: 48 of 85 shown).
+  const prioritySet = new Set<string>(ZEN_MODELS);
+  const unseeded = new Set<string>(ZEN_UNSEEDED_MODELS);
 
   const candidates = modelIds.filter((id) => {
+    if (unseeded.has(id)) return false;
     const meta = metadataById[id];
     if (!isOpencodeChatModel(id, meta)) return false;
 
@@ -961,12 +954,10 @@ export function buildCuratedOpencodeModelList(
 
   if (candidates.length === 0) return [];
 
-  const preferred = OPENCODE_PRIORITY_MODELS.filter((id) => candidates.includes(id));
-  const rest = candidates
-    .filter((id) => !prioritySet.has(id as (typeof OPENCODE_PRIORITY_MODELS)[number]))
-    .sort((a, b) => a.localeCompare(b));
+  const preferred = ZEN_MODELS.filter((id) => candidates.includes(id));
+  const rest = candidates.filter((id) => !prioritySet.has(id)).sort((a, b) => a.localeCompare(b));
 
-  return [...preferred, ...rest].slice(0, OPENCODE_MAX_CURATED_MODELS);
+  return [...preferred, ...rest];
 }
 
 function normalizeModelList(payload: unknown): string[] {
