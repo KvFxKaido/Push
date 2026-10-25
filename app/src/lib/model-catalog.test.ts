@@ -17,6 +17,7 @@ import {
   getModelCapabilities,
 } from './model-catalog';
 import { cliProviderModelSupportsNativeToolCalling } from '../../../cli/native-tool-gate';
+import { ZEN_MODELS } from '@push/lib/provider-models';
 import {
   ANTHROPIC_MODELS,
   FIREWORKS_MODELS,
@@ -509,92 +510,69 @@ describe('buildCuratedOllamaModelList', () => {
 });
 
 describe('buildCuratedOpencodeModelList', () => {
-  it('prefers priority chat models and excludes image-output or embedding models', () => {
-    const curated = buildCuratedOpencodeModelList(
-      [
-        'openai/gpt-5.3-codex',
-        'claude-sonnet-4-6',
-        'gemini-3.1-pro',
-        'qwen3-coder',
-        'text-embedding-3-large',
-        'gpt-image-1',
-      ],
-      {
-        'openai/gpt-5.3-codex': {
-          id: 'openai/gpt-5.3-codex',
-          attachment: true,
-          reasoning: true,
-          toolCall: true,
-          structuredOutput: true,
-          openWeights: false,
-          inputModalities: ['text', 'image', 'file'],
-          outputModalities: ['text'],
-          contextLimit: 400_000,
-        },
-        'claude-sonnet-4-6': {
-          id: 'claude-sonnet-4-6',
-          attachment: true,
-          reasoning: false,
-          toolCall: true,
-          structuredOutput: true,
-          openWeights: false,
-          inputModalities: ['text', 'image'],
-          outputModalities: ['text'],
-          contextLimit: 200_000,
-        },
-        'gemini-3.1-pro': {
-          id: 'gemini-3.1-pro',
-          attachment: true,
-          reasoning: false,
-          toolCall: true,
-          structuredOutput: true,
-          openWeights: false,
-          inputModalities: ['text', 'image'],
-          outputModalities: ['text'],
-          contextLimit: 1_000_000,
-        },
-        'qwen3-coder': {
-          id: 'qwen3-coder',
-          attachment: false,
-          reasoning: true,
-          toolCall: true,
-          structuredOutput: false,
-          openWeights: true,
-          inputModalities: ['text'],
-          outputModalities: ['text'],
-          contextLimit: 256_000,
-        },
-        'text-embedding-3-large': {
-          id: 'text-embedding-3-large',
-          attachment: false,
-          reasoning: false,
-          toolCall: false,
-          structuredOutput: false,
-          openWeights: false,
-          inputModalities: ['text'],
-          outputModalities: ['embedding'],
-          contextLimit: 8_192,
-        },
-        'gpt-image-1': {
-          id: 'gpt-image-1',
-          attachment: false,
-          reasoning: false,
-          toolCall: false,
-          structuredOutput: false,
-          openWeights: false,
-          inputModalities: ['text'],
-          outputModalities: ['image'],
-          contextLimit: 0,
-        },
-      },
-    );
+  const chatMeta = (id: string, contextLimit = 200_000) => ({
+    id,
+    attachment: false,
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    openWeights: false,
+    inputModalities: ['text'],
+    outputModalities: ['text'],
+    contextLimit,
+  });
 
-    expect(curated[0]).toBe('openai/gpt-5.3-codex');
-    expect(curated).toContain('claude-sonnet-4-6');
-    expect(curated).toContain('gemini-3.1-pro');
-    expect(curated).toContain('qwen3-coder');
-    expect(curated).not.toContain('text-embedding-3-large');
-    expect(curated).not.toContain('gpt-image-1');
+  it('orders by the seeded catalog, appends unknown live ids, and drops non-chat models', () => {
+    const ids = ['some-new-model', 'gpt-6-luna', 'claude-sonnet-4-6', 'deepseek-v4-pro'];
+    const meta: Record<string, ReturnType<typeof chatMeta>> = Object.fromEntries(
+      ids.map((id) => [id, chatMeta(id)]),
+    );
+    meta['text-embedding-3-large'] = {
+      ...chatMeta('text-embedding-3-large', 8_192),
+      outputModalities: ['embedding'],
+    };
+    meta['gpt-image-1'] = { ...chatMeta('gpt-image-1', 0), outputModalities: ['image'] };
+
+    const curated = buildCuratedOpencodeModelList(
+      [...ids, 'text-embedding-3-large', 'gpt-image-1'],
+      meta,
+    );
+    // ZEN_MODELS order: the default first, then Claude, then GPT; unknown ids last.
+    expect(curated).toEqual([
+      'deepseek-v4-pro',
+      'claude-sonnet-4-6',
+      'gpt-6-luna',
+      'some-new-model',
+    ]);
+  });
+
+  it('never shows ids deliberately left unseeded, though the live list carries them', () => {
+    // `brand-new-x-free` is in no list: the `-free` suffix alone must exclude it.
+    const live = [
+      'deepseek-v4-pro',
+      'big-pickle',
+      'glm-5.3-flash-free',
+      'claude-fable-5',
+      'test',
+      'brand-new-x-free',
+    ];
+    const curated = buildCuratedOpencodeModelList(
+      live,
+      Object.fromEntries(live.map((id) => [id, chatMeta(id)])),
+    );
+    expect(curated).toEqual(['deepseek-v4-pro']);
+  });
+
+  it('shows every seeded live model, with no length cap', () => {
+    // 2026-10-25: a 48-entry cap on an alphabetical tail hid every model past
+    // ~gpt-5.4 (all GPT-5.5+/6, Grok, Kimi K3, MiniMax, Muse, Qwen).
+    const curated = buildCuratedOpencodeModelList(
+      ZEN_MODELS,
+      Object.fromEntries(ZEN_MODELS.map((id) => [id, chatMeta(id)])),
+    );
+    expect(curated).toEqual(ZEN_MODELS);
+    expect(curated).toContain('gpt-6.1-sol');
+    expect(curated).toContain('qwen3.8-max');
   });
 });
 
