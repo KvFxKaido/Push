@@ -147,20 +147,26 @@ export interface CatalogDrift {
 }
 
 /**
- * Compare a provider's live model list against Push's catalog. `orderedNewestFirst`
- * (Anthropic) flags only live ids above the newest catalog id, so older models
- * the catalog chose to omit stay quiet; otherwise every live id the catalog
- * lacks is flagged.
+ * How `catalogDrift` decides which live ids count as "newer":
+ * - `newest-first` (Anthropic): only live ids above the newest catalog id, so
+ *   older models the catalog chose to omit stay quiet.
+ * - `all` (DeepSeek, a two-model list): every live id the catalog lacks.
+ * - `unlisted-only` (OpenAI, Google, xAI, OpenRouter): none. Their lists hold
+ *   dozens to hundreds of models the curated catalog deliberately omits, so
+ *   only catalog ids the provider stopped offering are drift.
  */
+export type DriftMode = 'newest-first' | 'all' | 'unlisted-only';
+
+/** Compare a provider's live model list against Push's catalog. */
 export function catalogDrift(
   liveIds: string[],
   catalogIds: string[],
-  orderedNewestFirst: boolean,
+  mode: DriftMode,
 ): CatalogDrift {
   const catalog = new Set(catalogIds);
   const live = new Set(liveIds);
-  let candidates = liveIds;
-  if (orderedNewestFirst) {
+  let candidates = mode === 'unlisted-only' ? [] : liveIds;
+  if (mode === 'newest-first') {
     const newestKnown = liveIds.findIndex((id) => catalog.has(id));
     candidates = newestKnown === -1 ? liveIds : liveIds.slice(0, newestKnown);
   }
@@ -168,6 +174,11 @@ export function catalogDrift(
     newer: candidates.filter((id) => !catalog.has(id)),
     unlisted: catalogIds.filter((id) => !live.has(id)),
   };
+}
+
+/** OpenRouter catalog ids carry routing suffixes (`:nitro`, `:free`) the live list doesn't. */
+export function stripRoutingSuffix(id: string): string {
+  return id.replace(/:[a-z]+$/, '');
 }
 
 export interface ModelResult {

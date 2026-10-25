@@ -30,7 +30,14 @@ import * as path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { ANTHROPIC_MODELS, DEEPSEEK_MODELS } from '../../lib/provider-models.js';
+import {
+  ANTHROPIC_MODELS,
+  DEEPSEEK_MODELS,
+  GOOGLE_MODELS,
+  OPENAI_MODELS,
+  OPENROUTER_MODELS,
+  XAI_MODELS,
+} from '../../lib/provider-models.js';
 import {
   CANARY_SECRET,
   type CanaryReport,
@@ -41,6 +48,7 @@ import {
   failures,
   type ModelResult,
   renderReport,
+  stripRoutingSuffix,
   type Usage,
   usageOf,
 } from './canary-lib';
@@ -337,7 +345,12 @@ async function liveModels(
 ): Promise<string[]> {
   const res = await fetch(url, { headers: { ...gatewayHeaders, ...extraHeaders } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = (await res.json()) as { data?: Array<{ id: string }> };
+  const json = (await res.json()) as {
+    data?: Array<{ id: string }>;
+    models?: Array<{ name: string }>;
+  };
+  // OpenAI-shaped `data[].id`, or Google's `models[].name` ("models/<id>").
+  if (json.models) return json.models.map((m) => m.name.replace(/^models\//, ''));
   return (json.data ?? []).map((m) => m.id);
 }
 
@@ -352,13 +365,43 @@ async function checkCatalogs(): Promise<CanaryReport['drift']> {
             'anthropic-version': '2023-06-01',
           }),
           ANTHROPIC_MODELS,
-          true,
+          'newest-first',
         ),
     ],
     [
       'deepseek',
       async () =>
-        catalogDrift(await liveModels(`${GATEWAY}/deepseek/models`), DEEPSEEK_MODELS, false),
+        catalogDrift(await liveModels(`${GATEWAY}/deepseek/models`), DEEPSEEK_MODELS, 'all'),
+    ],
+    // Kimi, Z.ai and Fireworks aren't gateway provider-native routes ("Invalid
+    // provider"), so their catalogs can't be listed this way yet.
+    [
+      'openai',
+      async () =>
+        catalogDrift(await liveModels(`${GATEWAY}/openai/models`), OPENAI_MODELS, 'unlisted-only'),
+    ],
+    [
+      'google',
+      async () =>
+        catalogDrift(
+          await liveModels(`${GATEWAY}/google-ai-studio/v1beta/models?pageSize=1000`),
+          GOOGLE_MODELS,
+          'unlisted-only',
+        ),
+    ],
+    [
+      'xai',
+      async () =>
+        catalogDrift(await liveModels(`${GATEWAY}/grok/v1/models`), XAI_MODELS, 'unlisted-only'),
+    ],
+    [
+      'openrouter',
+      async () =>
+        catalogDrift(
+          await liveModels(`${GATEWAY}/openrouter/v1/models`),
+          OPENROUTER_MODELS.map(stripRoutingSuffix),
+          'unlisted-only',
+        ),
     ],
   ];
   for (const [provider, check] of checks) {
