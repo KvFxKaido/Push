@@ -24,7 +24,6 @@ import { renameWithRetry } from './fs-atomic.ts';
 
 const LOCK_RETRY_MS = 15;
 const LOCK_TIMEOUT_MS = 10_000;
-const LOCK_STALE_MS = 30_000;
 
 export interface SaveTaskLedgerOptions {
   expectedRevision?: number;
@@ -67,61 +66,122 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function removeAbandonedLock(lockFile: string): Promise<boolean> {
+// Cross-process lock as a sequence of epochs in `<ledger>.lockdir/`.
+//
+// The holder is whoever created the highest-numbered `<n>.owner` that has no
+// `<n>.released` marker and whose recorded PID is alive. Acquiring creates
+// `<n+1>.owner` with an atomic no-replace primitive (`link` of a fully written
+// temp file), so exactly one contender wins each epoch. Crucially, taking
+// over from a dead owner is *also* "create the next epoch" — a stale lock is
+// never unlinked by path. Unlink-after-check is the race that let two
+// reclaimers both enter (one deleting the lock the other had just acquired),
+// and any guard file reaped the same way only moves that race; no step here
+// deletes a name that another live process could hold.
+//
+// Release writes `<n>.released` and garbage-collects epochs below `n`. A
+// contender working from a stale directory listing can still create a
+// below-max epoch that GC freed; it then sees a higher epoch on its
+// post-create check and backs off, deleting only its own entry.
+const OWNER_SUFFIX = '.owner';
+const RELEASED_SUFFIX = '.released';
+
+function lockDirFor(file: string): string {
+  return `${file}.lockdir`;
+}
+
+function ownerEpochs(entries: readonly string[]): number[] {
+  const epochs: number[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(OWNER_SUFFIX)) continue;
+    const epoch = Number(entry.slice(0, -OWNER_SUFFIX.length));
+    if (Number.isSafeInteger(epoch) && epoch >= 0) epochs.push(epoch);
+  }
+  return epochs;
+}
+
+// Returns the epoch a contender may try to create next, or null while a live
+// owner holds the current epoch.
+async function nextFreeEpoch(lockDir: string, entries: readonly string[]): Promise<number | null> {
+  const epochs = ownerEpochs(entries);
+  if (epochs.length === 0) return 0;
+  const current = Math.max(...epochs);
+  if (entries.includes(`${current}${RELEASED_SUFFIX}`)) return current + 1;
+  let pid = 0;
   try {
-    const raw = await fs.readFile(lockFile, 'utf8');
-    const parsed = JSON.parse(raw) as { pid?: unknown };
-    const pid = typeof parsed.pid === 'number' ? parsed.pid : 0;
-    if (isProcessAlive(pid)) return false;
-    await fs.unlink(lockFile);
+    const parsed = JSON.parse(
+      await fs.readFile(path.join(lockDir, `${current}${OWNER_SUFFIX}`), 'utf8'),
+    ) as { pid?: unknown };
+    pid = typeof parsed.pid === 'number' ? parsed.pid : 0;
+  } catch (error) {
+    // GC'd between listing and read: the listing is stale, so re-list.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    // Owner files are linked into place fully written, so unreadable content
+    // is corruption, not an in-progress write: treat the owner as dead.
+  }
+  if (isProcessAlive(pid)) return null;
+  console.error(
+    JSON.stringify({
+      level: 'warn',
+      event: 'task_ledger_lock_owner_dead',
+      lockDir,
+      epoch: current,
+      pid,
+    }),
+  );
+  return current + 1;
+}
+
+async function tryCreateEpoch(lockDir: string, epoch: number): Promise<boolean> {
+  const target = path.join(lockDir, `${epoch}${OWNER_SUFFIX}`);
+  const tmp = path.join(lockDir, `.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
+  await fs.writeFile(tmp, JSON.stringify({ pid: process.pid, createdAt: Date.now() }), {
+    mode: 0o600,
+  });
+  try {
+    await fs.link(tmp, target);
     return true;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return true;
-    // A just-created lock can briefly be empty before its owner writes the
-    // metadata. Only reap an unreadable lock after it is demonstrably stale.
-    try {
-      const stat = await fs.stat(lockFile);
-      if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-        await fs.unlink(lockFile);
-        return true;
-      }
-    } catch (statError) {
-      if ((statError as NodeJS.ErrnoException).code === 'ENOENT') return true;
-    }
-    return false;
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw error;
+  } finally {
+    await fs.unlink(tmp).catch(() => undefined);
+  }
+}
+
+async function collectEpochsBelow(lockDir: string, epoch: number): Promise<void> {
+  const entries = await fs.readdir(lockDir).catch(() => [] as string[]);
+  for (const entry of entries) {
+    const match = /^(\d+)\.(owner|released)$/.exec(entry);
+    if (!match || Number(match[1]) >= epoch) continue;
+    await fs.unlink(path.join(lockDir, entry)).catch(() => undefined);
   }
 }
 
 async function acquireTaskLedgerLock(file: string): Promise<() => Promise<void>> {
-  const lockFile = `${file}.lock`;
+  const lockDir = lockDirFor(file);
+  await fs.mkdir(lockDir, { recursive: true, mode: 0o700 });
   const startedAt = Date.now();
   while (true) {
-    let handle: Awaited<ReturnType<typeof fs.open>>;
-    try {
-      handle = await fs.open(lockFile, 'wx', 0o600);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (await removeAbandonedLock(lockFile)) continue;
-      if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
-        throw new Error(`Timed out waiting for task ledger lock: ${lockFile}`);
+    const epoch = await nextFreeEpoch(lockDir, await fs.readdir(lockDir));
+    if (epoch !== null && (await tryCreateEpoch(lockDir, epoch))) {
+      // A stale listing can land us on a GC-freed epoch below the real
+      // current one; we only hold the lock if ours is strictly the highest.
+      const highest = Math.max(...ownerEpochs(await fs.readdir(lockDir)));
+      if (highest === epoch) {
+        return async () => {
+          await fs.writeFile(path.join(lockDir, `${epoch}${RELEASED_SUFFIX}`), '', {
+            flag: 'wx',
+            mode: 0o600,
+          });
+          await collectEpochsBelow(lockDir, epoch);
+        };
       }
-      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
-      continue;
+      await fs.unlink(path.join(lockDir, `${epoch}${OWNER_SUFFIX}`)).catch(() => undefined);
     }
-    try {
-      await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
-      return async () => {
-        await handle.close();
-        await fs.unlink(lockFile).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error;
-        });
-      };
-    } catch (error) {
-      await handle.close().catch(() => undefined);
-      await fs.unlink(lockFile).catch(() => undefined);
-      throw error;
+    if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
+      throw new Error(`Timed out waiting for task ledger lock: ${lockDir}`);
     }
+    await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
   }
 }
 

@@ -104,6 +104,7 @@ function baseCoderOptions(overrides: {
   evaluateAfterModel?: CoderAgentOptions<Call>['evaluateAfterModel'];
   leadMode?: boolean;
   leadToolGuidance?: boolean;
+  leanToolProtocols?: boolean;
   leadToolScope?: CoderAgentOptions<Call>['leadToolScope'];
   harnessMaxRounds?: number;
   initialMessages?: CoderAgentOptions<Call>['initialMessages'];
@@ -123,6 +124,7 @@ function baseCoderOptions(overrides: {
     modelId: 'coder-model',
     persona: overrides.leadMode ? 'lead' : 'coder',
     leadToolGuidance: overrides.leadToolGuidance,
+    leanToolProtocols: overrides.leanToolProtocols,
     leadToolScope: overrides.leadToolScope,
     harnessMaxRounds: overrides.harnessMaxRounds,
     sandboxId: 'sb-1',
@@ -623,6 +625,34 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(coder).not.toContain('## Tool Routing');
     expect(coder).not.toContain('## Tool Call Placement');
     expect(coder).not.toContain('## Error Handling');
+  });
+
+  it('words the lead placement boundary for the native channel when the caller sends lean protocols', async () => {
+    const promptFor = async (leanToolProtocols: boolean): Promise<string> => {
+      const { stream, capturedRequests } = makePushStream([
+        [
+          { type: 'text_delta', text: 'ok' },
+          { type: 'done', finishReason: 'stop' },
+        ],
+      ]);
+      await runCoderAgent(baseCoderOptions({ stream, leadMode: true, leanToolProtocols }), {
+        onStatus: () => {},
+      });
+      return (capturedRequests[0] as { systemPromptOverride?: string }).systemPromptOverride ?? '';
+    };
+
+    // Native calls arrive as structured stream events, not content text, so
+    // the lean prompt must not claim content-text-only dispatch. The
+    // reasoning-channel rule still holds on both.
+    const lean = await promptFor(true);
+    expect(lean).toContain('## Tool Call Placement');
+    expect(lean).toContain('native tool interface');
+    expect(lean).toContain('never fires');
+    expect(lean).not.toContain('content channel only');
+
+    const full = await promptFor(false);
+    expect(full).toContain('content channel only');
+    expect(full).not.toContain('native tool interface');
   });
 
   it('scopes lead guidance to the sandbox surface — no PR/CI/merge tool steering', async () => {

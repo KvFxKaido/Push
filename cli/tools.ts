@@ -25,6 +25,13 @@ import {
 import type { ArtifactAuthor, ArtifactScope } from '../lib/artifacts/types.ts';
 import { CliFlatJsonArtifactStore } from './artifacts-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
+import { isSensitivePath } from '../lib/sensitive-paths.ts';
+import {
+  collectSensitiveValues,
+  mergeSensitiveValues,
+  redactDeep,
+  redactText,
+} from './secret-redaction.ts';
 import {
   enforceRoleCapability,
   formatRoleCapabilityDenial,
@@ -1106,6 +1113,34 @@ export const GITHUB_TOOL_PROTOCOL = `[GitHub tool schema version: ${deriveProtoc
 
 ${GITHUB_TOOL_PROTOCOL_BODY}`;
 
+const TEXT_DISPATCH_HEADER =
+  'When you need tools, output one or more fenced JSON blocks:\n```json\n{"tool":"tool_name","args":{"key":"value"}}\n```\n\n';
+const TEXT_DISPATCH_RULE =
+  'Do not describe tool calls in prose. Emit only JSON blocks for tool calls.';
+
+/**
+ * Lean variant of a text tool protocol block (`TOOL_PROTOCOL`,
+ * `READ_ONLY_TOOL_PROTOCOL`, `GITHUB_TOOL_PROTOCOL`) for a run whose tools ride
+ * native schemas. The
+ * schemas already describe every tool, so the prose `Available tools` catalog
+ * repeats them, and the text-dispatch header and "Emit only JSON blocks" rule
+ * contradict native calling. Keeps everything else (the schema-version marker,
+ * the GitHub intro, the Rules block). Derived from the full block rather than
+ * hand-copied so the two can't drift; the fenced-JSON parser stays on, so a
+ * model that answers with a JSON block still dispatches.
+ */
+export function toNativeToolProtocol(protocol: string): string {
+  return (
+    protocol
+      .replace(TEXT_DISPATCH_HEADER, '')
+      // `[^\n]*` admits a qualified heading, e.g. the read-only block's
+      // "Available tools (all read-only — …):".
+      .replace(/\nAvailable tools[^\n]*:\n(?:- .*\n)+/, '\n')
+      .replace(TEXT_DISPATCH_RULE, 'Do not describe tool calls in prose; make the call.')
+      .replace(/\n{3,}/g, '\n\n')
+  );
+}
+
 /**
  * Synchronous GitHub protocol block — env tokens only. Used for the instant
  * (pre-enrichment) base prompt so we don't spawn `gh` on the fast path.
@@ -1264,6 +1299,30 @@ export function detectToolCall(text) {
   return detected.calls[0] || null;
 }
 
+/**
+ * `ensureInsideWorkspace` for the file tools, which also refuse
+ * credential-looking paths (`.env`, keys, `~/.ssh/…`; templates such as
+ * `.env.example` pass). The predicate is the shared lib/sensitive-paths.ts,
+ * so this matches the daemon's file handlers. Path-shape only: `exec` can
+ * still read these files, since a shell command isn't a path.
+ */
+export async function ensureFileToolPath(workspaceRoot, rawPath) {
+  const resolved = await ensureInsideWorkspace(workspaceRoot, rawPath);
+  // ensureInsideWorkspace returns the logical path, so a symlink with an
+  // ordinary name (`notes.txt -> .env`) would pass a name check; test the
+  // real target too.
+  let realTarget = resolved;
+  try {
+    realTarget = await fs.realpath(resolved);
+  } catch {
+    // Doesn't exist yet (a new file): the logical path is all there is.
+  }
+  if (isSensitivePath(rawPath) || isSensitivePath(resolved) || isSensitivePath(realTarget)) {
+    throw new Error(`sensitive path refused: ${rawPath} looks like a credential file`);
+  }
+  return resolved;
+}
+
 export async function ensureInsideWorkspace(workspaceRoot, rawPath) {
   const trimmed = rawPath.trim();
   if (!trimmed) throw new Error('path is required');
@@ -1379,13 +1438,36 @@ function classifyToolError(err) {
   if (lower.includes('path escapes workspace root')) {
     return { code: 'PATH_ESCAPE', message, retryable: false };
   }
+  if (lower.includes('sensitive path refused')) {
+    return { code: 'SENSITIVE_PATH', message, retryable: false };
+  }
   if (lower.includes('enoent') || lower.includes('no such file')) {
     return { code: 'NOT_FOUND', message, retryable: true };
   }
-  if (lower.includes('stale ref') || lower.includes('stale expected_version')) {
+  // Match the hashline resolver's actual wording (lib/hashline.ts):
+  // "Stale line-qualified ref …", "… is out of range" (see below) and
+  // "Reference "<ref>" is ambiguous …". The
+  // older "stale ref" / "ambiguous ref" phrasings are kept for compatibility.
+  // A miss here falls through to TOOL_ERROR, which lead-turn counts toward
+  // editErrorRate (shrinking the round budget) instead of treating a stale ref
+  // as a normal re-read-and-retry. cli/tests/tools.test.mjs pins each case.
+  if (
+    lower.includes('stale ref') ||
+    lower.includes('stale line-qualified ref') ||
+    lower.includes('stale expected_version')
+  ) {
     return { code: 'STALE_WRITE', message, retryable: true };
   }
-  if (lower.includes('ambiguous ref')) {
+  // "Line-qualified ref …: line N is out of range (file has M lines)" covers
+  // two cases with one message: N > M means the file shrank under the ref and
+  // the content could not be relocated (stale, like the branch above); N = 0
+  // is an invalid ref and must not be treated as drift.
+  const outOfRange =
+    /line-qualified ref "[^"]*": line (\d+) is out of range \(file has (\d+) lines\)/.exec(lower);
+  if (outOfRange && Number(outOfRange[1]) > Number(outOfRange[2])) {
+    return { code: 'STALE_WRITE', message, retryable: true };
+  }
+  if (lower.includes('ambiguous ref') || /\breference "[^"]*" is ambiguous\b/.test(lower)) {
     return { code: 'AMBIGUOUS_REF', message, retryable: true };
   }
   if (lower.includes('must be') || lower.includes('required') || lower.includes('invalid')) {
@@ -1394,7 +1476,42 @@ function classifyToolError(err) {
   return { code: 'TOOL_ERROR', message, retryable: false };
 }
 
+/**
+ * Drop matches in credential-looking files from rg/grep output
+ * (`path:line:text`). Done on the output so one predicate covers both search
+ * backends; the lazy match skips a Windows drive letter's colon.
+ */
+function withoutSensitiveMatches(output) {
+  const kept = output.split('\n').filter((line) => {
+    const m = /^(.*?):\d+:/.exec(line);
+    return !(m && isSensitivePath(m[1]));
+  });
+  return kept.join('\n').trim() || 'No matches';
+}
+
+/**
+ * Drop `diff --git` sections for credential-looking files from a unified
+ * diff. Either side's path counts, so a rename into or out of `.env` is
+ * dropped too.
+ */
+function withoutSensitiveDiffSections(diff) {
+  const sections = diff.split(/^(?=diff --git )/m);
+  let omitted = 0;
+  const kept = sections.filter((section) => {
+    const m = /^diff --git a\/(.+?) b\/(.+)$/m.exec(section);
+    if (!m) return true;
+    const sensitive = isSensitivePath(m[1]) || isSensitivePath(m[2]);
+    if (sensitive) omitted++;
+    return !sensitive;
+  });
+  return { text: kept.join(''), omitted };
+}
+
 async function executeSearch(pattern, searchRoot, maxResults) {
+  return withoutSensitiveMatches(await executeRawSearch(pattern, searchRoot, maxResults));
+}
+
+async function executeRawSearch(pattern, searchRoot, maxResults) {
   try {
     const { stdout } = await execFileAsync(
       'rg',
@@ -1417,7 +1534,7 @@ async function executeSearch(pattern, searchRoot, maxResults) {
       try {
         const { stdout } = await execFileAsync(
           'grep',
-          ['-RIn', '--binary-files=without-match', '--', pattern, searchRoot],
+          ['-rIn', '--binary-files=without-match', '--', pattern, searchRoot],
           { maxBuffer: 2_000_000 },
         );
         return stdout.trim() || 'No matches';
@@ -2205,8 +2322,47 @@ function makeAuditorPreCommitGate({
  *   Both fall back to `PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW` env (comma-
  *   separated) when the option is omitted, so the daemon's delegated tool
  *   executors inherit the user's policy without re-loading config.
+ *
+ * Every result then passes through `redactToolResult`, which scrubs values
+ * from the workspace's credential files out of what the tool returns,
+ * whichever tool fetched them (see cli/secret-redaction.ts for its limits).
  */
 export async function executeToolCall(call, workspaceRoot, options = {}) {
+  // Values are snapshotted before the call too: a command can print a
+  // credential file and then overwrite it, and the old value must still match.
+  const before = await collectSensitiveValues(workspaceRoot).catch(() => []);
+  const result = await executeToolCallUnredacted(call, workspaceRoot, options);
+  return redactToolResult(result, call?.tool, workspaceRoot, before);
+}
+
+async function redactToolResult(result, tool, workspaceRoot, before) {
+  if (!result || typeof result.text !== 'string') return result;
+  const after = await collectSensitiveValues(workspaceRoot).catch(() => []);
+  const values = mergeSensitiveValues(before, after);
+  if (values.length === 0) return result;
+  const { value: redacted, count: total, files } = redactDeep(result, values);
+  if (total === 0) return result;
+  // The note counts what the model reads (the text); the card and meta are
+  // scrubbed too, but repeat the same output.
+  const count = redactText(result.text, values).count;
+  // stderr: CLI stdout carries user output and --json payloads.
+  console.error(
+    JSON.stringify({
+      level: 'info',
+      event: 'tool_output_redacted',
+      tool,
+      count,
+      files: [...files],
+    }),
+  );
+  if (count === 0) return redacted;
+  return {
+    ...redacted,
+    text: `${redacted.text}\n\n(${count} value${count === 1 ? '' : 's'} from sensitive files redacted)`,
+  };
+}
+
+async function executeToolCallUnredacted(call, workspaceRoot, options = {}) {
   const disabledList = resolveToolPolicyList(options.disabledTools, 'PUSH_DISABLED_TOOLS');
   const callCanonical = canonicalizeCliToolName(call?.tool);
   if (disabledList.has(callCanonical)) {
@@ -2467,10 +2623,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_file': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const raw = await fs.readFile(filePath, 'utf8');
         const startLine = asOptionalNumber(call.args.start_line);
         const endLine = asOptionalNumber(call.args.end_line);
@@ -2503,8 +2656,12 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
       case 'list_dir': {
         const dirArg = typeof call.args.path === 'string' ? call.args.path : '.';
-        const dirPath = await ensureInsideWorkspace(workspaceRoot, dirArg);
-        const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        const dirPath = await ensureFileToolPath(workspaceRoot, dirArg);
+        const allEntries = await fs.readdir(dirPath, { withFileTypes: true });
+        // Credential files are hidden by name (the web does the same), and
+        // the count says so: names alone point a model at what to `exec`.
+        const entries = allEntries.filter((entry) => !isSensitivePath(entry.name));
+        const hidden = allEntries.length - entries.length;
         const mapped = entries
           .map((entry) => ({
             name: entry.name,
@@ -2524,13 +2681,14 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           })
           .slice(0, 300);
         const prefixMap = { dir: 'd', file: 'f', symlink: 'l', other: 'f' };
-        const text = mapped
-          .map((entry) => `${prefixMap[entry.type] || 'f'} ${entry.name}`)
-          .join('\n');
+        const lines = mapped.map((entry) => `${prefixMap[entry.type] || 'f'} ${entry.name}`);
+        if (hidden > 0)
+          lines.push(`(${hidden} sensitive entr${hidden === 1 ? 'y' : 'ies'} hidden)`);
+        const text = lines.join('\n');
         return {
           ok: true,
           text: text || '<empty directory>',
-          meta: { path: dirPath, count: mapped.length },
+          meta: { path: dirPath, count: mapped.length, hidden },
         };
       }
 
@@ -2539,7 +2697,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         if (!pattern) throw new Error('pattern cannot be empty');
         const searchPath =
           typeof call.args.path === 'string'
-            ? await ensureInsideWorkspace(workspaceRoot, call.args.path)
+            ? await ensureFileToolPath(workspaceRoot, call.args.path)
             : workspaceRoot;
         const maxResults = clamp(
           asOptionalNumber(call.args.max_results) ?? DEFAULT_SEARCH_RESULTS,
@@ -3132,10 +3290,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'write_file': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const content = asString(call.args.content, 'content');
         await backupFile(filePath, workspaceRoot);
         // Prior content feeds the transcript edit card (meta.editDiff); a
@@ -3185,10 +3340,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'edit_file': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const hasArg = (name) => Object.prototype.hasOwnProperty.call(call.args, name);
         const hasEditsArg = hasArg('edits');
         const searchArgNames = ['search', 'replace', 'old_string', 'new_string', 'replace_all'];
@@ -3394,10 +3546,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_symbols': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const content = await fs.readFile(filePath, 'utf8');
         const lines = content.split('\n');
         const symbols = [];
@@ -3421,10 +3570,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'read_symbol': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const symbolName = asString(call.args.symbol, 'symbol').trim();
         if (!symbolName) throw new Error('symbol cannot be empty');
         const content = await fs.readFile(filePath, 'utf8');
@@ -3568,8 +3714,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'git_diff': {
+        // A diff of a tracked credential file carries its contents.
         const diffPath = call.args.path
-          ? await ensureInsideWorkspace(workspaceRoot, asString(call.args.path, 'path'))
+          ? await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'))
           : null;
         const staged = call.args.staged === true;
         const gitArgs = ['diff', '--stat'];
@@ -3585,10 +3732,13 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const fullArgs = ['diff'];
           if (staged) fullArgs.push('--staged');
           if (diffPath) fullArgs.push('--', diffPath);
-          const { stdout: diffOut } = await execFileAsync('git', fullArgs, {
+          const { stdout: rawDiffOut } = await execFileAsync('git', fullArgs, {
             cwd: workspaceRoot,
             maxBuffer: 2_000_000,
           });
+          // A pathless (or directory) diff still covers tracked credential
+          // files, so their sections are dropped before text and card.
+          const { text: diffOut, omitted } = withoutSensitiveDiffSections(rawDiffOut);
 
           // Parse stat lines to extract file-level summary
           const statLines = statOut.trim().split('\n');
@@ -3608,10 +3758,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
           return {
             ok: true,
-            text: truncateText(diffOut.trim() || 'No changes'),
+            text: truncateText(
+              [
+                diffOut.trim() || 'No changes',
+                omitted > 0
+                  ? `(${omitted} sensitive file${omitted === 1 ? '' : 's'} omitted from the diff)`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
+            ),
             meta: {
               staged,
               path: diffPath,
+              omittedSensitiveFiles: omitted,
               filesChanged: totalFilesChanged,
               insertions: insertions ? parseInt(insertions, 10) : 0,
               deletions: deletions ? parseInt(deletions, 10) : 0,
@@ -3890,10 +4050,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       }
 
       case 'undo_edit': {
-        const filePath = await ensureInsideWorkspace(
-          workspaceRoot,
-          asString(call.args.path, 'path'),
-        );
+        const filePath = await ensureFileToolPath(workspaceRoot, asString(call.args.path, 'path'));
         const backupDir = path.join(workspaceRoot, '.push', 'backups');
         // Flatten both separators — path.relative emits OS-native ones (backslash
         // on Windows), so matching only `/` would leave the separator in the name

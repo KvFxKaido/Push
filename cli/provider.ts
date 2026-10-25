@@ -23,6 +23,10 @@ import { isQuotaExhaustedErrorMessage } from '../lib/quota-errors.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
+import {
+  findRollingCacheBreakpoints,
+  MAX_ROLLING_CACHE_BREAKPOINTS,
+} from '../lib/context-transformer.ts';
 import { createCliGeminiStream } from './gemini-stream.ts';
 import { resolveCliPushCapabilityProfile } from './native-tool-gate.ts';
 
@@ -104,9 +108,9 @@ export interface StreamCompletionOptions {
    * Indices into `messages` to tag with `cache_control: ephemeral` (from
    * `transformContextBeforeLLM`'s `cacheBreakpointIndices`). The wire adapter
    * pairs these with a system-message marker for the Hermes `system_and_3`
-   * shape — up to 4 cached prefixes per request. An empty array or `undefined`
-   * disables tail caching for the call (the system message may still be cached
-   * separately depending on provider gating).
+   * shape — up to 4 cached prefixes per request. `undefined` gets the default
+   * rolling tail from `createProviderStream`; an empty array disables caching
+   * for the call.
    */
   cacheBreakpointIndices?: number[];
 }
@@ -243,6 +247,29 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = Object.fromEntri
   getCliProviderDefinitions().map((def) => [def.id, buildProviderConfig(def)]),
 );
 
+/**
+ * Apply `--url` / `--api-key` for one provider. Config reaches the provider
+ * through env vars that an exported variable already wins (`applyConfigToEnv`
+ * only fills missing ones), so an explicit flag has to overwrite the first var
+ * the provider reads: `url` resolves via the first live `urlEnvVars` entry and
+ * the key via `apiKeyEnv` in order. Child processes (pushd) inherit it.
+ */
+export function applyProviderFlagOverrides(
+  providerId: string,
+  flags: { url?: string; apiKey?: string },
+): void {
+  const def = getCliProviderDefinitions().find((d) => d.id === providerId);
+  if (!def?.cli) throw new Error(`Provider "${providerId}" is not enabled for the CLI.`);
+  if (flags.url) {
+    const urlEnv = def.cli.urlEnvVars?.[0];
+    if (!urlEnv) throw new Error(`--url is not supported for provider "${providerId}".`);
+    process.env[urlEnv] = flags.url;
+  }
+  if (flags.apiKey) {
+    process.env[PROVIDER_CONFIGS[providerId].apiKeyEnv[0]] = flags.apiKey;
+  }
+}
+
 // Removed providers redirect to a working replacement instead of crashing
 // whatever surface reads them — CLI flags/env (`parseProvider` in cli.ts),
 // TUI startup/resume, daemon session starts, and persisted session state
@@ -271,10 +298,40 @@ export function redirectDeprecatedProvider(provider: string): string | null {
 /** Build the right `PushStream` for a provider based on its wire shape.
  *  Centralized so callers (legacy `streamCompletion` here, plus the
  *  daemon provider stream) don't each branch on `streamShape` themselves. */
+/**
+ * The CLI's single provider-stream boundary: every CLI path (lead loop,
+ * explorer, auditor, daemon, eval replay) builds its stream here. It is also
+ * where the CLI, as the caller, opts in to prompt caching. The provider
+ * contract treats `cacheBreakpointIndices: undefined` as "caller did not opt
+ * in", and no CLI caller computes the indices (the web lane gets them from
+ * `transformContextBeforeLLM`), so without this the CLI never cached. A request
+ * that already carries indices, including an explicit `[]` opt-out, passes
+ * through unchanged. Adapters that don't cache ignore the field.
+ */
 export function createProviderStream(
   config: ProviderConfig,
   apiKey: string,
   options: { sessionId?: string } = {},
+): PushStream<LlmMessage> {
+  const stream = createAdapterStream(config, apiKey, options);
+  return (req) =>
+    stream(
+      req.cacheBreakpointIndices === undefined
+        ? {
+            ...req,
+            cacheBreakpointIndices: findRollingCacheBreakpoints(
+              req.messages,
+              MAX_ROLLING_CACHE_BREAKPOINTS,
+            ),
+          }
+        : req,
+    );
+}
+
+function createAdapterStream(
+  config: ProviderConfig,
+  apiKey: string,
+  options: { sessionId?: string },
 ): PushStream<LlmMessage> {
   // Unless Chat is explicitly forced, OpenRouter decides the primary wire per
   // request and wraps every Responses attempt in the same pre-output fallback

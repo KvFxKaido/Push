@@ -558,7 +558,7 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
       assert.equal(code, 0, stripAnsi(stderr));
       assert.equal(mock.requestCount(), 1);
       const aggregate = JSON.parse(stdout);
-      assert.equal(aggregate.outcome, 'success');
+      assert.equal(aggregate.outcome, 'completed');
       assert.equal(aggregate.assistant, '{"status":"ok","filesRead":1}');
       assert.deepEqual(aggregate.outputSchema, { valid: true, repairs: 0 });
       assert.doesNotMatch(stderr, /output_schema_validated/);
@@ -570,7 +570,7 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
         .map(JSON.parse);
       assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(persisted.at(-1).type, 'run_complete');
-      assert.equal(persisted.at(-1).payload.outcome, 'success');
+      assert.equal(persisted.at(-1).payload.outcome, 'completed');
       assert.equal(persisted.at(-1).payload.summary, aggregate.assistant);
     } finally {
       await mock.stop();
@@ -633,7 +633,7 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
       assert.equal(lines.filter((event) => event.type === 'tool.execution_complete').length, 1);
       assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(lines.at(-1).type, 'run_complete');
-      assert.equal(lines.at(-1).payload.outcome, 'success');
+      assert.equal(lines.at(-1).payload.outcome, 'completed');
       assert.deepEqual(JSON.parse(lines.at(-1).payload.summary), {
         status: 'ok',
         filesRead: 1,
@@ -647,7 +647,7 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
         .map(JSON.parse);
       assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(persisted.at(-1).type, 'run_complete');
-      assert.equal(persisted.at(-1).payload.outcome, 'success');
+      assert.equal(persisted.at(-1).payload.outcome, 'completed');
     } finally {
       await mock.stop();
       await fs.rm(root, { recursive: true, force: true });
@@ -726,6 +726,116 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
 });
 
 describe('push run --jsonl stream', needsHeadlessJsonl, () => {
+  describe('run honors --url and --api-key', () => {
+    // Both flags are in `push --help` but never reached the provider: the run
+    // went to the default endpoint and failed with "Missing API key".
+    const run = async ({ urlFlag, env = {} }) => {
+      const mock = await startMockProviderServer({ tokens: ['Hello', ' world.'] });
+      try {
+        const result = await runCli(
+          [
+            'run',
+            '--task',
+            'Say hello.',
+            '--provider',
+            'openrouter',
+            '--url',
+            urlFlag(mock.url),
+            '--api-key',
+            'flag-key',
+            '--json',
+          ],
+          { timeout: 15_000, env: { PUSH_OPENROUTER_TRANSPORT: 'chat', ...env } },
+        );
+        return { ...result, requests: mock.requestCount(), headers: mock.requestHeaders() };
+      } finally {
+        await mock.stop();
+      }
+    };
+
+    it('sends the request to --url with the --api-key key', async () => {
+      const { code, stderr, requests, headers } = await run({ urlFlag: (url) => url });
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.ok(requests > 0, 'request never reached the --url endpoint');
+      assert.equal(headers[0].authorization, 'Bearer flag-key');
+    });
+
+    it('lets the flags win over exported provider env vars', async () => {
+      const { code, stderr, requests, headers } = await run({
+        urlFlag: (url) => url,
+        env: {
+          PUSH_OPENROUTER_URL: 'http://127.0.0.1:9/never-used',
+          PUSH_OPENROUTER_API_KEY: 'env-key',
+        },
+      });
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.ok(requests > 0, 'the env URL won over --url');
+      assert.equal(headers[0].authorization, 'Bearer flag-key', 'the env key won over --api-key');
+    });
+  });
+
+  describe('headless outcome reflects what was verified', () => {
+    // `success` means an --accept check passed. A run that simply ended with no
+    // check is `completed`: Push only knows the model stopped calling tools.
+    // Both exit 0 so scripts that only check the exit code keep working.
+    const run = async (extraArgs) => {
+      // A plain answer to a plain task: the run ends normally, so only the
+      // outcome word is under test (a bare 'done' claim would trip the
+      // completion guard and run to max_rounds instead).
+      const mock = await startMockProviderServer({ tokens: ['Hello', ' world.'] });
+      try {
+        return await runCli(
+          ['run', '--task', 'Say hello.', '--provider', 'openrouter', ...extraArgs],
+          {
+            timeout: 15_000,
+            env: {
+              PUSH_OPENROUTER_URL: mock.url,
+              PUSH_OPENROUTER_API_KEY: 'test-key',
+              PUSH_OPENROUTER_TRANSPORT: 'chat',
+            },
+          },
+        );
+      } finally {
+        await mock.stop();
+      }
+    };
+
+    it('reports completed, not success, when no acceptance check ran', async () => {
+      const { code, stdout, stderr } = await run(['--json']);
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.equal(JSON.parse(stdout).outcome, 'completed');
+    });
+
+    it('ends the --jsonl stream with run_complete outcome completed when no check ran', async () => {
+      const { code, stdout, stderr } = await run(['--jsonl']);
+      assert.equal(code, 0, stripAnsi(stderr));
+      const lines = stdout.trim().split('\n').map(JSON.parse);
+      assert.equal(lines.at(-1).type, 'run_complete');
+      assert.equal(lines.at(-1).payload.outcome, 'completed');
+    });
+
+    it('says the run is unverified on stderr in plain mode', async () => {
+      const { code, stdout, stderr } = await run([]);
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.match(stdout, /Hello world\./);
+      assert.match(stripAnsi(stderr), /unverified/i);
+    });
+
+    it('reports success when an acceptance check passed', async () => {
+      const { code, stdout, stderr } = await run(['--json', '--accept', 'node --version']);
+      assert.equal(code, 0, stripAnsi(stderr));
+      const out = JSON.parse(stdout);
+      assert.equal(out.outcome, 'success');
+      assert.equal(out.acceptance.passed, true);
+    });
+
+    it('still reports acceptance_failed and exits 1 when a check fails', async () => {
+      const { code, stdout } = await run(['--json', '--accept', 'node -e "process.exit(3)"']);
+      assert.equal(code, 1);
+      assert.equal(JSON.parse(stdout).outcome, 'acceptance_failed');
+    });
+  });
+
   it('emits push.runtime.v1 envelopes and ends with one run_complete', async () => {
     const mock = await startMockProviderServer({ tokens: ['Hello', ' world.'] });
     const task = `Say hello. ${'x'.repeat(300)}`;
@@ -757,7 +867,7 @@ describe('push run --jsonl stream', needsHeadlessJsonl, () => {
       assert.ok(lines.some((event) => event.type === 'assistant_token'));
       assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(lines.at(-1).type, 'run_complete');
-      assert.equal(lines.at(-1).payload.outcome, 'success');
+      assert.equal(lines.at(-1).payload.outcome, 'completed');
       assert.equal(lines.at(-1).payload.summary, 'Hello world.');
     } finally {
       await mock.stop();
@@ -870,7 +980,7 @@ describe('push run --jsonl stream', needsHeadlessJsonl, () => {
       assert.equal(done.payload.isError, false);
       assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(lines.at(-1).type, 'run_complete');
-      assert.equal(lines.at(-1).payload.outcome, 'success');
+      assert.equal(lines.at(-1).payload.outcome, 'completed');
     } finally {
       await mock.stop();
       await fs.rm(root, { recursive: true, force: true });

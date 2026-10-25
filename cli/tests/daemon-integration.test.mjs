@@ -4576,6 +4576,88 @@ describe('wrapCliDetectAllToolCalls', () => {
   });
 });
 
+describe('delegated tool protocols follow the tool channel', needsLoopback, () => {
+  // A delegated run that attaches native schemas sends the lean protocol:
+  // the prose catalog duplicates the schemas, and the fenced-JSON rules
+  // contradict native calling. Text-mode models keep the full protocol.
+  // Delegated runs have no provider failover, so schemas alone decide.
+  const NATIVE_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+
+  async function delegatedRequest({ verb, provider, model }) {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const originalTransport = process.env.PUSH_OPENROUTER_TRANSPORT;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-delegate-lean-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
+    const mock = await startMockProviderServer({ tokens: ['Done.'] });
+    const restoreConfig = patchProviderConfig(provider, { url: mock.url, apiKey: 'test-mock-key' });
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', { provider, model, repo: { rootPath: process.cwd() } }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+      const response = await handleRequest(
+        makeRequest(verb, { sessionId, attachToken, task: 'look around' }, sessionId),
+        () => {},
+      );
+      assert.equal(response.ok, true);
+      const entry = __getActiveSessionForTesting(sessionId);
+      await waitForDelegationComplete(entry, response.payload.subagentId, sessionId);
+      const body = mock.requestBodies()[0];
+      const system = body.messages.find((m) => m.role === 'system');
+      const text =
+        typeof system.content === 'string'
+          ? system.content
+          : system.content.map((part) => part.text ?? '').join('');
+      return { text, tools: body.tools ?? [] };
+    } finally {
+      restoreConfig();
+      await mock.stop();
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      if (originalTransport === undefined) delete process.env.PUSH_OPENROUTER_TRANSPORT;
+      else process.env.PUSH_OPENROUTER_TRANSPORT = originalTransport;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  }
+
+  it('sends the lean protocol to a native-capable Explorer', async () => {
+    const { text, tools } = await delegatedRequest({
+      verb: 'delegate_explorer',
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+    });
+    assert.ok(tools.length > 0, 'native schemas missing');
+    assert.ok(!text.includes('Available tools'), 'prose tool catalog still sent');
+    assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+    assert.ok(!text.includes('MUST include a fenced JSON block'), 'Explorer JSON rule still sent');
+    assert.ok(text.includes('Do NOT emit any mutating tool'), 'read-only rules dropped');
+  });
+
+  it('sends the lean protocol to a native-capable Coder', async () => {
+    const { text, tools } = await delegatedRequest({
+      verb: 'delegate_coder',
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+    });
+    assert.ok(tools.length > 0, 'native schemas missing');
+    assert.ok(!text.includes('Available tools:'), 'prose tool catalog still sent');
+    assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+    assert.ok(text.includes('Per-turn tool budget'), 'protocol rules dropped with the catalog');
+  });
+
+  it('keeps the full protocol for a text-dispatch Explorer and Coder', async () => {
+    for (const verb of ['delegate_explorer', 'delegate_coder']) {
+      const { text, tools } = await delegatedRequest({ verb, provider: 'ollama' });
+      assert.equal(tools.length, 0, `${verb} attached schemas to a text model`);
+      assert.ok(text.includes('Available tools'), `${verb} lost the catalog`);
+      assert.ok(text.includes('Emit only JSON blocks'), `${verb} lost the JSON rule`);
+    }
+  });
+});
+
 describe('makeDaemonCoderToolExec', () => {
   it('reads a real file off disk and returns an executed result', async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-coder-exec-read-'));

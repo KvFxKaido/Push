@@ -9,7 +9,8 @@ import {
 } from '../lib/tool-function-schemas.ts';
 import type { ToolRegistrySource } from '../lib/tool-registry.ts';
 import { getProviderToolPublicName } from '../lib/provider-definition.ts';
-import { READ_ONLY_TOOL_PROTOCOL, TOOL_PROTOCOL } from './tools.js';
+import { cliProviderModelSupportsNativeToolCalling } from './native-tool-gate.js';
+import { READ_ONLY_TOOL_PROTOCOL, TOOL_PROTOCOL, toNativeToolProtocol } from './tools.js';
 
 const CLI_TOOL_LINE_RE = /^- ([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\) \u2014 ([^\n]+)$/gm;
 const GITHUB_TOOL_SOURCE = new Set<ToolRegistrySource>(['github']);
@@ -131,4 +132,40 @@ export function getCliNativeToolSchemas(options: CliToolSchemaOptions = {}): Too
 export function getCliReadOnlyNativeToolSchemas(): ToolFunctionSchema[] {
   if (!readOnlyCliSchemas) readOnlyCliSchemas = parseProtocolSchemas(READ_ONLY_TOOL_PROTOCOL);
   return readOnlyCliSchemas;
+}
+
+export interface CliDelegatedToolSurface {
+  nativeToolSchemas: ToolFunctionSchema[] | undefined;
+  sandboxToolProtocol: string;
+  leanToolProtocols: boolean;
+}
+
+/**
+ * Tool surface for a delegated CLI/daemon Explorer or Coder run. Native
+ * schemas attach when the model supports them, and the prompt protocol then
+ * goes lean: its prose catalog repeats the schemas and its fenced-JSON rules
+ * contradict native calling. Delegated runs have no provider failover, so
+ * the schemas alone decide (the lead adds a failover check, `cli/lead-turn.ts`).
+ */
+export function resolveCliDelegatedToolSurface(
+  role: 'explorer' | 'coder',
+  provider: string,
+  model: string | undefined,
+): CliDelegatedToolSurface {
+  const protocol = role === 'explorer' ? READ_ONLY_TOOL_PROTOCOL : TOOL_PROTOCOL;
+  if (!cliProviderModelSupportsNativeToolCalling(provider, model)) {
+    return {
+      nativeToolSchemas: undefined,
+      sandboxToolProtocol: protocol,
+      leanToolProtocols: false,
+    };
+  }
+  return {
+    nativeToolSchemas:
+      role === 'explorer'
+        ? getCliReadOnlyNativeToolSchemas()
+        : getCliNativeToolSchemas({ provider, model }),
+    sandboxToolProtocol: toNativeToolProtocol(protocol),
+    leanToolProtocols: true,
+  };
 }

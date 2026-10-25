@@ -98,9 +98,13 @@ describe('createDaemonProviderStream', () => {
     assert.equal(calls[0].url, 'https://api.anthropic.com/v1/messages');
     assert.equal(calls[0].init.headers['x-api-key'], 'sk-ant-test');
     assert.equal(calls[0].init.headers['anthropic-version'], '2023-06-01');
-    // Body was translated — OpenAI's bare-string content is now a block array.
+    // Body was translated — OpenAI's bare-string content is now a block array —
+    // and the daemon path gets the CLI's default prompt caching from
+    // createProviderStream: the only message is in the rolling tail.
     const body = JSON.parse(calls[0].init.body);
-    assert.deepEqual(body.messages[0].content, [{ type: 'text', text: 'hi' }]);
+    assert.deepEqual(body.messages[0].content, [
+      { type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } },
+    ]);
   });
 
   it('routes google through the native Gemini adapter (model in URL + x-goog-api-key + translated body)', async () => {

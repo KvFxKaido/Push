@@ -190,6 +190,233 @@ describe('wrapCliDetectAllToolCalls — malformed signal (Rule 1 source)', () =>
   });
 });
 
+describe('runLeadKernelTurn — tool protocol follows the tool channel', needsLoopback, () => {
+  // With native schemas attached, the prose catalog repeats every tool and its
+  // "Emit only JSON blocks" rule contradicts native calling, so the lead sends
+  // the lean protocol. Text-mode models, and runs that may fail over to one,
+  // keep the full catalog.
+  const NATIVE_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+
+  async function systemPromptFor({ provider, model, env = {} }) {
+    const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, env);
+    try {
+      return await withTempWorkspace(async (cwd) => {
+        const server = await startSequencedProviderServer([{ tokens: ['Done.'] }]);
+        try {
+          await runLeadKernelTurn(
+            makeState(cwd, { provider, model }),
+            { ...PROVIDER_CONFIGS[provider], url: server.url },
+            'mock-key',
+            'Say hi.',
+            5,
+            { emit: () => {} },
+          );
+          const body = server.requests[0];
+          const system = body.messages.find((m) => m.role === 'system');
+          // A cached system prompt arrives as an array of text blocks; join
+          // their text rather than JSON-stringifying, which escapes quotes.
+          const text =
+            typeof system.content === 'string'
+              ? system.content
+              : system.content.map((part) => part.text ?? '').join('');
+          return { text, tools: body.tools ?? [] };
+        } finally {
+          await server.stop();
+        }
+      });
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it('sends the lean protocol when native schemas are attached', async () => {
+    const { text, tools } = await systemPromptFor({
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+      env: { PUSH_OPENROUTER_TRANSPORT: 'chat', PUSH_PROVIDER_FAILOVER: '0' },
+    });
+    assert.ok(tools.length > 0, 'native schemas missing');
+    assert.ok(!text.includes('Available tools:'), 'prose tool catalog still sent');
+    assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+    assert.ok(text.includes('Per-turn tool budget'), 'protocol rules dropped with the catalog');
+    assert.ok(text.includes('native tool interface'), 'placement boundary not worded for native');
+    assert.ok(!text.includes('content channel only'), 'content-text-only dispatch still claimed');
+  });
+
+  it('drops the GitHub catalog but keeps its intro and rules when a token resolves', async () => {
+    // PUSH_GITHUB_TOKEN wins the token chain, so the GitHub block is always
+    // present here; without it the lean GitHub path may never run.
+    const { text, tools } = await systemPromptFor({
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+      env: {
+        PUSH_OPENROUTER_TRANSPORT: 'chat',
+        PUSH_PROVIDER_FAILOVER: '0',
+        PUSH_GITHUB_TOKEN: 'test-token',
+      },
+    });
+    assert.ok(
+      tools.some((t) => (t.function?.name ?? t.name) === 'pr_create'),
+      'GitHub native schemas missing',
+    );
+    assert.ok(text.includes('GITHUB TOOLS'), 'GitHub heading dropped');
+    assert.ok(text.includes('`repo` is always "owner/name"'), 'GitHub repo-format intro dropped');
+    assert.ok(text.includes('Merges happen through the PR flow'), 'GitHub rules dropped');
+    assert.ok(!text.includes('Available tools:'), 'a prose tool catalog is still sent');
+    assert.ok(!text.includes('Emit only JSON blocks'), 'a text-dispatch rule is still sent');
+  });
+
+  it('sends DeepSeek native tool schemas and the lean protocol', async () => {
+    // DeepSeek rides the Anthropic transport (api.deepseek.com/anthropic), so
+    // the request carries a top-level `system` and `tools`. The mock answers
+    // in OpenAI SSE, which this transport can't parse; only the outgoing
+    // request matters here, so a failed turn is fine.
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([{ tokens: ['Done.'] }]);
+      try {
+        await runLeadKernelTurn(
+          makeState(cwd, { provider: 'deepseek', model: 'deepseek-flash' }),
+          { ...PROVIDER_CONFIGS.deepseek, url: server.url },
+          'mock-key',
+          'Say hi.',
+          1,
+          { emit: () => {} },
+        ).catch(() => {});
+        const body = server.requests[0];
+        assert.ok(body, 'no request reached the provider');
+        const system = Array.isArray(body.system)
+          ? body.system.map((part) => part.text ?? '').join('')
+          : String(body.system ?? '');
+        assert.ok((body.tools ?? []).length > 0, 'DeepSeek got no native tool schemas');
+        assert.ok(!system.includes('Available tools:'), 'prose tool catalog still sent');
+        assert.ok(!system.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('runs a native tool_use from DeepSeek end to end', async () => {
+    // Anthropic-format SSE, which is what api.deepseek.com/anthropic returns:
+    // round 1 asks for read_file natively, round 2 answers in text. The second
+    // request must carry the tool's real output back as a tool_result.
+    const requests = [];
+    const sse = (events) =>
+      events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join('');
+    const rounds = [
+      sse([
+        {
+          type: 'message_start',
+          message: {
+            id: 'm1',
+            role: 'assistant',
+            content: [],
+            usage: { input_tokens: 10, output_tokens: 0 },
+          },
+        },
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'toolu_1', name: 'read_file', input: {} },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'input_json_delta', partial_json: '{"path":"notes.txt"}' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+        { type: 'message_stop' },
+      ]),
+      sse([
+        {
+          type: 'message_start',
+          message: {
+            id: 'm2',
+            role: 'assistant',
+            content: [],
+            usage: { input_tokens: 20, output_tokens: 0 },
+          },
+        },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'The note says deepseek-sentinel. All done.' },
+        },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 9 } },
+        { type: 'message_stop' },
+      ]),
+    ];
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => {
+        body += c;
+      });
+      req.on('end', () => {
+        requests.push(JSON.parse(body));
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.end(rounds[Math.min(requests.length - 1, rounds.length - 1)]);
+      });
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.address().port}/anthropic/v1/messages`;
+    try {
+      await withTempWorkspace(async (cwd) => {
+        await fs.writeFile(path.join(cwd, 'notes.txt'), 'deepseek-sentinel', 'utf8');
+        const result = await runLeadKernelTurn(
+          makeState(cwd, { provider: 'deepseek', model: 'deepseek-flash' }),
+          { ...PROVIDER_CONFIGS.deepseek, url },
+          'mock-key',
+          'What does notes.txt say?',
+          5,
+          { emit: () => {} },
+        );
+        assert.ok(result.finalAssistantText.includes('All done.'), result.finalAssistantText);
+        assert.ok(
+          requests.length >= 2,
+          `expected a tool round trip, got ${requests.length} request(s)`,
+        );
+        // The transport parses tool_use either way, so pin that the model was
+        // offered native tools; without the gate this round trip is luck.
+        assert.ok((requests[0].tools ?? []).length > 0, 'DeepSeek was offered no native tools');
+        const followUp = JSON.stringify(requests[1].messages);
+        assert.ok(followUp.includes('tool_result'), 'round 2 carries no tool_result');
+        assert.ok(
+          followUp.includes('deepseek-sentinel'),
+          'the tool never ran: file content missing',
+        );
+      });
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('keeps the full catalog for a text-dispatch model', async () => {
+    const { text, tools } = await systemPromptFor({ provider: 'ollama', model: 'mock-model' });
+    assert.equal(tools.length, 0);
+    assert.ok(text.includes('Available tools:'));
+    assert.ok(text.includes('Emit only JSON blocks'));
+    assert.ok(text.includes('content channel only'));
+  });
+
+  it('keeps the full catalog when provider failover could switch to a text-mode model', async () => {
+    const { text, tools } = await systemPromptFor({
+      provider: 'openrouter',
+      model: NATIVE_MODEL,
+      env: { PUSH_OPENROUTER_TRANSPORT: 'chat', PUSH_PROVIDER_FAILOVER: '1' },
+    });
+    assert.ok(tools.length > 0);
+    assert.ok(text.includes('Available tools:'));
+  });
+});
+
 describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopback, () => {
   it('sends the lead identity and commits the kernel summary as the assistant turn', async () => {
     await withTempWorkspace(async (cwd) => {
@@ -1078,6 +1305,49 @@ describe('LEAD_EXPLORER_DELEGATION_PROTOCOL — advertise/executor drift pins', 
 });
 
 describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', needsLoopback, () => {
+  it('sends a native-capable fanned-out Explorer the lean protocol', async () => {
+    const saved = process.env.PUSH_OPENROUTER_TRANSPORT;
+    process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
+    try {
+      await withTempWorkspace(async (cwd) => {
+        const server = await startSequencedProviderServer([
+          { tokens: [fencedCall('delegate_explorer', { task: 'Trace flow A' })] },
+          { tokens: ['Findings: alpha'] },
+          { tokens: ['Traced. All done.'] },
+        ]);
+        try {
+          await runLeadKernelTurn(
+            makeState(cwd, { provider: 'openrouter', model: 'anthropic/claude-sonnet-4.6:nitro' }),
+            { ...PROVIDER_CONFIGS.openrouter, url: server.url },
+            'mock-key',
+            'Investigate flow A',
+            5,
+            { emit: () => {} },
+          );
+          const explorer = server.requests[1];
+          const system = explorer.messages.find((m) => m.role === 'system');
+          const text =
+            typeof system.content === 'string'
+              ? system.content
+              : system.content.map((part) => part.text ?? '').join('');
+          assert.ok(text.includes('You are the Explorer agent'), 'not the Explorer request');
+          assert.ok((explorer.tools ?? []).length > 0, 'native schemas missing');
+          assert.ok(!text.includes('Available tools'), 'prose tool catalog still sent');
+          assert.ok(!text.includes('Emit only JSON blocks'), 'text-dispatch rule still sent');
+          assert.ok(
+            !text.includes('MUST include a fenced JSON block'),
+            'Explorer JSON rule still sent',
+          );
+        } finally {
+          await server.stop();
+        }
+      });
+    } finally {
+      if (saved === undefined) delete process.env.PUSH_OPENROUTER_TRANSPORT;
+      else process.env.PUSH_OPENROUTER_TRANSPORT = saved;
+    }
+  });
+
   it('fans out two Explorers in one turn and feeds their reports back to the lead', async () => {
     await withTempWorkspace(async (cwd) => {
       await fs.writeFile(path.join(cwd, 'notes.txt'), 'fan-out sentinel', 'utf8');

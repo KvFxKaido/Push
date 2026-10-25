@@ -481,6 +481,14 @@ export interface GitHubToolProtocolOptions {
    * surfaces' GitHub-protocol rules from drifting.
    */
   includeDelegation?: boolean;
+  /**
+   * The lead's tools ride native function-calling schemas. Their descriptions
+   * are these entries' `protocolDescription`, so the `Available tools:`
+   * catalog would repeat them, and the fenced-JSON header and rules ("you MUST
+   * include the fenced JSON block … nothing will happen") are false for a
+   * native call. Drops those; keeps every routing rule. Default `false`.
+   */
+  nativeToolCalling?: boolean;
 }
 
 /**
@@ -514,9 +522,16 @@ export function buildGitHubToolProtocol(options: GitHubToolProtocolOptions = {})
   // One bullet per line; `null` entries (delegation-only rules) are dropped
   // for the single-lead surface. Default order/content is byte-identical to
   // the historical `TOOL_PROTOCOL` text.
+  const nativeToolCalling = options.nativeToolCalling ?? false;
   const rules: Array<string | null> = [
-    `- CRITICAL: To use a tool, you MUST include the fenced JSON block in your response. The system can ONLY detect and execute tool calls from JSON blocks. If you write about using a tool without the JSON block, nothing will happen.`,
-    `- A brief natural-language sentence before or after the JSON block is fine, but the fenced JSON block MUST be present. When in doubt, lead with the JSON block.`,
+    ...(nativeToolCalling
+      ? [
+          `- Call tools through the native tool interface. Describing a tool call in prose does not run it.`,
+        ]
+      : [
+          `- CRITICAL: To use a tool, you MUST include the fenced JSON block in your response. The system can ONLY detect and execute tool calls from JSON blocks. If you write about using a tool without the JSON block, nothing will happen.`,
+          `- A brief natural-language sentence before or after the JSON block is fine, but the fenced JSON block MUST be present. When in doubt, lead with the JSON block.`,
+        ]),
     `- You may output multiple tool calls in one message. Read-only calls (${GITHUB_READ_ONLY_TOOL_NAMES}) run in parallel. Place any mutating or delegation call (${mutatingToolNames}) LAST — it runs after all reads complete. Maximum 6 parallel reads per turn.`,
     `- Wait for the tool result before continuing your response`,
     `- The repo field should use "owner/repo" format matching the workspace context`,
@@ -563,6 +578,16 @@ export function buildGitHubToolProtocol(options: GitHubToolProtocolOptions = {})
     `- For "is there already a PR for [branch]?" use ${FIND_EXISTING_PR_TOOL}`,
   ];
 
+  const ruleBlock = rules.filter((line): line is string => line !== null).join('\n');
+  if (nativeToolCalling) {
+    return `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]
+
+TOOLS — GitHub tools are available as native function calls; each tool's schema documents its parameters.
+
+Rules:
+${ruleBlock}`;
+  }
+
   return `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]
 
 TOOLS — You can request GitHub data by outputting a fenced JSON block:
@@ -575,7 +600,7 @@ Available tools:
 ${toolLines}
 
 Rules:
-${rules.filter((line): line is string => line !== null).join('\n')}`;
+${ruleBlock}`;
 }
 
 export const TOOL_PROTOCOL = buildGitHubToolProtocol();

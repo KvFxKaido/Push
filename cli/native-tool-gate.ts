@@ -1,5 +1,7 @@
 import {
   ANTHROPIC_MODELS,
+  DEEPSEEK_LEGACY_MODELS,
+  DEEPSEEK_MODELS,
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
   OLLAMA_MODELS,
@@ -24,6 +26,7 @@ import type { PushCapabilityProfile } from '../lib/capabilities.ts';
 // policy and profile coherence stay in `lib/capability-profile.ts`.
 const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   anthropic: new Set(ANTHROPIC_MODELS),
+  deepseek: new Set([...DEEPSEEK_MODELS, ...DEEPSEEK_LEGACY_MODELS]),
   fireworks: new Set(FIREWORKS_MODELS),
   google: new Set(GOOGLE_MODELS),
   ollama: new Set(OLLAMA_MODELS.filter((id) => !OLLAMA_NATIVE_TOOL_CALLING_DENYLIST.has(id))),

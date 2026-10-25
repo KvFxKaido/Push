@@ -25,6 +25,7 @@ import { appendUserMessageWithFileReferences } from '../file-references.js';
 import { getCuratedModels } from '../model-catalog.js';
 import { isInternalEnvelope } from '../message-envelopes.js';
 import {
+  applyProviderFlagOverrides,
   getProviderList,
   PROVIDER_CONFIGS,
   redirectDeprecatedProvider,
@@ -397,6 +398,11 @@ export async function createSilveryController(
   if (options.cwd) state.cwd = cwd;
   const activeProvider = PROVIDER_CONFIGS[state.provider];
   if (!activeProvider) throw new Error(`Unknown provider in session: ${state.provider}`);
+  // `--url` / `--api-key` belong to the provider this session runs on, which
+  // a resumed session can take from its saved state rather than config.
+  if (options.url || options.apiKey) {
+    applyProviderFlagOverrides(state.provider, { url: options.url, apiKey: options.apiKey });
+  }
 
   const now = deps.now ?? Date.now;
   let sequence = 0;

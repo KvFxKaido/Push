@@ -53,6 +53,14 @@ export const TOOL_CALL_PLACEMENT_SECTION = `## Tool Call Placement
 
 Tool calls are dispatched from your assistant response content channel only — the content text, not the reasoning/thinking text. If you are a reasoning model that thinks before answering, do **not** place tool call JSON inside the thinking pass, not even in fenced \`\`\`json blocks. The runtime does not scan reasoning/thinking output for tool calls; a call emitted there never fires and the turn sits idle waiting on a tool result that will never arrive. Finish thinking, then emit the tool call in your response content.`;
 
+// Native variant, for a lead that sends lean protocols (native schemas
+// attached, no failover). Native calls arrive as structured stream events, not
+// content text, so the content-channel-only claim is false there; the
+// reasoning-channel rule still holds.
+export const TOOL_CALL_PLACEMENT_NATIVE_SECTION = `## Tool Call Placement
+
+Call tools through the native tool interface, after you finish thinking. If you are a reasoning model that thinks before answering, do **not** write tool calls inside the thinking pass. The runtime does not scan reasoning/thinking output for tool calls; a call written there never fires and the turn sits idle waiting on a tool result that will never arrive.`;
+
 // ---------------------------------------------------------------------------
 // Canonical references (used by Coder + Explorer) — point work at the
 // repo-root docs so design/architecture shape changes proactively, not only

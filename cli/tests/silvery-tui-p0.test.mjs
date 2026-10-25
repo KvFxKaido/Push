@@ -751,6 +751,58 @@ describe('silvery TUI Phase 1 chat surface', () => {
     );
   });
 
+  it('applies --url and --api-key to the resumed session provider, not the configured one', {
+    skip: silverySkip,
+  }, async () => {
+    // Config says ollama, the saved session says openrouter, and the TUI runs
+    // each turn on the session's provider, so the flags must land there.
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const keys = [
+      'PUSH_OPENROUTER_URL',
+      'PUSH_OPENROUTER_API_KEY',
+      'PUSH_OLLAMA_URL',
+      'PUSH_OLLAMA_API_KEY',
+    ];
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    for (const k of keys) delete process.env[k];
+    const state = {
+      sessionId: 'resumed-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'openrouter',
+      model: 'anthropic/claude-sonnet-4.6:nitro',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    try {
+      await createSilveryController(
+        { sessionId: state.sessionId, url: 'http://127.0.0.1:9/flag-url', apiKey: 'flag-key' },
+        {
+          loadConfig: async () => ({ provider: 'ollama', safeExecPatterns: [] }),
+          useDaemon: false,
+          initSession: async () => state,
+          gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+          resolveKey: () => '',
+          appendEvent: async () => undefined,
+          saveState: async () => undefined,
+        },
+      );
+      assert.equal(process.env.PUSH_OPENROUTER_URL, 'http://127.0.0.1:9/flag-url');
+      assert.equal(process.env.PUSH_OPENROUTER_API_KEY, 'flag-key');
+      assert.notEqual(process.env.PUSH_OLLAMA_URL, 'http://127.0.0.1:9/flag-url');
+      assert.notEqual(process.env.PUSH_OLLAMA_API_KEY, 'flag-key');
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it('submits through the shared turn kernel and exposes streamed assistant text', {
     skip: silverySkip,
   }, async () => {

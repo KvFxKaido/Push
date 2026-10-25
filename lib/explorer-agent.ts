@@ -133,8 +133,13 @@ Never:
 
 Allowed tools: read-only GitHub, sandbox, and web search tools. See the Explorer Tool Protocol section below for the full list and usage format.`;
 
+// The text-dispatch-only guideline, named so the native variant swaps exactly
+// this line (a native call needs no fenced JSON block).
+const EXPLORER_JSON_RULE =
+  '- CRITICAL: You MUST include a fenced JSON block when requesting a tool, using the exact format: {"tool": "tool_name", "args": {"param": "value"}}. A brief sentence before or after the block is acceptable, but the JSON block must be present.';
+
 export const EXPLORER_GUIDELINES = `Rules:
-- CRITICAL: You MUST include a fenced JSON block when requesting a tool, using the exact format: {"tool": "tool_name", "args": {"param": "value"}}. A brief sentence before or after the block is acceptable, but the JSON block must be present.
+${EXPLORER_JSON_RULE}
 - You may emit multiple read-only tool calls in one message.
 - Prefer search/symbol reads before large file reads.
 - If no sandbox is available, avoid sandbox tools and use GitHub tools instead.
@@ -212,6 +217,7 @@ Rules:
 export function buildExplorerBaseBuilder(
   webSearchToolProtocol: string,
   sandboxToolProtocol?: string,
+  options: { leanToolProtocols?: boolean } = {},
 ): SystemPromptBuilder {
   const toolProtocol = sandboxToolProtocol ?? EXPLORER_TOOL_PROTOCOL;
   // Idempotent prepend: when the caller-supplied protocol already
@@ -224,7 +230,15 @@ export function buildExplorerBaseBuilder(
     : `[Tool schema version: ${TOOL_REGISTRY_SCHEMA_VERSION}]\n\n${toolProtocol}\n\n${webSearchToolProtocol}`;
   return new SystemPromptBuilder()
     .set('identity', EXPLORER_IDENTITY)
-    .set('guidelines', EXPLORER_GUIDELINES)
+    .set(
+      'guidelines',
+      options.leanToolProtocols
+        ? EXPLORER_GUIDELINES.replace(
+            EXPLORER_JSON_RULE,
+            '- Call tools through the native tool interface. Describing a tool call in prose does not run it.',
+          )
+        : EXPLORER_GUIDELINES,
+    )
     .set('tool_instructions', tools);
 }
 
@@ -358,6 +372,13 @@ export interface ExplorerAgentOptions<TCall, TCard> {
   sandboxToolProtocol?: string;
 
   /**
+   * The caller sends lean tool protocols (native schemas attached, no
+   * failover). The Explorer guidelines then drop their fenced-JSON rule for a
+   * native one. The caller lean-transforms its own `sandboxToolProtocol`.
+   */
+  leanToolProtocols?: boolean;
+
+  /**
    * After-model policy callback. Lib kernel calls this once per round after
    * streaming the assistant response but before treating the round as a
    * final report. Web shim translates the flattened return into its own
@@ -422,6 +443,7 @@ export async function runExplorerAgent<TCall, TCard>(
     webSearchToolProtocol,
     nativeToolSchemas,
     sandboxToolProtocol,
+    leanToolProtocols = false,
     evaluateAfterModel,
   } = options;
 
@@ -430,7 +452,9 @@ export async function runExplorerAgent<TCall, TCard>(
   // Build system prompt via the shared SystemPromptBuilder. The optional
   // `sandboxToolProtocol` override replaces `EXPLORER_TOOL_PROTOCOL` entirely
   // when provided (daemon consumers pass their CLI-named protocol here).
-  const builder = buildExplorerBaseBuilder(webSearchToolProtocol, sandboxToolProtocol);
+  const builder = buildExplorerBaseBuilder(webSearchToolProtocol, sandboxToolProtocol, {
+    leanToolProtocols,
+  });
 
   const identityBlock = buildUserIdentityBlock(userProfile ?? undefined);
   if (identityBlock) {

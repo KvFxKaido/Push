@@ -28,8 +28,12 @@ function createEventStreamResponse(lines: string[]): Response {
 }
 
 describe('anthropicModelRejectsSamplingParams', () => {
-  it('rejects sampling params on Opus 4.7+, Sonnet 5, and Fable/Mythos 5 variants', () => {
+  it('rejects sampling params on Opus 4.7+, Sonnet 5, Haiku 5, and Fable/Mythos 5 variants', () => {
     for (const model of [
+      // Haiku 5.5 400s on non-default sampling values ("`temperature` is
+      // deprecated for this model"), and the CLI defaults temperature 0.1.
+      'claude-haiku-5-5',
+      'anthropic/claude-haiku-5-5',
       'claude-opus-4-7',
       'claude-opus-4-8',
       'claude-opus-4-8[1m]',
@@ -132,8 +136,13 @@ describe('anthropicModelEnforcesSamplingExclusivity', () => {
 });
 
 describe('anthropicModelThinksByDefault', () => {
-  it('flags Fable/Mythos 5 and Sonnet 5 (thinking on by default, omitted display)', () => {
+  it('flags Fable/Mythos 5, Sonnet 5, Opus 5 and Haiku 5 (thinking on by default, omitted display)', () => {
     for (const model of [
+      // Opus 5 runs adaptive when thinking is omitted; Opus 5.5 can't turn it
+      // off at all; Haiku 5.5 runs adaptive by default.
+      'claude-opus-5',
+      'claude-opus-5-5',
+      'claude-haiku-5-5',
       'claude-fable-5',
       'claude-mythos-5',
       'claude-sonnet-5',
@@ -328,6 +337,32 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(body.messages[0].content[1]).toMatchObject({ type: 'text', text: 'Here.' });
   });
 
+  it('drops the empty text block beside a thinking-only assistant turn', () => {
+    // A model with adaptive thinking (Haiku 5.5 by default) can return a turn
+    // that is only a thinking block. Replaying it as thinking + text("") gets a
+    // 400: "messages: text content blocks must be non-empty".
+    const request: OpenAIChatRequest = {
+      model: 'claude-haiku-5-5',
+      messages: [
+        { role: 'user', content: 'Fix the bug.' },
+        {
+          role: 'assistant',
+          content: '',
+          reasoning_blocks: [{ type: 'thinking', text: '', signature: 'sig-only' }],
+        },
+        { role: 'user', content: 'Continue.' },
+      ],
+      stream: true,
+    };
+
+    const body = buildAnthropicMessagesRequest(request) as {
+      messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+    };
+    expect(body.messages[1].content).toEqual([
+      { type: 'thinking', thinking: '', signature: 'sig-only' },
+    ]);
+  });
+
   it('adds the native web_search tool when anthropic_web_search is true', () => {
     const body = buildAnthropicMessagesRequest({
       model: 'claude-opus-4-7',
@@ -402,6 +437,23 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({ name: 'sandbox_read_file' });
     expect(tools[1]).toEqual({ type: 'web_search_20250305', name: 'web_search' });
+  });
+
+  it('drops an empty captured text block from assistant_content_blocks', () => {
+    const serverToolUse = { type: 'server_tool_use', id: 'su_1', name: 'web_search', input: {} };
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-opus-4-7',
+      messages: [
+        { role: 'user', content: 'search' },
+        {
+          role: 'assistant',
+          content: '',
+          assistant_content_blocks: [{ type: 'text', text: '' }, serverToolUse],
+        },
+      ],
+      stream: true,
+    }) as { messages: Array<{ role: string; content: unknown }> };
+    expect(body.messages[1]).toEqual({ role: 'assistant', content: [serverToolUse] });
   });
 
   it('uses assistant_content_blocks verbatim on the upstream content when present', () => {
@@ -834,6 +886,42 @@ describe('Anthropic structured outputs', () => {
     expect(body).not.toHaveProperty('output_config');
   });
 
+  it('uses native output_config for strict:false on models that reject a forced tool_choice', () => {
+    // Verified live 2026-10-24: Opus 5.5, Sonnet 5.5, and Fable 5.1 400 on
+    // tool_choice {type:"tool"} ("not supported for this model"), and they
+    // think always/by default, so the forced-tool fallback can't work. Native
+    // format is stricter than strict:false asked for, which still satisfies it.
+    for (const model of [
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-fable-5-1',
+      'claude-mythos-5-1',
+    ]) {
+      const body = buildAnthropicMessagesRequest({
+        model,
+        messages: [{ role: 'user', content: 'audit' }],
+        stream: true,
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: 'auditor_verdict', schema, strict: false },
+        },
+      });
+      expect(body, model).not.toHaveProperty('tool_choice');
+      expect(body.output_config, model).toEqual({ format: { type: 'json_schema', schema } });
+    }
+    // Haiku 5.5 accepts a forced tool (also verified live), so it keeps the fallback.
+    const haiku = buildAnthropicMessagesRequest({
+      model: 'claude-haiku-5-5',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'auditor_verdict', schema, strict: false },
+      },
+    });
+    expect(haiku.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
+  });
+
   it('drops summarized thinking on the forced-tool fallback for think-by-default ids', () => {
     // strict:false forces the tool_choice-pinned bridge even on a native-capable
     // model. Anthropic rejects a forced tool_choice alongside thinking, so a
@@ -987,6 +1075,66 @@ function llm(
 ): LlmMessage {
   return { id, role, content, timestamp: 0, ...(reasoningBlocks ? { reasoningBlocks } : {}) };
 }
+
+describe('toAnthropicMessages — empty assistant text (thinking-only turns)', () => {
+  // Haiku 5.5's default adaptive thinking can return a turn that is only a
+  // thinking block, or nothing Push keeps. Anthropic 400s on an empty text
+  // block ("messages: text content blocks must be non-empty"). The CLI reaches
+  // the API through toAnthropicMessages, so these test that path.
+  const turn = (message: Partial<LlmMessage>, id: string): LlmMessage =>
+    ({ id, content: '', timestamp: 0, ...message }) as LlmMessage;
+  const body = (...messages: LlmMessage[]) =>
+    toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-haiku-5-5',
+      messages,
+    } as PushStreamRequest<LlmMessage>).messages as Array<{ role: string; content: unknown }>;
+
+  it('drops the empty text beside a sidecar thinking block', () => {
+    const out = body(
+      turn({ role: 'user', content: 'Fix it.' }, '1'),
+      turn(
+        { role: 'assistant', reasoningBlocks: [{ type: 'thinking', text: '', signature: 's1' }] },
+        '2',
+      ),
+      turn({ role: 'user', content: 'Continue.' }, '3'),
+    );
+    expect(out[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '', signature: 's1' }],
+    });
+  });
+
+  it('drops the empty text beside an in-stream thinking block', () => {
+    const out = body(
+      turn({ role: 'user', content: 'Fix it.' }, '1'),
+      turn(
+        {
+          role: 'assistant',
+          contentBlocks: [
+            { type: 'thinking', text: '', signature: 's2' },
+            { type: 'text', text: '' },
+          ],
+        },
+        '2',
+      ),
+      turn({ role: 'user', content: 'Continue.' }, '3'),
+    );
+    expect(out[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '', signature: 's2' }],
+    });
+  });
+
+  it('drops an assistant turn left with no content at all', () => {
+    const out = body(
+      turn({ role: 'user', content: 'Fix it.' }, '1'),
+      turn({ role: 'assistant' }, '2'),
+      turn({ role: 'user', content: 'Continue.' }, '3'),
+    );
+    expect(out.map((m) => m.role)).toEqual(['user', 'user']);
+  });
+});
 
 describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
   const corpus: Array<{
@@ -1244,6 +1392,26 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
     const messages = body.messages as Array<Record<string, unknown>>;
     expect(messages[messages.length - 2]).toEqual({ role: 'assistant', content: replayA });
     expect(messages[messages.length - 1]).toEqual({ role: 'assistant', content: replayB });
+  });
+
+  it('drops empty captured text blocks from pause-turn replay turns', () => {
+    // anthropicEventStream captures a text block at content_block_start with
+    // text '' and only grows it on deltas, so a block that got no delta replays
+    // empty, which Anthropic 400s.
+    const serverToolUse = { type: 'server_tool_use', id: 'su_1', name: 'web_search', input: {} };
+    const body = toAnthropicMessages(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6', messages: [llm('1', 'user', 'hi')] },
+      {
+        modelOverride: 'claude-sonnet-4-6',
+        enableWebSearch: false,
+        replayAssistantTurns: [
+          [{ type: 'text', text: '' }, serverToolUse],
+          [{ type: 'text', text: '' }],
+        ],
+      },
+    );
+    const messages = body.messages as Array<Record<string, unknown>>;
+    expect(messages.slice(1)).toEqual([{ role: 'assistant', content: [serverToolUse] }]);
   });
 });
 

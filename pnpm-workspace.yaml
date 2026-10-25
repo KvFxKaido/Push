@@ -51,7 +51,9 @@ overrides:
   # adm-zip < 0.6.0. Reaches us via onnxruntime-node (@huggingface/transformers,
   # the optional local-embeddings chain), which pins ^0.5.16 — drop the override
   # once upstream declares >= 0.6.0.
-  adm-zip: ^0.6.0
+  # Floor raised to 0.6.1 (2026-10-01 audit): SUID-bit preservation, async
+  # decompression-bomb bypass and unhandled-error crash fixes.
+  adm-zip: ^0.6.1
   # GHSA-f88m-g3jw-g9cj (Dependabot #101): libvips CVEs fixed in sharp 0.35.0.
   # Forced ABOVE @huggingface/transformers@4.2.0's declared `^0.34.5` on
   # purpose (decision 2026-07-26, replacing the earlier below-range ^0.33.5
@@ -60,7 +62,8 @@ overrides:
   # *image* path and is never invoked by it, so the out-of-range force risks
   # only code Push cannot reach. Re-check this reasoning before adding any
   # image/vision pipeline; drop the override once transformers declares 0.35+.
-  sharp: ^0.35.0
+  # Floor raised to 0.35.4 (2026-10-01 audit): bundled libheif CVEs.
+  sharp: ^0.35.4
   # GHSA (Dependabot #100): path traversal in `serve-static` on Windows, fixed
   # in @hono/node-server 2.0.5. @modelcontextprotocol/sdk declares ^1.19.9, so
   # this forces a major across that boundary — safe here because Push's MCP
@@ -72,7 +75,9 @@ overrides:
   # backslash authority delimiter, fixed in 3.1.4. Transitive via ajv →
   # ajv-formats. Mirrored in app/electron/package.json, which installs with
   # --ignore-workspace and so is NOT covered by this workspace-global block.
-  fast-uri: ^3.1.4
+  # Floor raised to 3.1.8 (2026-10-01 audit): further host-confusion / SSRF
+  # fixes (IDN canonicalization, IPv6, port, percent-encoding, host case).
+  fast-uri: ^3.1.8
   # GHSA (Dependabot #106): uncontrolled recursion in node-tar's mapHas/
   # filesFilter allows an uncatchable stack-overflow DoS, fixed in 7.5.21.
   # Transitive via @capacitor/cli. The floor was ^7.5.16, which already
@@ -80,4 +85,4 @@ overrides:
   # published. Pinned to the patched floor so a future re-resolution cannot
   # silently walk back under it.
   tar: ^7.5.21
-  minimatch@10.2.5>brace-expansion: ^5.0.6
+  minimatch@10.2.5>brace-expansion: ^5.0.12

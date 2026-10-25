@@ -1,5 +1,6 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -292,6 +293,141 @@ describe('list_dir symlink reporting', () => {
   });
 });
 
+describe('file tools refuse credential-looking paths', () => {
+  // Matches the daemon's file handlers (cli/pushd/file-operation-handlers.ts):
+  // the shared predicate is lib/sensitive-paths.ts. Found by the drift canary,
+  // where both models read a planted secret through `read_file .env`.
+  const SECRET = 'PUSH-TEST-SECRET-4b1d';
+  let workspace;
+
+  before(async () => {
+    workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'push-sensitive-'));
+    await fs.writeFile(path.join(workspace, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+    await fs.writeFile(path.join(workspace, '.env.example'), 'API_KEY=\n', 'utf8');
+    await fs.mkdir(path.join(workspace, 'src'));
+    await fs.writeFile(path.join(workspace, 'src', 'app.js'), `// uses API_KEY\n`, 'utf8');
+    await fs.writeFile(path.join(workspace, 'src', 'id_rsa'), `${SECRET}\n`, 'utf8');
+  });
+
+  after(async () => {
+    await fs.rm(workspace, { recursive: true, force: true });
+  });
+
+  const refused = (result) => {
+    assert.equal(result.ok, false, `expected refusal, got: ${result.text}`);
+    assert.equal(result.structuredError?.code, 'SENSITIVE_PATH');
+    assert.ok(!result.text.includes(SECRET), 'refusal leaked the secret');
+  };
+
+  it('refuses read_file, read_symbols and read_symbol on .env and key files', async () => {
+    refused(await executeToolCall({ tool: 'read_file', args: { path: '.env' } }, workspace));
+    refused(await executeToolCall({ tool: 'read_file', args: { path: 'src/id_rsa' } }, workspace));
+    refused(await executeToolCall({ tool: 'read_symbols', args: { path: '.env' } }, workspace));
+    refused(
+      await executeToolCall(
+        { tool: 'read_symbol', args: { path: '.env', symbol: 'API_KEY' } },
+        workspace,
+      ),
+    );
+  });
+
+  it('refuses writes and edits, leaving the file unchanged', async () => {
+    refused(
+      await executeToolCall(
+        { tool: 'write_file', args: { path: '.env', content: 'X=1\n' } },
+        workspace,
+      ),
+    );
+    refused(
+      await executeToolCall(
+        { tool: 'edit_file', args: { path: '.env', search: 'API_KEY', replace: 'KEY' } },
+        workspace,
+      ),
+    );
+    assert.equal(await fs.readFile(path.join(workspace, '.env'), 'utf8'), `API_KEY=${SECRET}\n`);
+  });
+
+  it('keeps templates readable', async () => {
+    const result = await executeToolCall(
+      { tool: 'read_file', args: { path: '.env.example' } },
+      workspace,
+    );
+    assert.equal(result.ok, true);
+  });
+
+  it('drops sensitive files from search_files results', async () => {
+    const result = await executeToolCall(
+      { tool: 'search_files', args: { pattern: 'API_KEY' } },
+      workspace,
+    );
+    assert.equal(result.ok, true);
+    assert.ok(!result.text.includes(SECRET), `search leaked the secret: ${result.text}`);
+    assert.ok(result.text.includes('app.js'), 'non-sensitive match dropped');
+    const keyHit = await executeToolCall(
+      { tool: 'search_files', args: { pattern: SECRET } },
+      workspace,
+    );
+    assert.ok(!keyHit.text.includes(SECRET), `search leaked the secret: ${keyHit.text}`);
+  });
+
+  it('refuses an ordinary-named symlink that points at a credential file', async () => {
+    await fs.symlink(path.join(workspace, '.env'), path.join(workspace, 'notes.txt'));
+    try {
+      refused(await executeToolCall({ tool: 'read_file', args: { path: 'notes.txt' } }, workspace));
+      refused(
+        await executeToolCall(
+          { tool: 'write_file', args: { path: 'notes.txt', content: 'X=1\n' } },
+          workspace,
+        ),
+      );
+      assert.equal(await fs.readFile(path.join(workspace, '.env'), 'utf8'), `API_KEY=${SECRET}\n`);
+    } finally {
+      await fs.rm(path.join(workspace, 'notes.txt'), { force: true });
+    }
+  });
+
+  it('hides credential files from list_dir and refuses undo_edit on them', async () => {
+    const listing = await executeToolCall({ tool: 'list_dir', args: { path: '.' } }, workspace);
+    assert.equal(listing.ok, true);
+    const names = listing.text.split('\n').map((l) => l.slice(2));
+    assert.ok(!names.includes('.env'), `.env listed: ${listing.text}`);
+    assert.ok(names.includes('.env.example'), 'template hidden');
+    assert.ok(listing.text.includes('1 sensitive entry hidden'), listing.text);
+    const src = await executeToolCall({ tool: 'list_dir', args: { path: 'src' } }, workspace);
+    assert.ok(!src.text.includes('id_rsa'), `id_rsa listed: ${src.text}`);
+    refused(await executeToolCall({ tool: 'undo_edit', args: { path: '.env' } }, workspace));
+  });
+
+  it('omits tracked credential files from a pathless git_diff', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'push-sensitive-git-'));
+    const git = (...args) =>
+      execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@invalid', ...args], {
+        cwd: repo,
+      });
+    try {
+      git('init', '-q');
+      await fs.writeFile(path.join(repo, '.env'), 'API_KEY=old\n', 'utf8');
+      await fs.writeFile(path.join(repo, 'app.js'), 'const a = 1;\n', 'utf8');
+      git('add', '-A');
+      git('commit', '-qm', 'init');
+      await fs.writeFile(path.join(repo, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+      await fs.writeFile(path.join(repo, 'app.js'), 'const a = 2;\n', 'utf8');
+      for (const args of [{}, { path: '.' }]) {
+        const diff = await executeToolCall({ tool: 'git_diff', args }, repo);
+        assert.equal(diff.ok, true, diff.text);
+        assert.ok(!JSON.stringify(diff).includes(SECRET), `diff leaked the secret: ${diff.text}`);
+        assert.ok(diff.text.includes('const a = 2'), 'non-sensitive hunk dropped');
+      }
+      git('add', '-A');
+      const staged = await executeToolCall({ tool: 'git_diff', args: { staged: true } }, repo);
+      assert.ok(!JSON.stringify(staged).includes(SECRET), `staged diff leaked: ${staged.text}`);
+      refused(await executeToolCall({ tool: 'git_diff', args: { path: '.env' } }, repo));
+    } finally {
+      await fs.rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── isHighRiskCommand ───────────────────────────────────────────
 
 describe('isHighRiskCommand', () => {
@@ -536,6 +672,105 @@ describe('edit_file hashline flow', () => {
     }
   });
 
+  // The hashline resolver's real messages ("Stale line-qualified ref …",
+  // "Reference … is ambiguous", and "line N is out of range" for a file that
+  // shrank) must classify as STALE_WRITE / AMBIGUOUS_REF. Only STALE_WRITE is
+  // exempt from lead-turn's editErrorRate: when stale refs fell through to
+  // TOOL_ERROR, a normal re-read-and-retry counted as an edit error and could
+  // silently shrink the round budget. AMBIGUOUS_REF still counts (a bare-ref
+  // collision is a model mistake), but is now labelled and retryable.
+  async function hashlineRefOf(root, rel, lineNo) {
+    const read = await executeToolCall({ tool: 'read_file', args: { path: rel } }, root);
+    assert.equal(read.ok, true);
+    const row = read.text.split('\n').find((line) => line.startsWith(`${lineNo}:`));
+    assert.ok(row, `read_file output has no line ${lineNo}`);
+    return row.split('\t')[0];
+  }
+
+  for (const scenario of [
+    {
+      name: 'stale line-qualified ref whose content is gone',
+      before: 'alpha\nbeta\ngamma\n',
+      line: 2,
+      after: 'alpha\nBETA2\ngamma\n',
+      bare: false,
+      code: 'STALE_WRITE',
+    },
+    {
+      name: 'stale line-qualified ref whose content now repeats',
+      before: 'dup\nother\ndup\n',
+      line: 1,
+      after: 'x\ny\nz\ndup\nq\ndup\n',
+      ref: (ref) => `2:${ref.split(':')[1]}`,
+      bare: false,
+      code: 'STALE_WRITE',
+    },
+    {
+      name: 'line-qualified ref past the end of a file that shrank',
+      before: 'a\nb\nc\nd\n',
+      line: 4,
+      after: 'a\nb\n',
+      bare: false,
+      code: 'STALE_WRITE',
+    },
+    {
+      name: 'bare ref that matches several lines',
+      before: 'dup\nother\ndup\n',
+      line: 1,
+      after: null,
+      bare: true,
+      code: 'AMBIGUOUS_REF',
+    },
+  ]) {
+    it(`classifies a ${scenario.name} as ${scenario.code}`, async () => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
+      try {
+        const rel = 'refs.txt';
+        await fs.writeFile(path.join(root, rel), scenario.before, 'utf8');
+        let ref = await hashlineRefOf(root, rel, scenario.line);
+        if (scenario.ref) ref = scenario.ref(ref);
+        if (scenario.bare) ref = ref.split(':')[1];
+        if (scenario.after !== null)
+          await fs.writeFile(path.join(root, rel), scenario.after, 'utf8');
+
+        const edit = await executeToolCall(
+          {
+            tool: 'edit_file',
+            args: { path: rel, edits: [{ op: 'replace_line', ref, content: 'x' }] },
+          },
+          root,
+        );
+
+        assert.equal(edit.ok, false);
+        assert.equal(edit.structuredError.code, scenario.code, edit.structuredError.message);
+        assert.equal(edit.structuredError.retryable, true);
+      } finally {
+        await rmWithRetry(root);
+      }
+    });
+  }
+
+  it('keeps a line-0 ref out of STALE_WRITE (an invalid ref, not drift)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
+    try {
+      const rel = 'zero.txt';
+      await fs.writeFile(path.join(root, rel), 'alpha\nbeta\n', 'utf8');
+      const hash = (await hashlineRefOf(root, rel, 1)).split(':')[1];
+      const edit = await executeToolCall(
+        {
+          tool: 'edit_file',
+          args: { path: rel, edits: [{ op: 'replace_line', ref: `0:${hash}`, content: 'x' }] },
+        },
+        root,
+      );
+      assert.equal(edit.ok, false);
+      assert.match(edit.structuredError.message, /line 0 is out of range/);
+      assert.notEqual(edit.structuredError.code, 'STALE_WRITE');
+    } finally {
+      await rmWithRetry(root);
+    }
+  });
+
   it('surfaces warnings when replace_line targets the same line twice', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
     try {
@@ -574,6 +809,153 @@ describe('edit_file hashline flow', () => {
     } finally {
       await rmWithRetry(root);
     }
+  });
+});
+
+// ─── secret redaction in tool output ────────────────────────────
+
+describe('tool output redacts values from sensitive files', () => {
+  // The file tools refuse .env, but `exec cat .env` is a shell command, not a
+  // path: the drift canary saw deepseek-v4-pro take exactly that route. So the
+  // values themselves are scrubbed from whatever a tool returns.
+  const SECRET = 'PUSH-TEST-SECRET-9c2e7a';
+  const KEY_LINE = 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC';
+  let root;
+
+  before(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-'));
+    await fs.writeFile(
+      path.join(root, '.env'),
+      `# comment\nAPI_KEY="${SECRET}"\nPORT=3000\nDEBUG=true\n`,
+      'utf8',
+    );
+    await fs.mkdir(path.join(root, 'keys'));
+    await fs.writeFile(
+      path.join(root, 'keys', 'server.pem'),
+      `-----BEGIN PRIVATE KEY-----\n${KEY_LINE}\n-----END PRIVATE KEY-----\n`,
+      'utf8',
+    );
+    await fs.writeFile(path.join(root, 'README.md'), 'hello world\n', 'utf8');
+  });
+
+  after(async () => {
+    await rmWithRetry(root);
+  });
+
+  it('scrubs .env values from exec output and says so', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat .env README.md' } },
+      root,
+      { allowExec: true },
+    );
+    assert.equal(result.ok, true, result.text);
+    assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    assert.ok(result.text.includes('[redacted: .env]'), result.text);
+    assert.ok(result.text.includes('hello world'), 'ordinary output dropped');
+    // Short, non-secret-shaped values stay: redacting "3000" would mangle output.
+    assert.ok(result.text.includes('PORT=3000'), result.text);
+    assert.ok(/1 value from sensitive files redacted/.test(result.text), result.text);
+  });
+
+  it('scrubs key-file lines found below the workspace root', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat keys/server.pem' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(!JSON.stringify(result).includes(KEY_LINE), `key leaked: ${result.text}`);
+  });
+
+  it('scrubs a secret the command spells out a different way', async () => {
+    // A command-text check would miss this; output redaction doesn't care how.
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat .e""nv | tr -d "#"' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+  });
+
+  it('scrubs a value printed by a command that then overwrites the file', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-rw-'));
+    try {
+      await fs.writeFile(path.join(dir, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'cat .env && echo "API_KEY=placeholder" > .env' } },
+        dir,
+        { allowExec: true },
+      );
+      assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    } finally {
+      await rmWithRetry(dir);
+    }
+  });
+
+  it('scrubs values reached through a symlinked .env', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-link-'));
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-target-'));
+    try {
+      await fs.writeFile(path.join(outside, 'shared-config'), `API_KEY=${SECRET}\n`, 'utf8');
+      await fs.symlink(path.join(outside, 'shared-config'), path.join(dir, '.env'));
+      const result = await executeToolCall({ tool: 'exec', args: { command: 'cat .env' } }, dir, {
+        allowExec: true,
+      });
+      assert.ok(!JSON.stringify(result).includes(SECRET), `secret leaked: ${result.text}`);
+    } finally {
+      await rmWithRetry(dir);
+      await rmWithRetry(outside);
+    }
+  });
+
+  it('scrubs credential fields a command extracts on their own', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-redact-fields-'));
+    const NPM = 'npm-token-7e1b2c9d4a';
+    const NETRC = 'netrc-pass-3f8e0a1c';
+    const GIT = 'ghp_gitcredtoken5b2';
+    try {
+      await fs.writeFile(
+        path.join(dir, '.npmrc'),
+        `//registry.npmjs.org/:_authToken=${NPM}\n`,
+        'utf8',
+      );
+      await fs.writeFile(
+        path.join(dir, '.netrc'),
+        `machine example.com login dev password ${NETRC}\n`,
+        'utf8',
+      );
+      await fs.writeFile(
+        path.join(dir, '.git-credentials'),
+        `https://dev:${GIT}@github.com\n`,
+        'utf8',
+      );
+      const result = await executeToolCall(
+        {
+          tool: 'exec',
+          args: {
+            command:
+              "cut -d= -f2 .npmrc; awk '{print $6}' .netrc; cut -d: -f3 .git-credentials | cut -d@ -f1",
+          },
+        },
+        dir,
+        { allowExec: true },
+      );
+      const out = JSON.stringify(result);
+      for (const secret of [NPM, NETRC, GIT]) {
+        assert.ok(!out.includes(secret), `${secret} leaked: ${result.text}`);
+      }
+    } finally {
+      await rmWithRetry(dir);
+    }
+  });
+
+  it('leaves output untouched when nothing sensitive appears', async () => {
+    const result = await executeToolCall(
+      { tool: 'exec', args: { command: 'cat README.md' } },
+      root,
+      { allowExec: true },
+    );
+    assert.ok(result.text.includes('hello world'));
+    assert.ok(!result.text.includes('redacted'), result.text);
   });
 });
 

@@ -155,7 +155,21 @@ Skill discovery:
 
 Runs a single task and exits. No interaction. High-risk commands are blocked (no approval prompt).
 
-`--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass. The process exits 0 only if the agent succeeds *and* all checks pass.
+`--accept <cmd>` runs shell commands after the agent finishes as acceptance checks. Exit code 0 = pass.
+
+The run's outcome says how much Push verified:
+
+| What happened | `run_complete` (`--jsonl`) | `--json` `outcome` | Exit |
+|---|---|---|---|
+| The agent finished and every `--accept` check passed | `success` | `success` | 0 |
+| The agent finished, but no `--accept` check ran, so nothing confirmed the task is done. Plain mode says so on stderr: `[completed, unverified]` | `completed` | `completed` | 0 |
+| An `--accept` check failed | `failed` | `acceptance_failed` | 1 |
+| The output schema didn't validate | `failed` | `output_schema_failed` | 1 |
+| The run errored (provider or runtime error) | `failed` | `error` | 1 |
+| The tool-loop cap ran out | `max_rounds` | `max_rounds` | 1 |
+| The run was aborted (e.g. Ctrl-C) | `aborted` | `aborted` | 130 |
+
+`completed` exits 0, so scripts that only read the exit code behave as before. To require verified work, pass `--accept` and treat only `success` as done. An `--output-schema` checks the answer's shape, not the task, so on its own it gives `completed`.
 
 When `--accept` is present, Push also frames the task using the shared delegation-brief format so acceptance checks are visible to the model during the run, not only after it finishes.
 
@@ -179,7 +193,8 @@ When `--accept` is present, Push also frames the task using the shared delegatio
 line. It uses the same event types and payloads as pushd, including assistant
 tokens, tool lifecycle events, warnings, errors, and acceptance results. The
 last line is always `run_complete`; its outcome reflects acceptance checks as
-well as the agent run. `--json` and `--jsonl` are mutually exclusive.
+well as the agent run, using the `run_complete` column of the table above.
+`--json` and `--jsonl` are mutually exclusive.
 
 `--output-schema <path>` constrains a `push run` final response using a Draft
 2020-12 JSON Schema. Push compiles the schema before starting the run, asks the
@@ -442,6 +457,16 @@ Removed providers (`mistral`, `minimax`, `azure`, `bedrock`, `vertex`, `kilocode
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
+### Claude Max / Team API credits
+
+Claude Max and Team plans include monthly Claude Platform API credits ($100 on Max 5x, $200 on Max 20x, up to $500 pooled on Team, as announced 2026-10). Anthropic says the credits apply in third-party harnesses that accept a Claude API key, and Push is one: the direct `anthropic` provider takes a plain API key, so there is nothing extra to configure. Details are in Anthropic's [Monthly API credits for Max and Team plans](https://support.claude.com/en/articles/17154008-monthly-api-credits-for-max-and-team-plans).
+
+1. Claim the credits on claude.ai: **Max** subscribers go to **Settings → Billing**; on **Team**, an Owner or Primary Owner goes to **Organization settings → Billing** and claims the pooled credit for the team. Under **API credits**, choose **Link organization** and pick or create a Console organization (you need the Owner, Admin, or Billing role there). New subscribers can claim after 7 days.
+2. Create an API key in that Console organization. The credits belong to the organization, so any key in it draws on the balance.
+3. Give it to Push like any Anthropic key: `./push config init` (choose `anthropic`), or `PUSH_ANTHROPIC_API_KEY` / `ANTHROPIC_API_KEY`. For the web app, see the `ANTHROPIC_API_KEY` notes in `app/README.md`: a Worker secret takes precedence over a Settings key, and with Cloudflare AI Gateway BYOK active for `anthropic` the gateway's stored key is used instead of either.
+
+When the month's credits are used up, requests stop until the next grant unless the Console organization has other credits or auto-reload; usage is never charged to the Claude plan. The credits don't cover interactive Claude Code sessions, but that restriction doesn't apply to Push.
+
 ## Tools
 
 All providers support prompt-engineered tool calls (fenced JSON blocks in the content stream). OpenAI-compatible native `delta.tool_calls` and direct OpenAI Responses `response.function_call_arguments.*` events are also accepted; the provider pumps accumulate them and flush each assembled call back into the same dispatcher.
@@ -570,6 +595,7 @@ Before any `write_file` or `edit_file` mutation, the original file is copied to 
 - **Max rounds:** Default 8, configurable via `--max-rounds` (max 30). Prevents runaway loops.
 - **Output truncation:** Tool output is capped at 24KB to avoid context blowout.
 - **Subprocess env scrub:** Model-invoked commands (`sandbox_exec`, `exec`, `exec_start`, acceptance checks) run with a default-deny env allowlist defined in `cli/env-scrub.ts`. Provider API keys hydrated into the daemon's `process.env` by `applyConfigToEnv` (e.g. `PUSH_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`) are stripped before the spawn, so `env`-style introspection from a sandboxed command can't exfiltrate them. The allowlist covers `PATH`/`HOME`/`SHELL`/locale, the common Node/Python/Go/Rust/Docker-client vars, `CI`, and `npm_config_*` / `NPM_CONFIG_*` / `BUN_*`. Widen via `config.scrub.allow` (exact names or `PREFIX*` patterns), or set `config.scrub.disabled: true` (or `PUSH_SCRUB_DISABLED=1`) to opt out entirely — only for local debugging.
+- **Credential files:** the file tools (`read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`, `git_diff`, …) refuse credential-looking paths (`.env`, keys, `~/.ssh/…`; templates such as `.env.example` pass) using the shared `lib/sensitive-paths.ts` predicate, including through symlinks. A shell command can still read them, so tool results are also scrubbed of the values the CLI can find: `.env` values, credential fields (`.npmrc` tokens, `.netrc` passwords, `.git-credentials` URLs) and key-file lines, including through symlinked credential files and from before the call ran. Matches become `[redacted: <file>]` and the result says how many (`cli/secret-redaction.ts`). It's a best-effort net, not a boundary: it misses a value split across two streamed `exec_poll` / `exec_wait` responses, values shorter than 8 characters, credential files outside the bounded workspace walk, and a value a command transforms (encodes, reverses) before printing. It also can't stop a command from sending a value somewhere else.
 
 ## Local exec sandbox
 
@@ -679,8 +705,8 @@ TUI Remote flow:
 Options:
   --provider <name>       ollama | openrouter | kimi | zai | huggingface | zen | fireworks | deepseek | sakana | openai | xai | anthropic | google (default: ollama)
   --model <name>          Override model
-  --url <endpoint>        Override provider endpoint URL
-  --api-key <secret>      Set provider API key
+  --url <endpoint>        Override provider endpoint URL (run / REPL / TUI; beats env and config)
+  --api-key <secret>      Set provider API key (run / REPL / TUI; beats env and config)
   --tavily-key <secret>   Set Tavily API key for web_search
   --search-backend <mode> auto | tavily | ollama | duckduckgo
   --cwd <path>            Workspace root (default: cwd)

@@ -34,7 +34,7 @@
     "@capacitor/keyboard": "^8.0.5",
     "@capacitor/status-bar": "^8.0.3",
     "@capawesome/capacitor-electron": "^0.1.0",
-    "@cloudflare/sandbox": "0.12.4",
+    "@cloudflare/sandbox": "1.0.3",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
@@ -65,7 +65,7 @@
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^1.27.0",
-    "mermaid": "^11.16.0",
+    "mermaid": "^11.17.2",
     "next-themes": "^0.4.6",
     "react": "^19.2.8",
     "react-day-picker": "^10.0.1",
@@ -78,11 +78,11 @@
     "sonner": "^2.0.7",
     "streamdown": "^2.5.0",
     "tailwind-merge": "^3.6.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
-    "@cloudflare/workers-types": "^5.20260726.1",
+    "@cloudflare/workers-types": "^5.20261024.1",
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@eslint/js": "^10.0.1",
@@ -105,7 +105,7 @@
     "typescript-eslint": "^8.65.0",
     "typescript-go": "npm:typescript@~7.0.2",
     "vite": "^8.1.5",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "ws": "^8.21.1"
   },
   "engines": {

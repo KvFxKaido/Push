@@ -77,7 +77,7 @@ export function useProjectInstructions(
   setAgentsMd: (content: string | null) => void,
   setInstructionFilename: (filename: string | null) => void,
   setWorkspaceContext: (ctx: WorkspaceContext | null) => void,
-  sendMessage: (message: string) => void,
+  sendMessage: (message: string) => Promise<void>,
   isStreaming: boolean,
   setShowFileBrowser: (show: boolean) => void,
   markSnapshotActivity: () => void,

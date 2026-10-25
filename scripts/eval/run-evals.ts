@@ -50,6 +50,7 @@ import {
   fmtMs,
   isCompleted,
   parseCliJsonOutput,
+  preflightPassed,
   summarizeTrials,
   validateTasks,
   type EvalTask,
@@ -86,6 +87,15 @@ const { values } = parseArgs({
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..', '..');
 const PUSH_BIN = path.join(REPO_ROOT, 'push');
+// `push` is a bash launcher, which Windows can't spawn (ENOENT), and
+// `push.cmd` would need a shell, which re-splits arguments. On Windows, run
+// the CLI source the way the launcher does when tsx is present. The loader is
+// resolved here because trials run in temp workspaces with no node_modules.
+const PUSH_ENTRY = process.platform === 'win32' ? path.join(REPO_ROOT, 'cli', 'cli.ts') : PUSH_BIN;
+const PUSH_SPAWN: [string, string[]] =
+  process.platform === 'win32'
+    ? [process.execPath, ['--import', import.meta.resolve('tsx'), PUSH_ENTRY]]
+    : [PUSH_BIN, []];
 const SESSION_ROOT = process.env.PUSH_SESSION_DIR || path.join(os.homedir(), '.push', 'sessions');
 const RESULTS_DIR = values.out ? path.resolve(values.out) : path.join(SCRIPT_DIR, 'results');
 
@@ -143,7 +153,7 @@ function runPush(args: string[], cwd: string, timeoutMs: number): Promise<SpawnO
     // it's a child test shard and exits 0 without running anything.
     const env = { ...process.env, PUSH_TUI_ENABLED: '0' };
     delete env.NODE_TEST_CONTEXT;
-    const child = spawn(PUSH_BIN, args, {
+    const child = spawn(PUSH_SPAWN[0], [...PUSH_SPAWN[1], ...args], {
       cwd,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -294,10 +304,14 @@ async function runTrial(task: EvalTask, trial: number): Promise<TrialResult> {
   const fields = extractCliRunFields(parsed);
   if (timedOut) fields.outcome = 'harness_timeout';
 
-  // Acceptance evidence fallback (Codex P1): if the CLI claims success but
-  // reported no acceptance block (the delegated path doesn't emit one),
+  // Acceptance evidence fallback (Codex P1): if the CLI finished but reported
+  // no acceptance block (its `completed` outcome, or the delegated path),
   // verify the work here — never score a completion nobody checked.
-  if (!timedOut && fields.outcome === 'success' && fields.acceptancePassed === null) {
+  if (
+    !timedOut &&
+    (fields.outcome === 'success' || fields.outcome === 'completed') &&
+    fields.acceptancePassed === null
+  ) {
     fields.acceptancePassed = await runHarnessAcceptance(task, workspace);
   }
 
@@ -365,7 +379,7 @@ async function preflight(): Promise<boolean> {
     );
     const { parsed } = parseCliJsonOutput(stdout);
     const fields = extractCliRunFields(parsed);
-    if (fields.outcome === 'success' || fields.outcome === 'max_rounds') return true;
+    if (preflightPassed(fields)) return true;
     log(`preflight failed (exit ${exitCode}, outcome ${fields.outcome}).`);
     log(`stderr tail:\n${stderr.trim().split('\n').slice(-6).join('\n')}`);
     return false;
@@ -488,9 +502,9 @@ async function main(): Promise<number> {
   }
 
   try {
-    await fs.access(PUSH_BIN, fsConstants.X_OK);
+    await fs.access(PUSH_ENTRY, process.platform === 'win32' ? fsConstants.R_OK : fsConstants.X_OK);
   } catch {
-    log(`error: ${PUSH_BIN} not found or not executable.`);
+    log(`error: ${PUSH_ENTRY} not found or not executable.`);
     return 2;
   }
 

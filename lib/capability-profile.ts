@@ -63,6 +63,7 @@ const METADATA_NATIVE_TOOL_PROVIDERS: ReadonlySet<string> = new Set([
   'google',
   'ollama',
   'anthropic',
+  'deepseek',
 ]);
 
 /**

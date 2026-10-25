@@ -39,7 +39,11 @@ consumes. So whichever way a model answers — fenced JSON (text-dispatch) or a
 native tool call — both converge at one dispatch path. Consequences:
 
 - The system prompt and text-dispatch path are untouched; no "two instructions
-  fighting." A model can use either route in the same turn.
+  fighting." A model can use either route in the same turn. *(Revised on 2026-10-24 for every run
+  that attaches native schemas: the CLI lead, the web lead in
+  `inline-coder-run.ts`, and the daemon's delegated Coder and Explorer. With
+  failover off, each sends a lean prompt without the prose tool catalogs; the
+  text-dispatch parser is unchanged. See the addendum below.)*
 - Non-capable models are unaffected — they simply never receive a `tools` array.
 - Loose/best-effort parameter types are safe: executors already accept the
   model's free-form JSON on the text path, and nothing runs in strict mode.
@@ -250,3 +254,68 @@ Two seams the first cut missed (caught in #1219 review):
    capture and emits BOTH on replay; the unused field is ignored. The dual-shape
    read/emit lives in `lib/gemini-thought-signature.ts`, shared by the pump,
    serializer, and normalizer. Absent for every non-Gemini upstream.
+
+## Addendum (2026-10-24) — lean CLI lead prompt when native schemas are attached
+
+The "system prompt untouched" choice above meant a native-capable CLI lead
+received every tool twice: as native schemas and again as the prose
+`Available tools:` catalog in `TOOL_PROTOCOL` / `GITHUB_TOOL_PROTOCOL`, ending
+in "Emit only JSON blocks for tool calls", which contradicts native calling.
+Measured on the harness bake-off (`claude-haiku-5-5`, 79 requests), those two
+catalogs were about 10.8k of the 22.8k-character system prompt, next to 18.7k
+characters of native schemas.
+
+The CLI lead now sends a lean variant (`toNativeToolProtocol`, `cli/tools.ts`)
+when native schemas are attached:
+
+- **Dropped:** the text-dispatch header, the prose `Available tools:` catalog,
+  and the "Emit only JSON blocks" rule (reworded to "make the call").
+- **Kept:** the schema-version marker, the GitHub intro (`repo` is
+  "owner/name", token resolution), and the Rules blocks (paths, per-turn
+  budget, diagnostics, read budget).
+- **Unchanged:** dispatch. The fenced-JSON parser still runs, so a model that
+  answers with a JSON block still dispatches; native calling stays additive at
+  dispatch, which is the part of this decision that holds.
+- **Full catalog kept** for text-dispatch models, and whenever
+  `PUSH_PROVIDER_FAILOVER` is on, since a fallback provider may lack native
+  calling.
+
+The lean variant is derived from the full block, not hand-copied, so the two
+can't drift. Native schemas are generated from the protocol definitions in
+code, so removing the prose catalog removes no tool. The core block shrinks
+from 6,779 to 1,964 characters and the GitHub block from 4,025 to 1,030.
+
+**Web lead (same day).** The web lead (`inline-coder-run.ts`) follows the same
+rule: lean when native schemas are attached and the `providerFailover` setting
+is off, full otherwise.
+
+- **GitHub block:** the catalog and fenced-JSON header and rules are dropped,
+  and the routing rules are kept. The catalog lines matched the schema
+  descriptions 30 of 30, so nothing is lost: 7,396 → 4,096 characters.
+- **Sandbox block:** only the fenced-JSON usage stanza and its CRITICAL rule are
+  dropped (10,512 → 10,239). The catalog stays because it is richer than the
+  registry descriptions (20 of 21 entries carry guidance the schemas don't).
+  Moving that guidance into the registry is what would let it go too.
+- **Unchanged:** the small ask-user, scratchpad, todo, artifact and explorer
+  delegation blocks keep their JSON examples.
+
+Both leads also swap the kernel's Tool Call Placement section for a native
+wording when lean (`leanToolProtocols` on `runCoderAgent`). The text version
+says calls dispatch from content text only, which is false for native calls:
+they arrive as structured stream events. The reasoning-channel rule is kept.
+
+**Delegated agents (same day).** The daemon's delegated Coder and Explorer
+(direct delegation and task-graph nodes, `cli/pushd/delegation-coordinator.ts`)
+and the CLI lead's Explorer fan-out (`cli/lead-explorer.ts`) follow the same
+rule through one helper, `resolveCliDelegatedToolSurface`. These runs have no
+provider failover, so attaching schemas alone decides.
+
+- **Coder:** `TOOL_PROTOCOL` goes lean as on the CLI lead (6,779 → 1,963
+  characters).
+- **Explorer:** `READ_ONLY_TOOL_PROTOCOL` goes lean (2,574 → 664). Its 12
+  catalog lines match the read-only schemas 12 of 12. The Explorer kernel's
+  own fenced-JSON guideline is swapped for a native rule
+  (`leanToolProtocols` on `runExplorerAgent`).
+
+Scope: every run that attaches native schemas. Text-dispatch models and
+failover-enabled leads keep the full prompt.

@@ -24,6 +24,7 @@ import {
   isCompleted,
   median,
   parseCliJsonOutput,
+  preflightPassed,
   summarizeTrials,
   validateTasks,
 } from '../../scripts/eval/eval-lib.ts';
@@ -222,6 +223,13 @@ test('extractCliRunFields reads both plain and delegated round counters', () => 
   const noAcceptance = extractCliRunFields({ outcome: 'success', rounds: 1 });
   assert.equal(noAcceptance.acceptancePassed, null);
   assert.ok(!isCompleted(noAcceptance));
+
+  // `completed` is the CLI's word for "ended, but no --accept check ran". It
+  // scores only once the harness's own acceptance run supplies the evidence.
+  const completedUnchecked = extractCliRunFields({ outcome: 'completed', rounds: 1 });
+  assert.ok(!isCompleted(completedUnchecked));
+  const completedVerified = { ...completedUnchecked, acceptancePassed: true };
+  assert.ok(isCompleted(completedVerified), 'harness-verified completed run must score');
 });
 
 test('countSessionEvents tallies tool calls, errors, and regression signals', () => {
@@ -517,4 +525,16 @@ test('buildCacheProbePlan stamps gatewayRoute from the final probe URL', () => {
   });
   assert.ok('request' in gemini);
   assert.equal(gemini.request.gatewayRoute, true);
+});
+
+test('preflightPassed accepts a healthy sanity run, which now ends completed', () => {
+  // The preflight runs push run --json with no --accept, so a provider that
+  // answers correctly comes back `completed`, not `success`. Rejecting it
+  // aborted the whole suite before the first trial (Codex P1 on #1662).
+  assert.ok(preflightPassed(extractCliRunFields({ outcome: 'completed', rounds: 1 })));
+  assert.ok(preflightPassed(extractCliRunFields({ outcome: 'success', rounds: 1 })));
+  assert.ok(preflightPassed(extractCliRunFields({ outcome: 'max_rounds', rounds: 2 })));
+  assert.ok(!preflightPassed(extractCliRunFields({ outcome: 'failed' })));
+  assert.ok(!preflightPassed(extractCliRunFields({ outcome: 'error' })));
+  assert.ok(!preflightPassed(extractCliRunFields({})));
 });

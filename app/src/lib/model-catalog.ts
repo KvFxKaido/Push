@@ -13,6 +13,8 @@ import { getXAIKey } from '@/hooks/useXAIConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
   ANTHROPIC_MODELS,
+  DEEPSEEK_LEGACY_MODELS,
+  DEEPSEEK_MODELS,
   CLOUDFLARE_MODELS,
   compareProviderModelIds,
   FIREWORKS_MODELS,
@@ -445,6 +447,7 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
 // catalog refreshes.
 const WEB_CURATED_NATIVE_TOOL_MODELS: Readonly<Record<string, ReadonlySet<string>>> = {
   anthropic: new Set(ANTHROPIC_MODELS),
+  deepseek: new Set([...DEEPSEEK_MODELS, ...DEEPSEEK_LEGACY_MODELS]),
   fireworks: new Set(FIREWORKS_MODELS),
   google: new Set(GOOGLE_MODELS),
   sakana: new Set(SAKANA_MODELS),

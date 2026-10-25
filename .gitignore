@@ -14,11 +14,18 @@ build-out*.txt
 .env
 .env.*
 !.env.example
+# Drift canary gateway credentials (scripts/eval/canary.ts)
+scripts/eval/.canary.env
 !app/.env.production
 .dev.vars
 
-# claude code
+# claude code (tracked: the shared web-session hook and the project skills;
+# local settings stay ignored)
 .claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 !.claude/skills/
 .codex/*
 !.codex/environments/

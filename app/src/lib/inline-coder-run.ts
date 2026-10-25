@@ -86,6 +86,7 @@ import type { CorrelationContext } from '@push/lib/correlation-context';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
 import { resolvePushCapabilityProfile } from './model-catalog';
+import { getSetting, SETTINGS_KEYS } from './settings-store';
 import { getToolFunctionSchemasForSources } from '@push/lib/tool-function-schemas';
 import type { ToolRegistrySource } from '@push/lib/tool-registry';
 import { normalizeTaskLedgerScope, type TaskLedgerScope } from '@push/lib/task-ledger';
@@ -1205,6 +1206,12 @@ export async function runInPageCoderKernel(
   // two without inferring from downstream behavior. Web surface → `console.log`
   // per the logging-stream rule in CLAUDE.md.
   const nativeFcEligible = Boolean(leadRuntime) && capabilityProfile.toolCalling === 'native';
+  // With native schemas attached the prose catalogs and fenced-JSON rules are
+  // redundant, so the lead sends the lean protocols. Failover keeps the full
+  // text: a fallback provider may not be native-capable and then needs the
+  // prose to know the tools exist (same rule as the CLI lead).
+  const leanToolProtocols =
+    nativeFcEligible && getSetting<boolean>(SETTINGS_KEYS.providerFailover) !== true;
   console.log(
     JSON.stringify(
       nativeFcEligible
@@ -1214,6 +1221,7 @@ export async function runInPageCoderKernel(
             provider: spec.provider,
             model: spec.modelId,
             toolCalling: capabilityProfile.toolCalling,
+            leanToolProtocols,
           }
         : {
             level: 'info',
@@ -1265,7 +1273,7 @@ export async function runInPageCoderKernel(
       : undefined,
     detectAnyToolCall: detectCoderToolCall,
     webSearchToolProtocol: webSearchProtocol,
-    sandboxToolProtocol: getSandboxToolProtocol(),
+    sandboxToolProtocol: getSandboxToolProtocol({ nativeToolCalling: leanToolProtocols }),
     // Advertise memory tools only when scope was threaded (so executeMemory
     // is wired) — keeps advertising aligned with executor support (LCM).
     memoryToolProtocol: spec.memoryScope ? MEMORY_TOOL_PROTOCOL : undefined,
@@ -1274,7 +1282,10 @@ export async function runInPageCoderKernel(
     // create_artifact only when the matching executors are wired above.
     extraToolProtocols: leadRuntime
       ? [
-          buildGitHubToolProtocol({ includeDelegation: false }),
+          buildGitHubToolProtocol({
+            includeDelegation: false,
+            nativeToolCalling: leanToolProtocols,
+          }),
           ...(spec.scratchpad ? [SCRATCHPAD_TOOL_PROTOCOL] : []),
           ...(spec.todo ? [TODO_TOOL_PROTOCOL] : []),
           ASK_USER_TOOL_PROTOCOL,
@@ -1311,6 +1322,7 @@ export async function runInPageCoderKernel(
     // so opt into that guidance here. The CLI lead leaves it off (its
     // TOOL_PROTOCOL uses different names).
     leadToolGuidance: spec.leadToolSurface,
+    leanToolProtocols,
     // Native function calling for models that support it. Additive: the binding
     // emits native tool_calls which the stream carries directly into dispatch.
     // Two guards:

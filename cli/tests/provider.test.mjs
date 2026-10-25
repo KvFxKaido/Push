@@ -1519,7 +1519,13 @@ describe('streamCompletion', () => {
 
         assert.equal(text, 'legacy');
         assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
-        assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'hello' }]);
+        // The only message is in the CLI's default rolling cache tail.
+        assert.deepEqual(capturedBody.messages, [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } }],
+          },
+        ]);
         assert.equal(capturedBody.input, undefined);
       } finally {
         restore();
@@ -1787,7 +1793,9 @@ describe('streamCompletion', () => {
       });
     });
 
-    it('does not tag when cacheBreakpointIndices is omitted', async () => {
+    it('applies the CLI default rolling tail when cacheBreakpointIndices is omitted', async () => {
+      // createProviderStream opts every CLI request in; before it did, an
+      // omitted field meant no CLI path ever cached.
       process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
@@ -1808,8 +1816,14 @@ describe('streamCompletion', () => {
       ];
       await streamCompletion(orChatConfig, 'key', 'model', messages, null);
 
-      assert.equal(typeof capturedBody.messages[0].content, 'string');
-      assert.equal(typeof capturedBody.messages[1].content, 'string');
+      assert.deepEqual(capturedBody.messages[0], {
+        role: 'system',
+        content: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }],
+      });
+      assert.deepEqual(capturedBody.messages[1], {
+        role: 'user',
+        content: [{ type: 'text', text: 'first', cache_control: { type: 'ephemeral' } }],
+      });
     });
 
     it('does not tag when cacheBreakpointIndices is empty (system-only transcript)', async () => {

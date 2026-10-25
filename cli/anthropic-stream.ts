@@ -26,9 +26,10 @@
  *
  * Prompt caching: when `req.cacheBreakpointIndices` is set, the system message
  * + indicated tail messages get tagged with `cache_control: { type:
- * 'ephemeral' }`, hard-capped at the wire layer so direct-Anthropic CLI
- * sessions get the same Hermes `system_and_3` prefix caching the
- * OpenRouter-Anthropic CLI path already has.
+ * 'ephemeral' }`, hard-capped at the wire layer (the Hermes `system_and_3`
+ * shape). `undefined` leaves the request untagged, per the provider contract;
+ * CLI requests get their indices from `createProviderStream`, which opts in
+ * for every call.
  *
  * Sampling: `temperature` defaults to 0.1, but `toAnthropicMessages` strips it
  * (and `top_p`) on Opus 4.7+, which removed those parameters and 400s if sent.
