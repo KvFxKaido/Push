@@ -33,7 +33,7 @@
 FROM docker.io/library/node:22.23.4-bookworm-slim AS node
 FROM docker.io/cloudflare/sandbox:1.0.3 AS shim
 
-FROM docker.io/library/python:3.11.14-slim-bookworm
+FROM docker.io/library/python:3.15.0-slim-bookworm
 
 # Node from the official image (binary + npm/npx/corepack). Copied piecewise:
 # the Python image also lives in /usr/local, so the whole tree can't be copied.
