@@ -13,6 +13,7 @@ import {
   type ProviderDefinition,
   type ProviderStreamShape,
 } from '../lib/provider-definition.ts';
+import { migrateRenamedModel } from '../lib/provider-models.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import {
@@ -231,7 +232,10 @@ function buildProviderConfig(def: ProviderDefinition): ProviderConfig {
       return firstLiveEnv(cli.urlEnvVars) ?? cli.defaultUrl;
     },
     get defaultModel() {
-      return process.env[cli.modelEnvVar]?.trim() || def.defaultModel || '';
+      // A configured id the provider has since renamed migrates here.
+      return (
+        migrateRenamedModel(def.id, process.env[cli.modelEnvVar] ?? '') || def.defaultModel || ''
+      );
     },
     apiKeyEnv: [...apiKeyEnv],
     requiresKey: true,

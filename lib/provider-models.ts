@@ -199,9 +199,11 @@ export const CLOUDFLARE_GATEWAY_MODELS: string[] = [
 ];
 
 // Full live OpenCode Zen (standard tier) catalog. Free-text entry still covers
-// anything not seeded here. Refreshed 2026-06-17 against the Zen dashboard model
-// list. Excludes the `Go`-tier models (defined in lib/zen-go.ts, not in
-// this shared module) and Claude Fable 5 (intentionally not seeded).
+// anything not seeded here. Refreshed 2026-10-25 against the live
+// `/zen/v1/models` list.
+// Excludes Go-only models (defined in lib/zen-go.ts, not in this shared
+// module) and the live ids in ZEN_UNSEEDED_MODELS below. Ids that appear on
+// both tiers (`glm-5.2`, `kimi-k3`, `minimax-m3`, …) are seeded here too.
 //
 // Ids are BARE (`gpt-5.4`, not `openai/gpt-5.4`): the Zen chat API and its
 // `/v1/models` listing use a flat `owned_by: opencode` namespace. The
@@ -209,10 +211,10 @@ export const CLOUDFLARE_GATEWAY_MODELS: string[] = [
 // Push posts straight to /zen/v1/chat/completions, so the provider prefix
 // would make the model non-routable. Free variants keep the `-free` suffix.
 //
-// MiniMax M3 is only offered free-tier (`minimax-m3-free`, rate-limited) on the
-// standard endpoint — the paid `minimax-m3` lives on the Go tier.
+// Claude ids are dash-versioned (`claude-opus-4-8`, not `claude-opus-4.8`) —
+// Zen renamed them, and the dotted forms are no longer listed.
 //
-// Grouped by family in order: Zen default, Anthropic Claude, OpenAI GPT-5.x,
+// Grouped by family in order: Zen default, Anthropic Claude, OpenAI GPT-5/6,
 // Google Gemini, DeepSeek, Zhipu GLM, Moonshot Kimi, Qwen, xAI Grok, MiniMax,
 // then misc. No inline comments inside the array body — the CLI catalog-parity
 // test (`cli/tests/model-catalog.test.mjs`) parses this list with a regex that
@@ -220,15 +222,18 @@ export const CLOUDFLARE_GATEWAY_MODELS: string[] = [
 // as unresolvable constant references.
 export const ZEN_MODELS: string[] = [
   ZEN_DEFAULT_MODEL,
-  'claude-haiku-4.5',
-  'claude-opus-4.1',
-  'claude-opus-4.5',
-  'claude-opus-4.6',
-  'claude-opus-4.7',
-  'claude-opus-4.8',
-  'claude-sonnet-4',
-  'claude-sonnet-4.5',
-  'claude-sonnet-4.6',
+  'claude-haiku-4-5',
+  'claude-haiku-5-5',
+  'claude-opus-4-5',
+  'claude-opus-4-6',
+  'claude-opus-4-7',
+  'claude-opus-4-8',
+  'claude-opus-5',
+  'claude-opus-5-5',
+  'claude-sonnet-4-5',
+  'claude-sonnet-4-6',
+  'claude-sonnet-5',
+  'claude-sonnet-5-5',
   'gpt-5',
   'gpt-5-codex',
   'gpt-5-nano',
@@ -246,27 +251,95 @@ export const ZEN_MODELS: string[] = [
   'gpt-5.4-pro',
   'gpt-5.5',
   'gpt-5.5-pro',
+  'gpt-5.6-luna',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-6-astra',
+  'gpt-6-luna',
+  'gpt-6-sol',
+  'gpt-6.1-sol',
   'gemini-3-flash',
   'gemini-3.1-pro',
   'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-3.8-flash',
+  'gemini-4-argon',
   'deepseek-v4-flash',
-  'deepseek-v4-flash-free',
   'deepseek-v4-pro',
+  'deepseek-v4.1-flash',
+  'deepseek-v4.1-flash-free',
   'glm-5',
   'glm-5.1',
+  'glm-5.2',
+  'glm-5.3',
+  'glm-5.3-flash',
+  'glm-5.3-flash-free',
   'kimi-k2.5',
   'kimi-k2.6',
+  'kimi-k2.7-code',
+  'kimi-k3',
   'qwen3.5-plus',
   'qwen3.6-plus',
-  'qwen3.6-plus-free',
+  'qwen3.8-flash',
+  'qwen3.8-max',
+  'grok-4.5',
+  'grok-4.6',
+  'grok-4.7',
   'grok-build-0.1',
   'minimax-m2.5',
   'minimax-m2.7',
-  'minimax-m3-free',
-  'mimo-v2.5-free',
-  'nemotron-3-ultra-free',
-  'north-mini-code-free',
+  'minimax-m3',
+  'mistral-large-4',
+  'muse-spark-1.2',
+  'muse-spark-1.3',
+  'muse-wonder-1.0',
+  'mimo-v2.6-flash-free',
+  'nemotron-3.5-lightning-free',
+  'nemotron-3.5-super-vl-free',
+  'beam-free',
+  'flint-40b-free',
 ];
+
+// Live standard-tier ids deliberately left out of ZEN_MODELS: Claude Fable 5 /
+// 5.1 (intentionally not seeded); `test` and `claude-opus-5-5-backup`, which
+// are not user-facing models; and `jev-1.13` / `jev-1.13-free`, which no
+// source publishes limits for, so they would seed with no declared metadata
+// (live discovery and free-text still reach them). The canary's catalog-drift check
+// (`scripts/eval/canary.ts`) ignores these, so adding a live id here is the
+// recorded decision not to seed it.
+export const ZEN_UNSEEDED_MODELS: string[] = [
+  'claude-fable-5',
+  'claude-fable-5-1',
+  'claude-opus-5-5-backup',
+  'jev-1.13',
+  'jev-1.13-free',
+  'test',
+];
+
+// Zen renamed its Claude ids from dotted to dash versions (2026-10). A
+// persisted selection of a dotted id would keep sending an id Zen no longer
+// lists, so every reader of a stored Zen selection migrates through this map.
+// Only true renames are mapped: `claude-opus-4.1` and `claude-sonnet-4` have
+// no successor on Zen, and swapping in a different model silently would be
+// worse than the upstream "unavailable" error.
+export const ZEN_RENAMED_MODELS: Record<string, string> = {
+  'claude-haiku-4.5': 'claude-haiku-4-5',
+  'claude-opus-4.5': 'claude-opus-4-5',
+  'claude-opus-4.6': 'claude-opus-4-6',
+  'claude-opus-4.7': 'claude-opus-4-7',
+  'claude-opus-4.8': 'claude-opus-4-8',
+  'claude-sonnet-4.5': 'claude-sonnet-4-5',
+  'claude-sonnet-4.6': 'claude-sonnet-4-6',
+};
+
+/** Rewrite a stored model id the provider has renamed; anything else passes through. */
+export function migrateRenamedModel(provider: string, model: string): string {
+  const trimmed = model.trim();
+  if (provider !== 'zen') return trimmed;
+  return Object.hasOwn(ZEN_RENAMED_MODELS, trimmed) ? ZEN_RENAMED_MODELS[trimmed] : trimmed;
+}
 
 // Curated Fireworks serverless models — surfaced in the picker alongside the account's live
 // /v1/models (which returns only a narrow subset). Serverless models are callable by slug

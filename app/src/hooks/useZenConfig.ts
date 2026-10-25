@@ -5,6 +5,7 @@ import {
   ZEN_GO_DEFAULT_MODEL,
   ZEN_GO_MODELS,
   getZenGoMode,
+  normalizeZenModelName,
   setZenGoMode as persistZenGoMode,
 } from '@/lib/providers';
 import { createRegistryModelProviderConfig } from './useApiKeyConfig';
@@ -12,6 +13,7 @@ import { createRegistryModelProviderConfig } from './useApiKeyConfig';
 const providerConfig = createRegistryModelProviderConfig('zen', {
   envVar: import.meta.env.VITE_ZEN_API_KEY,
   defaultModel: ZEN_DEFAULT_MODEL,
+  normalizeModel: normalizeZenModelName,
 });
 
 export const getZenKey = providerConfig.getKey;

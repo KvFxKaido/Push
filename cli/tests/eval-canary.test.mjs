@@ -13,6 +13,7 @@ import {
   usageOf,
 } from '../../scripts/eval/canary-lib.ts';
 import { EVAL_TASKS } from '../../scripts/eval/tasks.ts';
+import { ZEN_MODELS, ZEN_UNSEEDED_MODELS } from '../../lib/provider-models.ts';
 
 const usage = { input: 1_000_000, cacheWrite: 0, cacheRead: 0, output: 1_000_000 };
 
@@ -124,6 +125,20 @@ test('retried requests are reported without turning the run red', () => {
     error: null,
   };
   assert.deepEqual(failures({ startedAt: '', commit: 'abc', drift: {}, results: [result] }), []);
+});
+
+test('ids the catalog leaves out on purpose never count as newer', () => {
+  // Zen is seeded with its whole live list, so every unseeded live id must be
+  // named or the check is red every week.
+  assert.deepEqual(
+    catalogDrift(['big-pickle', 'test', 'zen-new'], ['big-pickle', 'zen-gone'], 'all', ['test']),
+    { newer: ['zen-new'], unlisted: ['zen-gone'] },
+  );
+  // An id can't be both seeded and deliberately unseeded.
+  assert.deepEqual(
+    ZEN_UNSEEDED_MODELS.filter((id) => ZEN_MODELS.includes(id)),
+    [],
+  );
 });
 
 test('large provider lists flag only catalog ids that disappeared', () => {

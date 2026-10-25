@@ -150,20 +150,26 @@ export interface CatalogDrift {
  * How `catalogDrift` decides which live ids count as "newer":
  * - `newest-first` (Anthropic): only live ids above the newest catalog id, so
  *   older models the catalog chose to omit stay quiet.
- * - `all` (DeepSeek, a two-model list): every live id the catalog lacks.
+ * - `all` (DeepSeek, a two-model list; Zen, seeded with its whole live list):
+ *   every live id the catalog lacks.
  * - `unlisted-only` (OpenAI, Google, xAI, OpenRouter): none. Their lists hold
  *   dozens to hundreds of models the curated catalog deliberately omits, so
  *   only catalog ids the provider stopped offering are drift.
+ *
+ * `ignore` holds live ids the catalog leaves out on purpose (Zen's
+ * ZEN_UNSEEDED_MODELS): they never count as newer.
  */
 export type DriftMode = 'newest-first' | 'all' | 'unlisted-only';
 
 /** Compare a provider's live model list against Push's catalog. */
 export function catalogDrift(
-  liveIds: string[],
+  allLiveIds: string[],
   catalogIds: string[],
   mode: DriftMode,
+  ignore: readonly string[] = [],
 ): CatalogDrift {
   const catalog = new Set(catalogIds);
+  const liveIds = allLiveIds.filter((id) => !ignore.includes(id));
   const live = new Set(liveIds);
   let candidates = mode === 'unlisted-only' ? [] : liveIds;
   if (mode === 'newest-first') {
