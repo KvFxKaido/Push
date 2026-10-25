@@ -46,7 +46,7 @@ import {
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import type { ChatMessage } from '@/types';
-import { getZenGoTransport } from '../lib/zen-go';
+import { getZenTransport } from '@push/lib/zen-transport';
 import { getUserProviderKey } from './user-secrets';
 import type { Env } from './worker-middleware';
 import {
@@ -230,17 +230,20 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         args.provider === 'openai' ||
         args.provider === 'xai' ||
         args.provider === 'sakana' ||
-        args.provider === 'fireworks';
+        args.provider === 'fireworks' ||
+        // Standard Zen's GPT / Grok / Muse are Responses-only upstream.
+        (args.provider === 'zen' && getZenTransport(modelId, { go: zenGo }) === 'responses');
       // Owner's stored key, resolved fresh per dispatch (key rotation or
       // deletion mid-job takes effect on the next round; nothing is cached
       // in job state). `standardAuth` still prefers the Worker env secret,
       // so this only matters for providers without one.
       const userKey = await getUserProviderKey(args.env, args.ownerUserId, args.provider);
-      // Anthropic-transport Zen-Go models (MiniMax / Qwen) stream raw Anthropic
-      // Messages SSE; `deepseek` runs on its Anthropic-compatible endpoint. Both
-      // parse natively; everything else is OpenAI-shaped.
-      const isZenGoAnthropic =
-        zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';
+      // Anthropic-transport Zen models (Go: MiniMax / Qwen; standard: Claude /
+      // some Qwen) stream raw Anthropic Messages SSE; `deepseek` runs on its
+      // Anthropic-compatible endpoint. Both parse natively; everything else is
+      // OpenAI-shaped. The Worker builds the Messages body from the chat payload.
+      const isZenAnthropic =
+        args.provider === 'zen' && getZenTransport(modelId, { go: zenGo }) === 'anthropic';
       const isAnthropicTransport = args.provider === 'deepseek';
 
       // One dispatch attempt on a chosen wire. Factored so OpenRouter can run
@@ -314,7 +317,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
                 body: response.body as unknown as ReadableStream<Uint8Array>,
                 signal,
               })
-            : isZenGoAnthropic || isAnthropicTransport
+            : isZenAnthropic || isAnthropicTransport
               ? zenGoAnthropicEvents(response as unknown as Response, signal)
               : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
         for await (const event of events) {
@@ -374,8 +377,8 @@ function providerSlug(provider: AIProviderType): string {
 }
 
 // ---------------------------------------------------------------------------
-// Native Anthropic event stream — used only for the Anthropic-transport Zen-Go
-// models (MiniMax / Qwen), whose Worker route now proxies raw Anthropic SSE.
+// Native Anthropic event stream — used for the Anthropic-transport Zen models
+// (Go: MiniMax / Qwen; standard: Claude / some Qwen), whose Worker routes proxy raw Anthropic SSE.
 // Background coder jobs use text-dispatch tool calling (no native tool schemas
 // are sent), so no `isKnownToolName` filter is needed and `tool_use` blocks
 // aren't expected. These models don't enable Anthropic's server-side

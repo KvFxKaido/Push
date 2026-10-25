@@ -395,6 +395,167 @@ describe('handleZenChat', () => {
   });
 });
 
+describe('handleZenChat — per-model transport (standard tier)', () => {
+  // Standard Zen serves each model on one endpoint and 400s the others with
+  // ModelProtocolUnsupported (seen live 2026-10-25 for claude-haiku-5-5 and
+  // gpt-6-luna on /chat/completions), so the body's model must pick the URL.
+  function captureUpstream() {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return () => captured;
+  }
+
+  function makeZenRequest(body: Record<string, unknown>): Request {
+    return new Request('https://push.example.test/api/zen/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  const chatBody = (model: string) => ({ model, messages: [{ role: 'user', content: 'hello' }] });
+
+  it('sends Claude to /zen/v1/messages with the model in the body and x-api-key', async () => {
+    const get = captureUpstream();
+    const response = await handleZenChat(
+      makeZenRequest(chatBody('claude-sonnet-4-6')),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(200);
+    expect(get()?.url).toBe('https://opencode.ai/zen/v1/messages');
+    expect(JSON.parse(get()!.init.body as string).model).toBe('claude-sonnet-4-6');
+    expect((get()!.init.headers as Record<string, string>)['x-api-key']).toBe('zen-key');
+  });
+
+  it('serializes the neutral wire for Claude with toAnthropicMessages', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest({ contract: 'push.stream.v1', ...chatBody('claude-haiku-5-5') }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(get()?.url).toBe('https://opencode.ai/zen/v1/messages');
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.model).toBe('claude-haiku-5-5');
+    expect(body.messages[0]).toMatchObject({ role: 'user' });
+    expect(body.choices).toBeUndefined();
+  });
+
+  it('sends GPT to /zen/v1/responses with the Responses body', async () => {
+    const get = captureUpstream();
+    const response = await handleZenChat(
+      makeZenRequest({
+        model: 'gpt-6-luna',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+        stream: true,
+        store: false,
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(200);
+    expect(get()?.url).toBe('https://opencode.ai/zen/v1/responses');
+    expect(JSON.parse(get()!.init.body as string).input).toBeDefined();
+  });
+
+  it('keeps Chat Completions models (and standard-tier MiniMax) on /chat/completions', async () => {
+    const get = captureUpstream();
+    await handleZenChat(makeZenRequest(chatBody('deepseek-v4-pro')), makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(get()?.url).toBe('https://opencode.ai/zen/v1/chat/completions');
+    // MiniMax is Messages on Go but Chat Completions on standard — the tiers differ.
+    await handleZenChat(makeZenRequest(chatBody('minimax-m3')), makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(get()?.url).toBe('https://opencode.ai/zen/v1/chat/completions');
+  });
+
+  it('resolves a keyless Claude request from the ZEN_KEY_STORE binding', async () => {
+    const get = captureUpstream();
+    const response = await handleZenChat(
+      makeZenRequest(chatBody('claude-opus-4-8')),
+      makeEnv({ ZEN_KEY_STORE: { get: async () => 'store-key' } } as unknown as Partial<Env>),
+    );
+    expect(response.status).toBe(200);
+    expect((get()!.init.headers as Record<string, string>)['x-api-key']).toBe('store-key');
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"zen_store_key_used"'));
+  });
+
+  it('rejects a cross-origin request before reading its body for dispatch', async () => {
+    const get = captureUpstream();
+    const request = new Request('https://push.example.test/api/zen/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' },
+      body: JSON.stringify(chatBody('claude-sonnet-4-6')),
+    });
+    const clone = vi.spyOn(request, 'clone');
+    const response = await handleZenChat(request, makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(response.status).toBe(403);
+    expect(clone).not.toHaveBeenCalled();
+    expect(get()).toBeUndefined();
+  });
+
+  it('applies the body cap to the dispatch read (oversized → 413, no upstream)', async () => {
+    const get = captureUpstream();
+    const request = new Request('https://push.example.test/api/zen/chat', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+        'Content-Length': String(6 * 1024 * 1024),
+      },
+      body: JSON.stringify(chatBody('claude-sonnet-4-6')),
+    });
+    // The cap rejects on Content-Length, so the dispatch read never buffers the body.
+    const text = vi.spyOn(Request.prototype, 'text');
+    const response = await handleZenChat(request, makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(response.status).toBe(413);
+    expect(text).not.toHaveBeenCalled();
+    expect(get()).toBeUndefined();
+  });
+
+  // Production shape: gateway on, Zen BYOK held by the gateway, no caller key.
+  const BYOK_ENV = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',
+    CF_AI_GATEWAY_SLUG: 'push-gate',
+    CF_AI_GATEWAY_TOKEN: 'aig-token',
+    CF_AI_GATEWAY_CUSTOM_SLUGS: 'zen',
+    CF_AI_GATEWAY_BYOK: 'zen',
+  } as Partial<Env>;
+
+  it('routes keyless Claude through the gateway messages path with the store key', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest(chatBody('claude-sonnet-5-5')),
+      makeEnv({ ...BYOK_ENV, ZEN_KEY_STORE: { get: async () => 'store-key' } } as Partial<Env>),
+    );
+    expect(get()?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/custom-zen/zen/v1/messages',
+    );
+    expect((get()!.init.headers as Record<string, string>)['x-api-key']).toBe('store-key');
+  });
+
+  it('routes keyless GPT through the gateway responses path, letting the gateway inject', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest({
+        model: 'gpt-5.5',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+        stream: true,
+        store: false,
+      }),
+      makeEnv(BYOK_ENV),
+    );
+    expect(get()?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/custom-zen/zen/v1/responses',
+    );
+    const headers = get()!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers['cf-aig-authorization']).toBe('Bearer aig-token');
+  });
+});
+
 describe('handleZenGoChat', () => {
   function makeZenGoRequest(model: string): Request {
     return new Request('https://push.example.test/api/zen/go/chat', {

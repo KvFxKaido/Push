@@ -438,7 +438,7 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
 
 // These providers intentionally use their surface catalog as native-tool
 // evidence rather than trusting incomplete/free-text models.dev metadata.
-// Zen is the cautionary case for why: its default `big-pickle` is a
+// Zen is the cautionary case for why: its former default `big-pickle` is a
 // Zen-proprietary id that isn't in models.dev at all, and the `opencode`
 // block can't be verified to populate `tool_call` for the bare ids — a
 // capability gate would silently leave native FC off for the default and any

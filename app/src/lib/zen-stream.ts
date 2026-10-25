@@ -1,8 +1,10 @@
 /**
  * OpenCode Zen PushStream implementation.
  *
- * Hits the Zen chat endpoint (or the Zen Go endpoint when Go mode is on),
- * then delegates SSE parsing to the shared `openAISSEPump` in `lib/`.
+ * Hits the Zen chat endpoint (or the Zen Go endpoint when Go mode is on). The
+ * model's transport (`lib/zen-transport.ts`) picks the body shape and the SSE
+ * parser: Chat Completions → `openAISSEPump`, Messages → `anthropicEventStream`,
+ * Responses → the shared Responses stream family.
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
@@ -21,18 +23,36 @@ import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { PROVIDER_URLS, ZEN_GO_URLS, getZenGoMode } from './providers';
-import { getZenGoTransport } from './zen-go';
+import { getZenTransport } from '@push/lib/zen-transport';
+import { createOpenAIResponsesStream } from './openai-responses-stream-family';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { ProviderStreamError } from './stream-error';
 import { resolvePushCapabilityProfile } from './model-catalog';
 
+// Standard Zen's GPT / Grok / Muse models are Responses-only upstream. The
+// Worker's `handleZenChat` sends a Responses body to /zen/v1/responses, so the
+// whole request/parse cycle is the shared Responses family's.
+const zenResponsesStream = createOpenAIResponsesStream({
+  provider: 'zen',
+  endpoint: PROVIDER_URLS.zen.chat,
+  displayName: 'OpenCode Zen',
+  getApiKey: getZenKey,
+});
+
 export async function* zenStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const goMode = getZenGoMode();
+  const transport = getZenTransport(req.model, { go: goMode });
+  if (transport === 'responses') {
+    yield* zenResponsesStream(req);
+    return;
+  }
+  // The neutral wire is what both Messages paths (Go and standard) dual-accept.
+  const neutralWire = goMode || transport === 'anthropic';
   const capabilityProfile = resolvePushCapabilityProfile('zen', req.model, {
-    requestWire: goMode ? 'neutral' : 'openai',
+    requestWire: neutralWire ? 'neutral' : 'openai',
   });
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
@@ -64,10 +84,12 @@ export async function* zenStream(
   //      `toOpenAIChat` emits `tools` + `tool_choice: 'auto'` and `response_format`
   //      from them. This completes the Anthropic Worker Contract migration for
   //      Zen Go — the last client on the legacy passthrough.
-  //    - **Standard mode** stays on the legacy OpenAI body: its endpoint
-  //      (`handleZenChat`) is a plain stream proxy with no dual-accept, so it must
-  //      receive an OpenAI-shape body. Standard Zen is pure OpenAI-compat (no
-  //      Anthropic transport) and was never a migration target.
+  //    - **Standard mode, Messages models** (Claude, some Qwen) post the same
+  //      neutral wire: `handleZenChat` dispatches them to the tier-parameterised
+  //      Go path, which re-serializes with `toAnthropicMessages`.
+  //    - **Standard mode, Chat Completions models** stay on the legacy OpenAI
+  //      body: that branch of `handleZenChat` is a plain stream proxy with no
+  //      dual-accept, so it must receive an OpenAI-shape body.
   //  Native FC is additive either way — `openAISSEPump` emits complete native
   //  `tool_calls` as structured `native_tool_call` events. Anthropic-transport Go
   //  models (minimax/qwen) translate `tools` to Anthropic's custom-tool shape via
@@ -75,7 +97,7 @@ export async function* zenStream(
   //  `anthropicEventStream` below — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const openAITools = nativeTools?.map(flatToolToOpenAITool);
-  const body = goMode
+  const body = neutralWire
     ? toPushStreamWire(llmMessages, {
         provider: 'zen',
         model: req.model,
@@ -142,13 +164,12 @@ export async function* zenStream(
     throw new Error('OpenCode Zen response had no body');
   }
 
-  // Dual response pump (mirrors the Worker's dual request serialization). In Go
-  // mode the Anthropic-transport models (MiniMax / Qwen on `/v1/messages`) now
-  // stream raw Anthropic Messages SSE — the Worker no longer translates it to
+  // Dual response pump (mirrors the Worker's dual request serialization).
+  // Anthropic-transport models (Go: MiniMax / Qwen; standard: Claude / some Qwen)
+  // stream raw Anthropic Messages SSE — the Worker does not translate it to
   // OpenAI SSE — so parse those natively via `anthropicEventStream`, exactly like
-  // the direct Anthropic route. Everything else (standard Zen + OpenAI-transport
-  // Go models) stays on `openAISSEPump`.
-  if (goMode && getZenGoTransport(req.model) === 'anthropic') {
+  // the direct Anthropic route. Everything else stays on `openAISSEPump`.
+  if (transport === 'anthropic') {
     // These models don't use Anthropic's server-side `web_search` tool, so no
     // `pause_turn` continuation arises on this route (the request never enables
     // it). Drain any `pause_turn` defensively rather than replaying it, and

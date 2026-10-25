@@ -507,7 +507,7 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       fallbackText: 'Z',
     },
     settings: {
-      description: 'OpenCode Zen routing API (OpenAI-compatible)',
+      description: 'OpenCode Zen routing API (Chat Completions, Messages and Responses per model)',
       envKey: 'VITE_ZEN_API_KEY',
       envUrl: 'https://opencode.ai/zen',
       modelContextWindow: 200_000,

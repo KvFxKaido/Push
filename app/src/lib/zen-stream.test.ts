@@ -426,6 +426,62 @@ describe('zenStream', () => {
     expect(url).toBe('https://zen.example/v1/chat/completions');
   });
 
+  // Standard Zen serves Claude on /messages and GPT / Grok / Muse on /responses;
+  // the Worker dispatches on the body's model, so the client must send the
+  // matching body AND parse the matching SSE.
+  it('standard Claude: posts the neutral wire and parses Anthropic SSE', async () => {
+    const sse = [
+      'event: message_start',
+      'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}',
+      '',
+      'event: content_block_delta',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi from claude"}}',
+      '',
+      'event: message_delta',
+      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}',
+      '',
+      'event: message_stop',
+      'data: {"type":"message_stop"}',
+      '',
+      '',
+    ].join('\n');
+    fetchMock.mockResolvedValue(new Response(sse, { status: 200 }));
+    const { zenStream } = await import('./zen-stream');
+    const out = await collect(zenStream({ ...baseRequest, model: 'claude-sonnet-4-6' }));
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://zen.example/v1/chat/completions');
+    const body = JSON.parse(init.body as string);
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.model).toBe('claude-sonnet-4-6');
+    expect(out).toContainEqual({ type: 'text_delta', text: 'hi from claude' });
+    expect(out.at(-1)?.type).toBe('done');
+  });
+
+  it('standard GPT: posts a Responses body and parses Responses SSE', async () => {
+    const sse = [
+      'event: response.output_text.delta',
+      'data: {"type":"response.output_text.delta","delta":"hi from gpt"}',
+      '',
+      'event: response.completed',
+      'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":3,"output_tokens":4}}}',
+      '',
+      '',
+    ].join('\n');
+    fetchMock.mockResolvedValue(new Response(sse, { status: 200 }));
+    const { zenStream } = await import('./zen-stream');
+    const out = await collect(zenStream({ ...baseRequest, model: 'gpt-6-luna' }));
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://zen.example/v1/chat/completions');
+    const body = JSON.parse(init.body as string);
+    expect(body.model).toBe('gpt-6-luna');
+    expect(body.input).toBeDefined();
+    expect(body.messages).toBeUndefined();
+    expect(out).toContainEqual({ type: 'text_delta', text: 'hi from gpt' });
+    expect(out.at(-1)?.type).toBe('done');
+  });
+
   it('hits ZEN_GO_URLS.chat when Go mode is on', async () => {
     vi.doMock('./providers', () => ({
       getZenGoMode: () => true,

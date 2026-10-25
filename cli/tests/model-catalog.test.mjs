@@ -113,7 +113,7 @@ describe('DEFAULT_MODELS', () => {
     zai: 'glm-5.2',
     kimi: 'kimi-k2.7-code-highspeed',
     huggingface: 'deepseek-ai/DeepSeek-V4-Pro',
-    zen: 'big-pickle',
+    zen: 'deepseek-v4-pro',
     fireworks: 'accounts/fireworks/models/deepseek-v4-pro',
     deepseek: 'deepseek-v4-pro',
     sakana: 'fugu',

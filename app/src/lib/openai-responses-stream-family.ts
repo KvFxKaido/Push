@@ -27,7 +27,7 @@ import { isNativeWebSearchEnabled } from './web-search-mode';
 
 export type OpenAIResponsesFamilyProvider = Extract<
   AIProviderType,
-  'openai' | 'xai' | 'sakana' | 'fireworks'
+  'openai' | 'xai' | 'sakana' | 'fireworks' | 'zen'
 >;
 
 export interface OpenAIResponsesStreamFamilyConfig {

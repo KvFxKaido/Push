@@ -95,8 +95,13 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, ProviderUrlPair>> = {
     chat: '/huggingface/v1/chat/completions',
     models: '/huggingface/v1/models',
   },
+  // Zen chat goes through the Worker even in dev: `handleZenChat` picks the
+  // upstream endpoint per model (lib/zen-transport.ts), and the raw `/opencode`
+  // Vite proxy would send Messages / Responses bodies to /chat/completions,
+  // which Zen rejects with ModelProtocolUnsupported. The keyless model list
+  // can still go direct.
   zen: {
-    chat: '/opencode/zen/v1/chat/completions',
+    chat: '/api/zen/chat',
     models: '/opencode/zen/v1/models',
   },
 };
@@ -140,8 +145,10 @@ export const ZEN_GO_MODELS_URL: string = providerUrl(
   '/api/zen/go/models',
 );
 
+// Same reason as standard Zen above: Go's Messages models need the Worker to
+// re-serialize the neutral wire, so dev must not bypass it either.
 export const ZEN_GO_URLS = {
-  chat: providerUrl('/opencode/zen/go/v1/chat/completions', '/api/zen/go/chat'),
+  chat: providerUrl('/api/zen/go/chat', '/api/zen/go/chat'),
 };
 
 const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {

@@ -14,6 +14,7 @@ import {
   type ProviderStreamShape,
 } from '../lib/provider-definition.ts';
 import { migrateRenamedModel } from '../lib/provider-models.ts';
+import { getZenTransport } from '../lib/zen-transport.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import {
@@ -206,6 +207,30 @@ function openRouterLegacyChatConfig(config: ProviderConfig): ProviderConfig {
   };
 }
 
+/** A wire-specific Zen config: the live URL with its `/chat/completions` suffix
+ * swapped for the endpoint that model's transport is served on. */
+function zenWireConfig(config: ProviderConfig, wire: 'messages' | 'responses'): ProviderConfig {
+  return {
+    ...config,
+    get url() {
+      // Rewrite the path only, so a user URL with a query string
+      // (`…/chat/completions?x=y`) still lands on the right endpoint.
+      const raw = config.url.trim();
+      try {
+        const url = new URL(raw);
+        url.pathname = url.pathname.replace(/\/chat\/completions\/?$/, `/${wire}`);
+        return url.toString();
+      } catch {
+        return raw.replace(/\/chat\/completions\/?$/, `/${wire}`);
+      }
+    },
+    get defaultModel() {
+      return config.defaultModel;
+    },
+    streamShape: wire === 'messages' ? 'anthropic' : 'openai-responses',
+  };
+}
+
 function resolveEffectiveProviderConfig(config: ProviderConfig): ProviderConfig {
   if (config.id !== 'openrouter' || !useOpenRouterLegacyChatTransport()) {
     return config;
@@ -380,6 +405,27 @@ function createAdapterStream(
           );
         },
       });
+    };
+  }
+
+  // Zen serves each model on exactly one endpoint (lib/zen-transport.ts) and
+  // rejects the others with `ModelProtocolUnsupported`, so the wire is chosen
+  // per request: Claude → /messages, GPT / Grok / Muse → /responses, the rest
+  // stay on Chat Completions. A PUSH_ZEN_URL on the Go endpoint uses Go's table.
+  if (config.id === 'zen') {
+    const chatStream = createCliProviderStream(config, apiKey, { sessionId: options.sessionId });
+    const messagesStream = createCliAnthropicStream(zenWireConfig(config, 'messages'), apiKey);
+    const responsesStream = createCliOpenAIResponsesStream(
+      zenWireConfig(config, 'responses'),
+      apiKey,
+      { sessionId: options.sessionId },
+    );
+    return (req) => {
+      const model = req.model?.trim() || config.defaultModel;
+      const transport = getZenTransport(model, { go: /\/zen\/go\//.test(config.url) });
+      if (transport === 'anthropic') return messagesStream(req);
+      if (transport === 'responses') return responsesStream(req);
+      return chatStream(req);
     };
   }
 
