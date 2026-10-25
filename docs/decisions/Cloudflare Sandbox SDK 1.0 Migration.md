@@ -388,6 +388,25 @@ with a cap.
 has no `alarm()`, so each sandbox that was active logs one internal error,
 which then clears. That's harmless, but expect it in the logs.
 
+### Production cutover (2026-10-25, forced; deployed by hand)
+
+**How it happened:**
+- A Workers Builds non-production branch build of this branch ran `wrangler versions upload` against the **production** `push` Worker (00:56 UTC).
+- That created the `push-sandbox-do` (`durable_object`) application and attached it to production's Sandbox namespace, alongside the old `push-sandbox` app.
+- The next main deploy (01:43, still 0.12 code) could not start any container: "Image or container snapshot must be set for the new runtime". Sandboxes hung on "starting".
+- The docs line "versions upload does not publish a new image or roll out container instances" is true. It says nothing about container *applications* or namespace links.
+
+**The fix forward:**
+1. Workers Builds disabled on `push`.
+2. This branch (`e86ff4e0`) deployed by hand with `wrangler deploy` as version `028cf905` (02:05 UTC).
+3. Verified: health OK, and a real sandbox create went end to end in 23 s (git identity 18.8 s, which absorbed the first image start; clone 2.3 s; cache populate 82 ms), then exec and read returned 200.
+
+**Still to do:**
+- Merge #1674 and this PR into main so main matches production. Builds stay disabled until then.
+- Set up Worker Previews: per-branch DO namespaces and container apps, tested on staging. Until then, branch builds are not isolated from production.
+- Delete the leftover 0.12 `push-sandbox` container application.
+- Delete the 0.12-only R2 secrets.
+
 ## Phases after staging
 
 1. **Image:** a new `Dockerfile.sandbox` on its own base. Build it locally and
