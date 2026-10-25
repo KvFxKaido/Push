@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "bakeoff-arm-think",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    // The shared bake-off proxy (shared/model-proxy.mjs). It injects the real
+    // credential and records the wire; the arm only ever sends a placeholder key.
+    "MODEL_BASE_URL": "http://127.0.0.1:8789/think"
+  },
+  "containers": [
+    {
+      "class_name": "ThinkArm",
+      "scheduling_policy": "durable_object",
+      "images": {
+        // Exposed to the DO as ctx.container.images.bakeoff.
+        // Build context is spikes/harness-bakeoff/ because the Dockerfile does `COPY fixture /fixture`.
+        "bakeoff": {
+          "dockerfile": "../../shared/Dockerfile",
+          "build_context": "../.."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ThinkArm", "class_name": "ThinkArm" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ThinkArm"] }]
+}

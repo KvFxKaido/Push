@@ -1,0 +1,30 @@
+{
+  "name": "bakeoff-arm-think",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "run": "node run.mjs"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.87",
+    "@cloudflare/computer": "0.5.1",
+    "@cloudflare/think": "0.21.0",
+    "agents": "0.30.1",
+    "ai": "7.0.152",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261024.1",
+    "typescript": "7.0.2",
+    "wrangler": "4.152.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd"
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+results/
+node_modules/
+.dev.vars
+.wrangler/
+!fixture/.env
+shared/.proxy.env
+results-round1/
+results-round2-partialfix/

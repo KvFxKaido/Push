@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "bakeoff-arm-pi",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    // The bake-off model proxy (shared/model-proxy.mjs). It injects the real
+    // credential; this arm only ever sends a placeholder key.
+    "MODEL_BASE_URL": "http://127.0.0.1:8789/pi"
+  },
+  "containers": [
+    {
+      "class_name": "PiRun",
+      "scheduling_policy": "durable_object",
+      "images": {
+        // Build context is spikes/harness-bakeoff/ because the Dockerfile does COPY fixture /fixture.
+        "base": { "dockerfile": "../../shared/Dockerfile", "build_context": "../.." }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "PiRun", "class_name": "PiRun" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PiRun"] }],
+  "observability": { "enabled": true }
+}

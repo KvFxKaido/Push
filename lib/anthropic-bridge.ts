@@ -147,6 +147,26 @@ function reasoningBlocksToAnthropic(
   return out;
 }
 
+/**
+ * Anthropic rejects empty text blocks with a 400 ("messages: text content
+ * blocks must be non-empty"). The converters below fall back to a `text: ''`
+ * placeholder for empty content, which reaches the wire when a model with
+ * adaptive thinking (Haiku 5.5 by default) returns a thinking-only turn. Every
+ * assistant turn goes through this before it is appended; an empty result
+ * means the turn carried nothing, and the caller drops it.
+ */
+function withoutEmptyText(blocks: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return blocks.filter((b) => !(b.type === 'text' && b.text === ''));
+}
+
+function logEmptyAssistantTurnDropped(path: string): void {
+  // console.error: this lib/ module also runs in the CLI, whose stdout is
+  // reserved for user output and --json payloads.
+  console.error(
+    JSON.stringify({ level: 'info', event: 'anthropic_empty_assistant_turn_dropped', path }),
+  );
+}
+
 function convertOpenAIContentToAnthropic(
   content: string | OpenAIContentPart[] | null | undefined,
 ): Array<Record<string, unknown>> {
@@ -379,10 +399,12 @@ export function buildAnthropicMessagesRequest(
         continue;
       }
       const reasoning = reasoningBlocksToAnthropic(message.reasoning_blocks);
-      anthropicMessages.push({
-        role: 'assistant',
-        content: reasoning.length > 0 ? [...reasoning, ...contentBlocks] : contentBlocks,
-      });
+      const replayed = withoutEmptyText([...reasoning, ...contentBlocks]);
+      if (replayed.length === 0) {
+        logEmptyAssistantTurnDropped('openai-chat');
+        continue;
+      }
+      anthropicMessages.push({ role: 'assistant', content: replayed });
     } else {
       anthropicMessages.push({ role: 'user', content: contentBlocks });
     }
@@ -790,6 +812,13 @@ export function toAnthropicMessages(
       }
     }
     const anthropicRole = m.role === 'assistant' ? 'assistant' : 'user';
+    if (anthropicRole === 'assistant') {
+      anthropicContent = withoutEmptyText(anthropicContent);
+      if (anthropicContent.length === 0) {
+        logEmptyAssistantTurnDropped('llm-messages');
+        return;
+      }
+    }
     // Push's Coder transcript stores batched tool results as consecutive user
     // turns, one `tool_result` each. First-party Anthropic coalesces those, but
     // DeepSeek's Anthropic-compatible endpoint validates the raw `messages[]`

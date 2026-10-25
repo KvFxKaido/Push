@@ -328,6 +328,13 @@ export const XAI_MODELS: string[] = [
 // models overview on 2026-07-09. Mythos remains free-text only because it is
 // limited-availability Project Glasswing access, not a general picker option.
 export const ANTHROPIC_MODELS: string[] = [
+  // Added by the harness bake-off (spikes/harness-bakeoff): models missing here
+  // silently fall back to JSON-in-text tool dispatch on the CLI. A real catalog
+  // refresh belongs in its own PR.
+  'claude-fable-5-1',
+  'claude-opus-5-5',
+  'claude-sonnet-5-5',
+  'claude-haiku-5-5',
   'claude-fable-5',
   'claude-opus-4-8',
   'claude-sonnet-5',

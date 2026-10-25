@@ -328,6 +328,32 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(body.messages[0].content[1]).toMatchObject({ type: 'text', text: 'Here.' });
   });
 
+  it('drops the empty text block beside a thinking-only assistant turn', () => {
+    // A model with adaptive thinking (Haiku 5.5 by default) can return a turn
+    // that is only a thinking block. Replaying it as thinking + text("") gets a
+    // 400: "messages: text content blocks must be non-empty".
+    const request: OpenAIChatRequest = {
+      model: 'claude-haiku-5-5',
+      messages: [
+        { role: 'user', content: 'Fix the bug.' },
+        {
+          role: 'assistant',
+          content: '',
+          reasoning_blocks: [{ type: 'thinking', text: '', signature: 'sig-only' }],
+        },
+        { role: 'user', content: 'Continue.' },
+      ],
+      stream: true,
+    };
+
+    const body = buildAnthropicMessagesRequest(request) as {
+      messages: Array<{ role: string; content: Array<Record<string, unknown>> }>;
+    };
+    expect(body.messages[1].content).toEqual([
+      { type: 'thinking', thinking: '', signature: 'sig-only' },
+    ]);
+  });
+
   it('adds the native web_search tool when anthropic_web_search is true', () => {
     const body = buildAnthropicMessagesRequest({
       model: 'claude-opus-4-7',
@@ -987,6 +1013,66 @@ function llm(
 ): LlmMessage {
   return { id, role, content, timestamp: 0, ...(reasoningBlocks ? { reasoningBlocks } : {}) };
 }
+
+describe('toAnthropicMessages — empty assistant text (thinking-only turns)', () => {
+  // Haiku 5.5's default adaptive thinking can return a turn that is only a
+  // thinking block, or nothing Push keeps. Anthropic 400s on an empty text
+  // block ("messages: text content blocks must be non-empty"). The CLI reaches
+  // the API through toAnthropicMessages, so these test that path.
+  const turn = (message: Partial<LlmMessage>, id: string): LlmMessage =>
+    ({ id, content: '', timestamp: 0, ...message }) as LlmMessage;
+  const body = (...messages: LlmMessage[]) =>
+    toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-haiku-5-5',
+      messages,
+    } as PushStreamRequest<LlmMessage>).messages as Array<{ role: string; content: unknown }>;
+
+  it('drops the empty text beside a sidecar thinking block', () => {
+    const out = body(
+      turn({ role: 'user', content: 'Fix it.' }, '1'),
+      turn(
+        { role: 'assistant', reasoningBlocks: [{ type: 'thinking', text: '', signature: 's1' }] },
+        '2',
+      ),
+      turn({ role: 'user', content: 'Continue.' }, '3'),
+    );
+    expect(out[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '', signature: 's1' }],
+    });
+  });
+
+  it('drops the empty text beside an in-stream thinking block', () => {
+    const out = body(
+      turn({ role: 'user', content: 'Fix it.' }, '1'),
+      turn(
+        {
+          role: 'assistant',
+          contentBlocks: [
+            { type: 'thinking', text: '', signature: 's2' },
+            { type: 'text', text: '' },
+          ],
+        },
+        '2',
+      ),
+      turn({ role: 'user', content: 'Continue.' }, '3'),
+    );
+    expect(out[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: '', signature: 's2' }],
+    });
+  });
+
+  it('drops an assistant turn left with no content at all', () => {
+    const out = body(
+      turn({ role: 'user', content: 'Fix it.' }, '1'),
+      turn({ role: 'assistant' }, '2'),
+      turn({ role: 'user', content: 'Continue.' }, '3'),
+    );
+    expect(out.map((m) => m.role)).toEqual(['user', 'user']);
+  });
+});
 
 describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
   const corpus: Array<{
