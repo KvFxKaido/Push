@@ -44,6 +44,7 @@ import {
   streamResponsesWithChatFallback,
 } from '@push/lib/responses-chat-fallback';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
+import { geminiEventStream } from '@push/lib/gemini-bridge';
 import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import type { ChatMessage } from '@/types';
 import { getZenTransport } from '@push/lib/zen-transport';
@@ -245,6 +246,13 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       const isZenAnthropic =
         args.provider === 'zen' && getZenTransport(modelId, { go: zenGo }) === 'anthropic';
       const isAnthropicTransport = args.provider === 'deepseek';
+      // Google's native generateContent SSE (`candidates[].content.parts[]`): the
+      // direct Google route and Zen's Gemini models both proxy it raw. The Worker
+      // builds the Gemini body from the chat payload; the OpenAI pump would find
+      // no `choices` in it and yield nothing.
+      const isGeminiWire =
+        args.provider === 'google' ||
+        (args.provider === 'zen' && getZenTransport(modelId, { go: zenGo }) === 'gemini');
 
       // One dispatch attempt on a chosen wire. Factored so OpenRouter can run
       // responses-first with a chat fallback: a failure BEFORE any output throws
@@ -319,7 +327,9 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
               })
             : isZenAnthropic || isAnthropicTransport
               ? zenGoAnthropicEvents(response as unknown as Response, signal)
-              : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
+              : isGeminiWire
+                ? geminiEventStream(response as unknown as Response, signal)
+                : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
         for await (const event of events) {
           if (event.type === 'done' && !usageLogged) {
             usageLogged = true;

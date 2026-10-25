@@ -482,6 +482,26 @@ describe('zenStream', () => {
     expect(out.at(-1)?.type).toBe('done');
   });
 
+  it('standard Gemini: posts the neutral wire and parses Gemini SSE', async () => {
+    const sse = [
+      'data: {"candidates":[{"content":{"parts":[{"text":"hi from gemini"}],"role":"model"}}]}',
+      '',
+      'data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"STOP"}]}',
+      '',
+      '',
+    ].join('\n');
+    fetchMock.mockResolvedValue(new Response(sse, { status: 200 }));
+    const { zenStream } = await import('./zen-stream');
+    const out = await collect(zenStream({ ...baseRequest, model: 'gemini-4-argon' }));
+
+    const [, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.model).toBe('gemini-4-argon');
+    expect(out).toContainEqual({ type: 'text_delta', text: 'hi from gemini' });
+    expect(out.at(-1)?.type).toBe('done');
+  });
+
   it('hits ZEN_GO_URLS.chat when Go mode is on', async () => {
     vi.doMock('./providers', () => ({
       getZenGoMode: () => true,
