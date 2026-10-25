@@ -181,5 +181,133 @@
       "head_sampling_rate": 1
     }
   },
+  // Worker Previews (`npx wrangler preview -c wrangler.staging.jsonc`): each
+  // Preview gets its own Durable Object namespaces and its own container app,
+  // so a branch can never touch this Worker's live sandboxes. Nothing here is
+  // inherited from the top level, so every binding the Worker reads from `env`
+  // is declared again. The container entry deliberately has NO `name`: a fixed
+  // name would point the Preview at the top-level app instead of a per-Preview
+  // one (the failure that broke production sandboxes on 2026-10-25).
+  "previews": {
+    "vars": {
+      "PUSH_SANDBOX_PROVIDER": "modal",
+      "PUSH_RELAY_ENABLED": "1",
+      "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,zen,zai,moonshot,huggingface",
+      "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen,zai,moonshot,grok,huggingface"
+    },
+    "define": {
+      "import.meta.env.DEV": "false",
+      "import.meta.env.PROD": "true",
+      "import.meta.env.MODE": "\"production\"",
+      "import.meta.env.BASE_URL": "\"/\"",
+      "import.meta.env.SSR": "true",
+      "import.meta.env.VITE_ANTHROPIC_API_KEY": "\"\"",
+      "import.meta.env.VITE_API_BASE_URL": "\"\"",
+      "import.meta.env.VITE_CLOUDFLARE_GATEWAY_COMPAT_TOKEN": "\"\"",
+      "import.meta.env.VITE_DEEPSEEK_API_KEY": "\"\"",
+      "import.meta.env.VITE_FIREWORKS_API_KEY": "\"\"",
+      "import.meta.env.VITE_GITHUB_APP_REDIRECT_URI": "\"\"",
+      "import.meta.env.VITE_GITHUB_CLIENT_ID": "\"\"",
+      "import.meta.env.VITE_GITHUB_OAUTH_PROXY": "\"\"",
+      "import.meta.env.VITE_GITHUB_REDIRECT_URI": "\"\"",
+      "import.meta.env.VITE_GITHUB_TOKEN": "\"\"",
+      "import.meta.env.VITE_GITHUB_TOOL_BACKEND": "\"\"",
+      "import.meta.env.VITE_GOOGLE_API_KEY": "\"\"",
+      "import.meta.env.VITE_LOCAL_PC_MODE": "\"\"",
+      "import.meta.env.VITE_NATIVE_WORKING_COPY": "\"\"",
+      "import.meta.env.VITE_OLLAMA_API_KEY": "\"\"",
+      "import.meta.env.VITE_OPENAI_API_KEY": "\"\"",
+      "import.meta.env.VITE_OPENROUTER_API_KEY": "\"\"",
+      "import.meta.env.VITE_OPENROUTER_TRANSPORT": "\"\"",
+      "import.meta.env.VITE_RELAY_MODE": "\"\"",
+      "import.meta.env.VITE_SAKANA_API_KEY": "\"\"",
+      "import.meta.env.VITE_TAVILY_API_KEY": "\"\"",
+      "import.meta.env.VITE_USE_STREAMDOWN": "\"\"",
+      "import.meta.env.VITE_XAI_API_KEY": "\"\"",
+      "import.meta.env.VITE_ZAI_API_KEY": "\"\"",
+      "import.meta.env.VITE_KIMI_API_KEY": "\"\"",
+      "import.meta.env.VITE_HUGGINGFACE_API_KEY": "\"\"",
+      "import.meta.env.VITE_ZEN_API_KEY": "\"\""
+    },
+    "ai": {
+      "binding": "AI",
+      "remote": true
+    },
+    "ratelimits": [
+      {
+        "name": "RATE_LIMITER",
+        "namespace_id": "9001",
+        "simple": {
+          "limit": 120,
+          "period": 60
+        }
+      }
+    ],
+    "kv_namespaces": [
+      {
+        "binding": "SNAPSHOT_INDEX",
+        "id": "580ed61b973c48dea0ace2abec4edb3a"
+      },
+      {
+        "binding": "SANDBOX_TOKENS",
+        "id": "aa4bd99905e74901ba2bc7baff43a288"
+      },
+      {
+        "binding": "ARTIFACTS",
+        "id": "e99b0e009c3041749be4064d8d88a698"
+      },
+      {
+        "binding": "CHAT_LIBRARY",
+        "id": "585b42cdbc664a1dbab505a4cd128dcd"
+      }
+    ],
+    "secrets_store_secrets": [
+      {
+        "binding": "ZEN_KEY_STORE",
+        "store_id": "13a7421a93df46e6bea9230445e057fd",
+        "secret_name": "push-gate_zen_default"
+      }
+    ],
+    "r2_buckets": [
+      {
+        "binding": "SNAPSHOTS",
+        "bucket_name": "push-staging-snapshots"
+      },
+      {
+        "binding": "BACKUP_BUCKET",
+        "bucket_name": "push-staging-snapshots"
+      }
+    ],
+    "analytics_engine_datasets": [
+      {
+        "binding": "PROVIDER_STATS",
+        "dataset": "push_provider_stats_staging"
+      }
+    ],
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "Sandbox",
+          "class_name": "Sandbox"
+        },
+        {
+          "name": "CoderJob",
+          "class_name": "CoderJob"
+        },
+        {
+          "name": "RELAY_SESSIONS",
+          "class_name": "RelaySessionDO"
+        },
+        {
+          "name": "PrReviewJob",
+          "class_name": "PrReviewJob"
+        },
+        {
+          "name": "RUN_HOST",
+          "class_name": "RunHost"
+        }
+      ]
+    }
+  },
   "workers_dev": true
 }
