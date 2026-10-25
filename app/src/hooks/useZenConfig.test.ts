@@ -22,6 +22,7 @@ vi.mock('@/lib/providers', () => ({
   ZEN_GO_DEFAULT_MODEL: 'go-default',
   ZEN_GO_MODELS: ['go-default', 'seeded-model'],
   getZenGoMode: () => state.goMode,
+  normalizeZenModelName: (model: string) => model,
   setZenGoMode: vi.fn(),
 }));
 

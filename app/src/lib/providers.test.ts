@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest';
-import { PROVIDER_DEFINITIONS, type RealProviderId } from '@push/lib/provider-definition';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  getProviderModelStorageKey,
+  PROVIDER_DEFINITIONS,
+  type RealProviderId,
+} from '@push/lib/provider-definition';
 import {
   formatModelDisplayName,
   getModelDisplayGroupKey,
   getModelDisplayLeafName,
   normalizeFireworksModelName,
+  getZenModelName,
   normalizeOllamaModelName,
   PROVIDER_URLS,
   PROVIDERS,
@@ -126,6 +131,31 @@ describe('normalizeOllamaModelName', () => {
     // Free-text ids (local models, account-specific tags) are untouched.
     expect(normalizeOllamaModelName('minimax-m3:cloud')).toBe('minimax-m3:cloud');
     expect(normalizeOllamaModelName('qwen3-vl:235b-instruct')).toBe('qwen3-vl:235b-instruct');
+  });
+});
+
+describe('Zen renamed model ids', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('migrates a stored dotted Claude selection on read and rewrites storage', () => {
+    const data = new Map<string, string>();
+    const localStorage = {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+      removeItem: (key: string) => void data.delete(key),
+    };
+    vi.stubGlobal('window', { localStorage, sessionStorage: localStorage });
+    const key = getProviderModelStorageKey('zen')!;
+
+    data.set(key, 'claude-sonnet-4.6');
+    expect(getZenModelName()).toBe('claude-sonnet-4-6');
+    expect(data.get(key)).toBe('claude-sonnet-4-6');
+
+    // No successor on Zen: left alone rather than swapped for another model.
+    data.set(key, 'claude-opus-4.1');
+    expect(getZenModelName()).toBe('claude-opus-4.1');
+    data.set(key, 'gpt-5.5');
+    expect(getZenModelName()).toBe('gpt-5.5');
   });
 });
 

@@ -58,6 +58,7 @@ import {
   KIMI_DEFAULT_MODEL,
   HUGGINGFACE_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
+  migrateRenamedModel,
 } from '@push/lib/provider-models';
 
 // ---------------------------------------------------------------------------
@@ -178,6 +179,12 @@ export function normalizeOllamaModelName(model: string): string {
   // Free-text ids (local models, account-specific tags) pass through — only
   // known-retired ids are rewritten.
   return LEGACY_OLLAMA_MODEL_MIGRATIONS[trimmed] ?? trimmed;
+}
+
+// Zen renames (dotted → dashed Claude ids): a stored selection migrates on
+// read so it never keeps sending an id Zen stopped listing.
+export function normalizeZenModelName(model: string): string {
+  return migrateRenamedModel('zen', model);
 }
 
 export function normalizeFireworksModelName(model: string): string {
@@ -409,7 +416,12 @@ export function setCloudflareWorkerConfigured(configured: boolean): void {
   safeStorageSet(CLOUDFLARE_WORKER_CONFIGURED_KEY, configured ? 'true' : 'false');
 }
 
-const zenModel = createModelNameStorage(requireModelStorageKey('zen'), ZEN_DEFAULT_MODEL);
+const zenModel = createModelNameStorage(
+  requireModelStorageKey('zen'),
+  ZEN_DEFAULT_MODEL,
+  undefined,
+  normalizeZenModelName,
+);
 export const getZenModelName = zenModel.get;
 export const setZenModelName = zenModel.set;
 

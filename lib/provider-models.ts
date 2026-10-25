@@ -295,8 +295,6 @@ export const ZEN_MODELS: string[] = [
   'muse-spark-1.2',
   'muse-spark-1.3',
   'muse-wonder-1.0',
-  'jev-1.13',
-  'jev-1.13-free',
   'mimo-v2.6-flash-free',
   'nemotron-3.5-lightning-free',
   'nemotron-3.5-super-vl-free',
@@ -305,16 +303,43 @@ export const ZEN_MODELS: string[] = [
 ];
 
 // Live standard-tier ids deliberately left out of ZEN_MODELS: Claude Fable 5 /
-// 5.1 (intentionally not seeded), plus `test` and `claude-opus-5-5-backup`,
-// which are not user-facing models. The canary's catalog-drift check
+// 5.1 (intentionally not seeded); `test` and `claude-opus-5-5-backup`, which
+// are not user-facing models; and `jev-1.13` / `jev-1.13-free`, which no
+// source publishes limits for, so they would seed with no declared metadata
+// (live discovery and free-text still reach them). The canary's catalog-drift check
 // (`scripts/eval/canary.ts`) ignores these, so adding a live id here is the
 // recorded decision not to seed it.
 export const ZEN_UNSEEDED_MODELS: string[] = [
   'claude-fable-5',
   'claude-fable-5-1',
   'claude-opus-5-5-backup',
+  'jev-1.13',
+  'jev-1.13-free',
   'test',
 ];
+
+// Zen renamed its Claude ids from dotted to dash versions (2026-10). A
+// persisted selection of a dotted id would keep sending an id Zen no longer
+// lists, so every reader of a stored Zen selection migrates through this map.
+// Only true renames are mapped: `claude-opus-4.1` and `claude-sonnet-4` have
+// no successor on Zen, and swapping in a different model silently would be
+// worse than the upstream "unavailable" error.
+export const ZEN_RENAMED_MODELS: Record<string, string> = {
+  'claude-haiku-4.5': 'claude-haiku-4-5',
+  'claude-opus-4.5': 'claude-opus-4-5',
+  'claude-opus-4.6': 'claude-opus-4-6',
+  'claude-opus-4.7': 'claude-opus-4-7',
+  'claude-opus-4.8': 'claude-opus-4-8',
+  'claude-sonnet-4.5': 'claude-sonnet-4-5',
+  'claude-sonnet-4.6': 'claude-sonnet-4-6',
+};
+
+/** Rewrite a stored model id the provider has renamed; anything else passes through. */
+export function migrateRenamedModel(provider: string, model: string): string {
+  const trimmed = model.trim();
+  if (provider !== 'zen') return trimmed;
+  return Object.hasOwn(ZEN_RENAMED_MODELS, trimmed) ? ZEN_RENAMED_MODELS[trimmed] : trimmed;
+}
 
 // Curated Fireworks serverless models — surfaced in the picker alongside the account's live
 // /v1/models (which returns only a narrow subset). Serverless models are callable by slug
