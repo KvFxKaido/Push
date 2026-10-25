@@ -213,7 +213,16 @@ function zenWireConfig(config: ProviderConfig, wire: 'messages' | 'responses'): 
   return {
     ...config,
     get url() {
-      return config.url.trim().replace(/\/chat\/completions\/?$/, `/${wire}`);
+      // Rewrite the path only, so a user URL with a query string
+      // (`…/chat/completions?x=y`) still lands on the right endpoint.
+      const raw = config.url.trim();
+      try {
+        const url = new URL(raw);
+        url.pathname = url.pathname.replace(/\/chat\/completions\/?$/, `/${wire}`);
+        return url.toString();
+      } catch {
+        return raw.replace(/\/chat\/completions\/?$/, `/${wire}`);
+      }
     },
     get defaultModel() {
       return config.defaultModel;

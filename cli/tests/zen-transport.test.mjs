@@ -83,6 +83,15 @@ describe('CLI Zen stream routing', () => {
     assert.equal(call.url, 'https://opencode.ai/zen/v1/chat/completions');
   });
 
+  it('rewrites only the path, keeping a query string on PUSH_ZEN_URL', async () => {
+    process.env.PUSH_ZEN_URL = 'https://proxy.example/zen/v1/chat/completions?team=a';
+    assert.equal(
+      (await send('claude-sonnet-4-6')).url,
+      'https://proxy.example/zen/v1/messages?team=a',
+    );
+    assert.equal((await send('gpt-6-luna')).url, 'https://proxy.example/zen/v1/responses?team=a');
+  });
+
   it('uses the Go table when PUSH_ZEN_URL points at the Go endpoint', async () => {
     process.env.PUSH_ZEN_URL = 'https://opencode.ai/zen/go/v1/chat/completions';
     const call = await send('minimax-m3');

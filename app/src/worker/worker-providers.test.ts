@@ -482,6 +482,39 @@ describe('handleZenChat — per-model transport (standard tier)', () => {
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"zen_store_key_used"'));
   });
 
+  it('rejects a cross-origin request before reading its body for dispatch', async () => {
+    const get = captureUpstream();
+    const request = new Request('https://push.example.test/api/zen/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' },
+      body: JSON.stringify(chatBody('claude-sonnet-4-6')),
+    });
+    const clone = vi.spyOn(request, 'clone');
+    const response = await handleZenChat(request, makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(response.status).toBe(403);
+    expect(clone).not.toHaveBeenCalled();
+    expect(get()).toBeUndefined();
+  });
+
+  it('applies the body cap to the dispatch read (oversized → 413, no upstream)', async () => {
+    const get = captureUpstream();
+    const request = new Request('https://push.example.test/api/zen/chat', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+        'Content-Length': String(6 * 1024 * 1024),
+      },
+      body: JSON.stringify(chatBody('claude-sonnet-4-6')),
+    });
+    // The cap rejects on Content-Length, so the dispatch read never buffers the body.
+    const text = vi.spyOn(Request.prototype, 'text');
+    const response = await handleZenChat(request, makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(response.status).toBe(413);
+    expect(text).not.toHaveBeenCalled();
+    expect(get()).toBeUndefined();
+  });
+
   // Production shape: gateway on, Zen BYOK held by the gateway, no caller key.
   const BYOK_ENV = {
     CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',

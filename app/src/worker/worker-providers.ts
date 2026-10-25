@@ -9,6 +9,9 @@ import {
   getAiGatewayAuthHeader,
   isGatewayByokProvider,
   runPreamble,
+  readBodyText,
+  validateOrigin,
+  MAX_BODY_SIZE_BYTES,
   wlog,
 } from './worker-middleware';
 import { REQUEST_ID_HEADER } from '../lib/request-id';
@@ -984,7 +987,7 @@ export async function handleCloudflareGatewayModels(request: Request, env: Env):
 // tier-parameterised path Go uses, GPT / Grok / Muse → /responses via the shared
 // Responses proxy, everything else → /chat/completions below, unchanged.
 export async function handleZenChat(request: Request, env: Env): Promise<Response> {
-  const transport = getZenTransport(await peekRequestModel(request));
+  const transport = getZenTransport(await peekRequestModel(request, env));
   if (transport === 'anthropic') return handleZenTierChat(request, env, ZEN_STANDARD_TIER);
   if (transport === 'responses') {
     return handleResponsesProxy(request, env, {
@@ -1002,14 +1005,20 @@ export async function handleZenChat(request: Request, env: Env): Promise<Respons
 }
 
 /** The body's top-level `model` (every wire shape Zen clients send carries one), read
- *  from a clone so the downstream handler still owns the original body. */
-async function peekRequestModel(request: Request): Promise<string> {
+ *  from a clone so the downstream handler still owns the original body. Runs before
+ *  the handler's `runPreamble`, so it applies the same origin check and body cap
+ *  first: a cross-origin or oversized request is never buffered or parsed here. Any
+ *  rejection returns '' and falls through to the Chat Completions handler, whose
+ *  preamble then returns the proper 403 / 413 / 400. The rate limiter is left to
+ *  that preamble — calling it here too would charge every Zen request twice. */
+async function peekRequestModel(request: Request, env: Env): Promise<string> {
+  if (!validateOrigin(request, new URL(request.url), env).ok) return '';
+  const body = await readBodyText(request.clone(), MAX_BODY_SIZE_BYTES);
+  if (!body.ok) return '';
   try {
-    const parsed = JSON.parse(await request.clone().text()) as { model?: unknown };
+    const parsed = JSON.parse(body.text) as { model?: unknown };
     return typeof parsed.model === 'string' ? parsed.model : '';
   } catch {
-    // Malformed bodies fall through to the Chat Completions handler, whose
-    // validation returns the proper 400.
     return '';
   }
 }

@@ -13,6 +13,7 @@ import {
   normalizeOllamaModelName,
   PROVIDER_URLS,
   PROVIDERS,
+  ZEN_GO_URLS,
 } from './providers';
 
 const DEV_PROXY_PATHS: Partial<Record<RealProviderId, { chat: string; models: string }>> = {
@@ -37,12 +38,19 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, { chat: string; models: st
     models: '/huggingface/v1/models',
   },
   zen: {
-    chat: '/opencode/zen/v1/chat/completions',
+    chat: '/api/zen/chat',
     models: '/opencode/zen/v1/models',
   },
 };
 
 describe('PROVIDER_URLS', () => {
+  it('routes Zen chat (both tiers) through the Worker in dev, never the raw proxy', () => {
+    // The Worker picks /messages, /responses or /chat/completions per model; the
+    // `/opencode` Vite proxy would forward every body to the URL as written.
+    expect(PROVIDER_URLS.zen.chat).toBe('/api/zen/chat');
+    expect(ZEN_GO_URLS.chat).toBe('/api/zen/go/chat');
+  });
+
   it('uses ProviderDefinition proxy paths for providers without dev proxy overrides', () => {
     for (const def of PROVIDER_DEFINITIONS) {
       if (DEV_PROXY_PATHS[def.id]) continue;
