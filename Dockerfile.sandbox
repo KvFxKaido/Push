@@ -112,6 +112,12 @@ RUN npm install -g corepack@"${PUSH_SANDBOX_COREPACK_VERSION}" \
 # script runs (we have no .git here); build scripts otherwise stay enabled so
 # packages like esbuild fetch their native binaries — skipping those produces an
 # installed-but-unusable cache.
+#
+# The one build script we do skip: ONNXRUNTIME_NODE_INSTALL=skip stops
+# onnxruntime-node's postinstall from downloading its CUDA/TensorRT providers
+# (~330 MB of near-incompressible .so files). The sandbox has no GPU, so they can
+# never load, and they bloated the layer Workers Builds kept timing out pushing.
+# The CPU runtime ships inside the package itself.
 WORKDIR /opt/push-cache
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY app/package.json ./app/
@@ -123,7 +129,7 @@ COPY mcp/github-server/package.json ./mcp/github-server/
 # This is the one layer whose cache key is source, not lockfile: editing the
 # plugin re-runs the install below. It changes rarely, and correctness wins.
 COPY plugins/capacitor-native-git ./plugins/capacitor-native-git
-RUN HUSKY=0 CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile
+RUN HUSKY=0 CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 ONNXRUNTIME_NODE_INSTALL=skip pnpm install --frozen-lockfile
 
 COPY sandbox/bin/push-sandbox-doctor /usr/local/bin/push-sandbox-doctor
 RUN chmod 0755 /usr/local/bin/push-sandbox-doctor
