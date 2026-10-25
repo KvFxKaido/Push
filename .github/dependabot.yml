@@ -26,6 +26,14 @@ updates:
       workspace-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # mermaid 12: streamdown (the chat markdown renderer) still depends on
+      # mermaid ^11 (checked 2.7.1, 2026-10-25). Push also imports mermaid
+      # directly (MermaidArtifact), so a 12 bump would bundle two copies, and
+      # Dependabot can't resolve it (#1653). Drop this once streamdown moves to
+      # mermaid 12. Minor/patch updates of 11 still arrive via the group above.
+      - dependency-name: "mermaid"
+        update-types: ["version-update:semver-major"]
 
   # ── pnpm, standalone: app/electron ───────────────────────────────
   # A SECOND entry is required here, and it is the exception the note above
