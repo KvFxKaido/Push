@@ -31,20 +31,23 @@
  * deploy that half-landed.
  *
  * Run: `node scripts/deploy-worker.mjs` (or `pnpm run deploy:worker`).
- * Env: PUSH_DEPLOY_ATTEMPTS (default 3, total attempts including the first).
+ * Env: PUSH_DEPLOY_ATTEMPTS (default 3, total attempts including the first);
+ * PUSH_DEPLOY_RETRY_BASE_MS (default 15000; attempt N waits N × base).
  */
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REGISTRY_HOST = 'registry.cloudflare.com';
+// A failed registry request, as Docker prints it: the method and URL, then the
+// error, on one line.
+const REGISTRY_REQUEST = /\b(?:PUT|POST|PATCH|HEAD|GET)\s+"?https:\/\/registry\.cloudflare\.com\//i;
 
-// Transport-level failures from the Docker client talking to the registry.
-// Only the first was observed; the rest are the same class (the request
-// went out and the connection, not the registry's verdict, failed).
+// Transport-level failures: the request went out and the connection, not the
+// registry's verdict, failed. Only the first was observed; the rest are the
+// same class. An HTTP refusal (401, 403, quota) on the same request is not
+// here on purpose, so it fails on the first try.
 const TRANSIENT_PUSH_PATTERNS = [
   /timeout awaiting response headers/,
-  /failed commit on ref "layer-sha256:/,
   /connection reset by peer/,
   /TLS handshake timeout/,
   /i\/o timeout/,
@@ -66,8 +69,13 @@ const TAIL_BYTES = 64 * 1024;
  */
 export function isRetryablePushFailure(output) {
   if (WORKER_UPLOADED.test(output)) return false;
-  if (!output.includes(REGISTRY_HOST)) return false;
-  return TRANSIENT_PUSH_PATTERNS.some((re) => re.test(output));
+  // The transport error must be on the failed registry request's own line. A
+  // registry URL earlier in the log plus a timeout anywhere else isn't proof.
+  return output
+    .split('\n')
+    .some(
+      (line) => REGISTRY_REQUEST.test(line) && TRANSIENT_PUSH_PATTERNS.some((re) => re.test(line)),
+    );
 }
 
 function log(event, ctx) {
@@ -106,6 +114,8 @@ async function main() {
   const args = process.argv.slice(2);
   const parsed = Number.parseInt(process.env.PUSH_DEPLOY_ATTEMPTS ?? '', 10);
   const maxAttempts = Number.isFinite(parsed) && parsed >= 1 ? parsed : 3;
+  const base = Number.parseInt(process.env.PUSH_DEPLOY_RETRY_BASE_MS ?? '', 10);
+  const baseDelayMs = Number.isFinite(base) && base >= 0 ? base : 15_000;
 
   for (let attempt = 1; ; attempt++) {
     const { code, tail } = await runWranglerDeploy(args);
@@ -121,7 +131,7 @@ async function main() {
       log('deploy_retry_exhausted', { attempt, code });
       return code;
     }
-    const delayMs = 15_000 * attempt;
+    const delayMs = baseDelayMs * attempt;
     log('deploy_retrying_image_push', { attempt, code, delayMs });
     await new Promise((r) => setTimeout(r, delayMs));
   }
