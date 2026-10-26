@@ -12,7 +12,13 @@ import process from 'node:process';
 import { PROTOCOL_VERSION } from '../../lib/protocol-schema.js';
 import type { ExecSandboxOptions } from '../exec-sandbox.js';
 import { appendAuditEvent, shouldLogCommandText, truncateForAudit } from '../pushd-audit-log.js';
-import { isPathAllowed, snapshotAllowlist } from '../pushd-allowlist.js';
+import { isPathAllowed, snapshotAllowlist, type AllowlistSnapshot } from '../pushd-allowlist.js';
+import {
+  collectSensitiveValues,
+  mergeSensitiveValues,
+  redactText,
+  type SensitiveValue,
+} from '../secret-redaction.js';
 import { RUNTIME_VERSION } from '../build-stamp.js';
 import { auditProvenance } from './audit-provenance.js';
 import { makeErrorResponse, makeResponse, type DaemonResponse } from './envelopes.js';
@@ -98,6 +104,18 @@ export async function handleSandboxExec(
     wsState.activeRuns.set(runId, { controller: abortController, ownerId: runOwnerId });
   }
 
+  // Credential values from the workspace are scrubbed out of the output, as
+  // the CLI's own tools do (cli/secret-redaction.ts). Collected from the
+  // allowlisted root that contains `cwd`, so `cat ../.env` from a subdirectory
+  // still matches; snapshotted before AND after, since a command can print a
+  // file and then overwrite it.
+  const redactionRoot = allowedRootFor(path.resolve(cwd), cwdSnapshot);
+  const valuesBefore = await collectSensitiveValues(redactionRoot).catch(() => []);
+  const redactOutput = async (stdout: string, stderr: string) => {
+    const valuesAfter = await collectSensitiveValues(redactionRoot).catch(() => []);
+    return redactExecOutput(stdout, stderr, mergeSensitiveValues(valuesBefore, valuesAfter), runId);
+  };
+
   const startedAt = Date.now();
   const { runCommandInExecSandbox } = await import('../exec-sandbox.js');
   const { scrubEnv } = await import('../env-scrub.js');
@@ -114,7 +132,11 @@ export async function handleSandboxExec(
       env: scrubEnv(),
     };
     if (abortController) execOpts.signal = abortController.signal;
-    const { stdout, stderr } = await runCommandInExecSandbox(command, cwd, execOpts);
+    const raw = await runCommandInExecSandbox(command, cwd, execOpts);
+    const { stdout, stderr } = await redactOutput(
+      String(raw.stdout ?? ''),
+      String(raw.stderr ?? ''),
+    );
     // Reaching the success path means maxBuffer was not exceeded.
     return makeResponse(req.requestId, 'sandbox_exec', null, true, {
       stdout: truncateExecOutput(stdout),
@@ -148,9 +170,13 @@ export async function handleSandboxExec(
     auditCancelled = wasAborted;
     auditTimedOut = isTimeout;
     auditTruncated = isMaxBufferOverflow || capturedTooLarge;
+    const { stdout, stderr } = await redactOutput(
+      String(failure.stdout ?? ''),
+      String(failure.stderr ?? failure.message ?? ''),
+    );
     return makeResponse(req.requestId, 'sandbox_exec', null, true, {
-      stdout: truncateExecOutput(failure.stdout ?? ''),
-      stderr: truncateExecOutput(failure.stderr ?? failure.message ?? ''),
+      stdout: truncateExecOutput(stdout),
+      stderr: truncateExecOutput(stderr),
       exitCode,
       durationMs: Date.now() - startedAt,
       truncated: auditTruncated,
@@ -176,6 +202,44 @@ export async function handleSandboxExec(
       },
     });
   }
+}
+
+/** The allowlisted root containing `absCwd` (the deepest, if several do). */
+function allowedRootFor(absCwd: string, snapshot: AllowlistSnapshot): string {
+  let best: string | null = null;
+  for (const root of snapshot.allowed) {
+    const rel = path.relative(root, absCwd);
+    const inside = rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    if (inside && (best === null || root.length > best.length)) best = root;
+  }
+  return best ?? absCwd;
+}
+
+/** Scrub credential values out of both streams; one structured line when any
+ *  were found (stderr: the daemon's stdout is not a log sink). */
+function redactExecOutput(
+  stdout: string,
+  stderr: string,
+  values: SensitiveValue[],
+  runId: string | null,
+): { stdout: string; stderr: string } {
+  if (values.length === 0) return { stdout, stderr };
+  const out = redactText(stdout, values);
+  const err = redactText(stderr, values);
+  const count = out.count + err.count;
+  if (count > 0) {
+    console.error(
+      JSON.stringify({
+        level: 'info',
+        event: 'tool_output_redacted',
+        tool: 'sandbox_exec',
+        runId,
+        count,
+        files: [...new Set([...out.files, ...err.files])],
+      }),
+    );
+  }
+  return { stdout: out.text, stderr: err.text };
 }
 
 function truncateExecOutput(text: unknown): string {
