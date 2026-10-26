@@ -164,3 +164,86 @@ describe('daemon sandbox_exec', () => {
     assert.match(res.payload.stderr, /\[redacted: [^\]]*\.env\]/);
   });
 });
+
+describe('review follow-ups (#1695)', () => {
+  it('a fast command still closes its session when the credential walk is slow', async () => {
+    // Codex P1: the value snapshot was awaited between spawn and listener
+    // registration, so a command that exited during a slow walk left the
+    // session `running` forever. A shell builtin exits near-instantly and 1,500
+    // credential-bearing dirs slow the walk; with Node as the command (or 200
+    // dirs) the gap never opened on Windows and this test passed with the bug.
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-race-'));
+    try {
+      await Promise.all(
+        Array.from({ length: 1500 }, async (_, i) => {
+          const dir = path.join(root, `d${i}`);
+          await fs.mkdir(dir);
+          await fs.writeFile(path.join(dir, '.env'), `K=value-number-${i}-padding\n`, 'utf8');
+        }),
+      );
+      const opts = { role: 'coder', allowExec: true };
+      const started = await executeToolCall(
+        { tool: 'exec_start', args: { command: 'exit 0' } },
+        root,
+        opts,
+      );
+      assert.equal(started.ok, true, started.text);
+      const waited = await executeToolCall(
+        {
+          tool: 'exec_wait',
+          args: { session_id: started.meta.session_id, from_seq: 0, timeout_ms: 8_000 },
+        },
+        root,
+        opts,
+      );
+      assert.equal(waited.meta.waited, 'exited', waited.text);
+      assert.equal(waited.meta.exit_code, 0, waited.text);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('daemon sandbox_exec scrubs values from an allowlisted parent root too', async () => {
+    // With both /work and /work/project allowed, a command in the project can
+    // read /work/.env; scanning only the deepest root missed it.
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'push-nested-'));
+    const work = path.join(base, 'work');
+    const project = path.join(work, 'project');
+    await fs.mkdir(project, { recursive: true });
+    await fs.writeFile(path.join(work, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+    await fs.writeFile(
+      path.join(project, 'up.cjs'),
+      "process.stdout.write(require('fs').readFileSync('../.env', 'utf8'));\n",
+      'utf8',
+    );
+    const allowlist = path.join(base, 'pushd.allowlist');
+    await fs.writeFile(
+      allowlist,
+      `${JSON.stringify({ path: work, addedAt: 1 })}\n${JSON.stringify({ path: project, addedAt: 2 })}\n`,
+      'utf8',
+    );
+    const prev = process.env.PUSHD_ALLOWLIST_PATH;
+    process.env.PUSHD_ALLOWLIST_PATH = allowlist;
+    try {
+      const res = await handleRequest(
+        {
+          v: PROTOCOL_VERSION,
+          kind: 'request',
+          requestId: 'req_test_nested',
+          type: 'sandbox_exec',
+          sessionId: null,
+          payload: { command: 'node up.cjs', cwd: project },
+        },
+        () => {},
+      );
+      assert.equal(res.ok, true, JSON.stringify(res));
+      assert.equal(res.payload.exitCode, 0, JSON.stringify(res.payload));
+      assert.ok(!res.payload.stdout.includes(SECRET), `secret leaked: ${res.payload.stdout}`);
+      assert.match(res.payload.stdout, /\[redacted: [^\]]*\.env\]/);
+    } finally {
+      if (prev === undefined) delete process.env.PUSHD_ALLOWLIST_PATH;
+      else process.env.PUSHD_ALLOWLIST_PATH = prev;
+      await fs.rm(base, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});

@@ -844,6 +844,14 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
   const sandboxBackend = resolveExecSandboxBackend();
   const canUseScriptTty = ttyRequested && sandboxBackend === 'host' && (await hasScriptBinary());
 
+  // Snapshot credential values BEFORE spawning: the session's stdout/stderr
+  // are redacted as they stream (see appendSessionChunk), and a command can
+  // print a file and then overwrite it. It must not sit between the spawn and
+  // the listener registration below — a fast command could exit during the
+  // walk, its `close` would fire unheard, and the session would stay
+  // `running` forever.
+  const sensitiveValues = await collectSensitiveValues(workspaceRoot).catch(() => []);
+
   const subprocessEnv = scrubEnv();
   const { child } = canUseScriptTty
     ? {
@@ -864,11 +872,6 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
           stdio: ['pipe', 'pipe', 'pipe'],
           env: subprocessEnv,
         });
-
-  // Snapshot credential values up front: the session's stdout/stderr are
-  // redacted as they stream (see appendSessionChunk), and a command can print a
-  // file and then overwrite it.
-  const sensitiveValues = await collectSensitiveValues(workspaceRoot).catch(() => []);
 
   const sessionId = nextExecSessionId();
   const session = {

@@ -106,13 +106,19 @@ export async function handleSandboxExec(
 
   // Credential values from the workspace are scrubbed out of the output, as
   // the CLI's own tools do (cli/secret-redaction.ts). Collected from the
-  // allowlisted root that contains `cwd`, so `cat ../.env` from a subdirectory
-  // still matches; snapshotted before AND after, since a command can print a
-  // file and then overwrite it.
-  const redactionRoot = allowedRootFor(path.resolve(cwd), cwdSnapshot);
-  const valuesBefore = await collectSensitiveValues(redactionRoot).catch(() => []);
+  // allowlisted roots that contain `cwd` — every one, since with `/work` and
+  // `/work/project` both allowed a command in the project can still read
+  // `/work/.env` — so `cat ../.env` from a subdirectory still matches.
+  // Snapshotted before AND after, since a command can print a file and then
+  // overwrite it.
+  const redactionRoots = allowedRootsFor(path.resolve(cwd), cwdSnapshot);
+  const collectAll = async () =>
+    (
+      await Promise.all(redactionRoots.map((r) => collectSensitiveValues(r).catch(() => [])))
+    ).reduce(mergeSensitiveValues, []);
+  const valuesBefore = await collectAll();
   const redactOutput = async (stdout: string, stderr: string) => {
-    const valuesAfter = await collectSensitiveValues(redactionRoot).catch(() => []);
+    const valuesAfter = await collectAll();
     return redactExecOutput(stdout, stderr, mergeSensitiveValues(valuesBefore, valuesAfter), runId);
   };
 
@@ -204,15 +210,13 @@ export async function handleSandboxExec(
   }
 }
 
-/** The allowlisted root containing `absCwd` (the deepest, if several do). */
-function allowedRootFor(absCwd: string, snapshot: AllowlistSnapshot): string {
-  let best: string | null = null;
-  for (const root of snapshot.allowed) {
+/** Every allowlisted root containing `absCwd` (nested roots included), else `absCwd`. */
+function allowedRootsFor(absCwd: string, snapshot: AllowlistSnapshot): string[] {
+  const roots = snapshot.allowed.filter((root) => {
     const rel = path.relative(root, absCwd);
-    const inside = rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-    if (inside && (best === null || root.length > best.length)) best = root;
-  }
-  return best ?? absCwd;
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  });
+  return roots.length > 0 ? roots : [absCwd];
 }
 
 /** Scrub credential values out of both streams; one structured line when any
