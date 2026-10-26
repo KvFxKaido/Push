@@ -38,6 +38,7 @@ import {
   handleHuggingFaceChat,
   handleHuggingFaceModels,
   handleZenChat,
+  describeGeminiRequestShape,
   handleZenModels,
   handleZenGoChat,
   handleZenGoModels,
@@ -395,6 +396,40 @@ describe('handleZenChat', () => {
   });
 });
 
+describe('describeGeminiRequestShape', () => {
+  it('reports roles, part kinds and signature presence without content', () => {
+    const shape = describeGeminiRequestShape(
+      JSON.stringify({
+        systemInstruction: { parts: [{ text: 'sys' }] },
+        tools: [{ functionDeclarations: [{ name: 'a' }, { name: 'b' }] }],
+        contents: [
+          { role: 'user', parts: [{ text: 'hello' }] },
+          {
+            role: 'model',
+            parts: [{ functionCall: { name: 'a', args: { q: 'x' } }, thoughtSignature: 's' }],
+          },
+          { role: 'model', parts: [{ functionCall: { name: 'b', args: {} } }] },
+          { role: 'user', parts: [{ functionResponse: { name: 'a', response: { output: 'r' } } }] },
+          { role: 'model', parts: [] },
+        ],
+      }),
+    );
+    expect(shape).toEqual({
+      turns: [
+        { role: 'user', parts: ['text(5)'] },
+        { role: 'model', parts: ['functionCall+sig'] },
+        { role: 'model', parts: ['functionCall'] },
+        { role: 'user', parts: ['functionResponse'] },
+        { role: 'model', parts: [] },
+      ],
+      functionDeclarations: 2,
+      systemParts: 1,
+      bytes: expect.any(Number),
+    });
+    expect(JSON.stringify(shape)).not.toContain('hello');
+  });
+});
+
 describe('handleZenChat — per-model transport (standard tier)', () => {
   // Standard Zen serves each model on one endpoint and 400s the others with
   // ModelProtocolUnsupported (seen live 2026-10-25 for claude-haiku-5-5 and
@@ -545,6 +580,30 @@ describe('handleZenChat — per-model transport (standard tier)', () => {
     const body = JSON.parse(get()!.init.body as string);
     expect(body.contents).toBeDefined();
     expect(JSON.stringify(body.tools ?? [])).not.toContain('googleSearch');
+  });
+
+  it('logs the request shape, never its content, when Zen rejects a Gemini call', async () => {
+    // Zen returns this 400 with an empty body, so the shape is the only evidence.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 400 })),
+    );
+    const response = await handleZenChat(
+      makeZenRequest({
+        contract: 'push.stream.v1',
+        model: 'gemini-4-argon',
+        messages: [{ role: 'user', content: 'SECRET-PROMPT-TEXT' }],
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(400);
+    const logged = (console.error as unknown as { mock: { calls: string[][] } }).mock.calls
+      .map((c) => c[0])
+      .find((line) => line.includes('"upstream_error"'));
+    expect(logged).toBeDefined();
+    const entry = JSON.parse(logged!);
+    expect(entry.requestShape.turns).toEqual([{ role: 'user', parts: ['text(18)'] }]);
+    expect(logged).not.toContain('SECRET-PROMPT-TEXT');
   });
 
   it('strips Google Search grounding from a legacy OpenAI-shaped body too', async () => {
