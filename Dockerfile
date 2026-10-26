@@ -5,7 +5,7 @@
 # Cloudflare sandbox base image's Node (v22.23.1 today) and must move together —
 # this image has a clean base and serves the CLI, where Node 24 is already
 # required.
-FROM python:3.14-slim-bookworm
+FROM python:3.15-slim-bookworm
 
 RUN apt-get update && apt-get install -y \
     git \
