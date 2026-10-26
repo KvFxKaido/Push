@@ -1202,3 +1202,77 @@ describe('geminiEventStream — Gemini SSE -> neutral events', () => {
     expect(events).toEqual([]);
   });
 });
+
+describe('toGeminiGenerateContent — parallel function responses', () => {
+  // Seen through Zen on 2026-10-26: one model turn with 3 functionCalls, then the
+  // 3 results as 3 separate user turns, and Gemini 400'd the follow-up. Push
+  // stores each tool result as its own message, so the serializer must group them.
+  const call = (i: number, sig?: string) => ({
+    type: 'tool_use' as const,
+    id: `c${i}`,
+    name: `tool_${i}`,
+    input: {},
+    ...(sig ? { thoughtSignature: sig } : {}),
+  });
+  const result = (i: number): LlmMessage =>
+    ({
+      id: `r${i}`,
+      role: 'user',
+      content: '',
+      timestamp: 0,
+      contentBlocks: [{ type: 'tool_result', tool_use_id: `c${i}`, content: `out ${i}` }],
+    }) as LlmMessage;
+  const shape = (body: Record<string, unknown>) =>
+    (body.contents as Array<{ role: string; parts: Array<Record<string, unknown>> }>).map((c) => ({
+      role: c.role,
+      parts: c.parts.map((p) => Object.keys(p).filter((k) => k !== 'thoughtSignature')[0]),
+    }));
+
+  it('puts every response to one turn of parallel calls in a single user turn', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'zen',
+      model: 'gemini-4-argon',
+      messages: [
+        { id: 'u', role: 'user', content: 'go', timestamp: 0 },
+        {
+          id: 'a',
+          role: 'assistant',
+          content: '',
+          timestamp: 0,
+          contentBlocks: [call(1, 'sig'), call(2), call(3)],
+        },
+        result(1),
+        result(2),
+        result(3),
+      ],
+    } as PushStreamRequest<LlmMessage>);
+    expect(shape(body)).toEqual([
+      { role: 'user', parts: ['text'] },
+      { role: 'model', parts: ['functionCall', 'functionCall', 'functionCall'] },
+      { role: 'user', parts: ['functionResponse', 'functionResponse', 'functionResponse'] },
+    ]);
+  });
+
+  it('leaves separate rounds and ordinary user text as their own turns', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'zen',
+      model: 'gemini-4-argon',
+      messages: [
+        { id: 'u', role: 'user', content: 'go', timestamp: 0 },
+        { id: 'a1', role: 'assistant', content: '', timestamp: 0, contentBlocks: [call(1, 's')] },
+        result(1),
+        { id: 'u2', role: 'user', content: 'and also', timestamp: 0 },
+        { id: 'a2', role: 'assistant', content: '', timestamp: 0, contentBlocks: [call(2, 's')] },
+        result(2),
+      ],
+    } as PushStreamRequest<LlmMessage>);
+    expect(shape(body)).toEqual([
+      { role: 'user', parts: ['text'] },
+      { role: 'model', parts: ['functionCall'] },
+      { role: 'user', parts: ['functionResponse'] },
+      { role: 'user', parts: ['text'] },
+      { role: 'model', parts: ['functionCall'] },
+      { role: 'user', parts: ['functionResponse'] },
+    ]);
+  });
+});

@@ -258,8 +258,44 @@ interface GeminiBodyAssembly {
   responseFormat?: ResponseFormatSpec;
 }
 
+function isResponseOnlyUserTurn(content: Record<string, unknown>): boolean {
+  const parts = content.parts;
+  return (
+    content.role === 'user' &&
+    Array.isArray(parts) &&
+    parts.length > 0 &&
+    parts.every((p) => p !== null && typeof p === 'object' && 'functionResponse' in p)
+  );
+}
+
+/**
+ * Gemini wants every `functionResponse` answering one model turn's parallel
+ * `functionCall`s in a SINGLE user turn. Push stores each tool result as its own
+ * message, so N parallel calls arrived as N consecutive single-response user
+ * turns, and Gemini 400'd the follow-up (seen through Zen on 2026-10-26: one
+ * model turn with 3 calls, then 3 response-only user turns). Merge each run of
+ * response-only user turns into one; nothing else is touched.
+ */
+function mergeParallelFunctionResponses(
+  contents: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const content of contents) {
+    const prev = out[out.length - 1];
+    if (prev && isResponseOnlyUserTurn(prev) && isResponseOnlyUserTurn(content)) {
+      out[out.length - 1] = {
+        ...prev,
+        parts: [...(prev.parts as unknown[]), ...(content.parts as unknown[])],
+      };
+      continue;
+    }
+    out.push(content);
+  }
+  return out;
+}
+
 function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> {
-  const contents = parts.contents;
+  const contents = mergeParallelFunctionResponses(parts.contents);
   // Gemini requires `contents` non-empty AND starting with a `user` turn —
   // `[{ role: 'model', ... }]` 400s. Pad with an empty user turn when there are
   // no non-system messages, or when the first is an assistant (e.g. after
