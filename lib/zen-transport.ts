@@ -6,23 +6,26 @@ import { getZenGoTransport } from './zen-go.js';
  * `400 ModelProtocolUnsupported`:
  *   - `anthropic` → `/zen/v1/messages` (Anthropic Messages)
  *   - `responses` → `/zen/v1/responses` (OpenAI Responses)
+ *   - `gemini`    → `/zen/v1/models/{id}:streamGenerateContent` (Google native;
+ *                   auth is `x-goog-api-key` only)
  *   - `openai`    → `/zen/v1/chat/completions` (OpenAI Chat Completions)
  *
  * Source: the endpoint column of the OpenCode Console models table
  * (opencode.ai/docs/zen), read 2026-10-25. Families are matched by prefix
- * because the docs route every Claude to Messages and every GPT / Grok / Muse
- * to Responses, so a newly listed member of those families routes correctly
+ * because the docs route every Claude to Messages, every GPT / Grok / Muse to
+ * Responses and every Gemini to generateContent, so a newly listed member of
+ * those families routes correctly
  * without a table edit. Anything unmatched (GLM, Kimi, DeepSeek, MiniMax,
- * Mistral, big-pickle, the free models, Gemini) stays on Chat Completions,
- * the historical default.
+ * Mistral) stays on Chat Completions, the historical default.
  *
  * Go is a separate service with its own table (lib/zen-go.ts): the same id can
  * differ by tier — MiniMax is Messages on Go but Chat Completions on standard.
  */
-export type ZenTransport = 'openai' | 'anthropic' | 'responses';
+export type ZenTransport = 'openai' | 'anthropic' | 'responses' | 'gemini';
 
 const ZEN_ANTHROPIC_PREFIXES = ['claude-'];
 const ZEN_RESPONSES_PREFIXES = ['gpt-', 'grok-', 'muse-'];
+const ZEN_GEMINI_PREFIXES = ['gemini-'];
 // Qwen is split across endpoints on standard Zen; these three are Messages,
 // while `qwen3.8-max` is Chat Completions.
 const ZEN_ANTHROPIC_MODELS = new Set(['qwen3.5-plus', 'qwen3.6-plus', 'qwen3.8-flash']);
@@ -37,5 +40,6 @@ export function getZenTransport(
     return 'anthropic';
   }
   if (ZEN_RESPONSES_PREFIXES.some((p) => id.startsWith(p))) return 'responses';
+  if (ZEN_GEMINI_PREFIXES.some((p) => id.startsWith(p))) return 'gemini';
   return 'openai';
 }

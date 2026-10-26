@@ -4,7 +4,7 @@
  * Hits the Zen chat endpoint (or the Zen Go endpoint when Go mode is on). The
  * model's transport (`lib/zen-transport.ts`) picks the body shape and the SSE
  * parser: Chat Completions → `openAISSEPump`, Messages → `anthropicEventStream`,
- * Responses → the shared Responses stream family.
+ * Responses → the shared Responses stream family, Gemini → `geminiEventStream`.
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
@@ -14,6 +14,7 @@ import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
+import { geminiEventStream } from '@push/lib/gemini-bridge';
 import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { toPushStreamWire } from '@push/lib/provider-wire';
@@ -49,8 +50,9 @@ export async function* zenStream(
     yield* zenResponsesStream(req);
     return;
   }
-  // The neutral wire is what both Messages paths (Go and standard) dual-accept.
-  const neutralWire = goMode || transport === 'anthropic';
+  // The neutral wire is what both Messages paths (Go and standard) and the
+  // Gemini path dual-accept.
+  const neutralWire = goMode || transport === 'anthropic' || transport === 'gemini';
   const capabilityProfile = resolvePushCapabilityProfile('zen', req.model, {
     requestWire: neutralWire ? 'neutral' : 'openai',
   });
@@ -169,6 +171,12 @@ export async function* zenStream(
   // stream raw Anthropic Messages SSE — the Worker does not translate it to
   // OpenAI SSE — so parse those natively via `anthropicEventStream`, exactly like
   // the direct Anthropic route. Everything else stays on `openAISSEPump`.
+  // Gemini models stream Google's native generateContent SSE, passed through raw
+  // by the Worker — the same parser the direct Google route uses.
+  if (transport === 'gemini') {
+    yield* geminiEventStream(response, req.signal, (name) => KNOWN_TOOL_NAMES.has(name));
+    return;
+  }
   if (transport === 'anthropic') {
     // These models don't use Anthropic's server-side `web_search` tool, so no
     // `pause_turn` continuation arises on this route (the request never enables

@@ -18,6 +18,7 @@ describe('getZenTransport', () => {
     assert.equal(getZenTransport('grok-4.7'), 'responses');
     assert.equal(getZenTransport('muse-spark-1.3'), 'responses');
     assert.equal(getZenTransport('deepseek-v4-pro'), 'openai');
+    assert.equal(getZenTransport('gemini-4-argon'), 'gemini');
     assert.equal(getZenTransport(''), 'openai');
   });
 
@@ -49,10 +50,11 @@ describe('CLI Zen stream routing', () => {
     else process.env.PUSH_ZEN_URL = originalUrl;
   });
 
-  async function send(model) {
+  async function send(model, extra = {}) {
     const stream = createProviderStream(PROVIDER_CONFIGS.zen, 'zen-key');
     try {
       for await (const _ of stream({
+        ...extra,
         provider: 'zen',
         model,
         messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
@@ -90,6 +92,29 @@ describe('CLI Zen stream routing', () => {
       'https://proxy.example/zen/v1/messages?team=a',
     );
     assert.equal((await send('gpt-6-luna')).url, 'https://proxy.example/zen/v1/responses?team=a');
+  });
+
+  it('sends Gemini to its generateContent route with x-goog-api-key and no grounding', async () => {
+    const call = await send('gemini-4-argon');
+    assert.equal(
+      call.url,
+      'https://opencode.ai/zen/v1/models/gemini-4-argon:streamGenerateContent?alt=sse',
+    );
+    assert.equal(call.init.headers['x-goog-api-key'], 'zen-key');
+    const body = JSON.parse(call.init.body);
+    assert.ok(body.contents, 'expected a Gemini `contents` body');
+    assert.ok(!JSON.stringify(body.tools ?? []).includes('googleSearch'));
+    // Even an explicit per-request opt-in must not reach Zen.
+    const forced = await send('gemini-4-argon', { googleSearchGrounding: true });
+    assert.ok(!JSON.stringify(JSON.parse(forced.init.body).tools ?? []).includes('googleSearch'));
+  });
+
+  it('keeps a PUSH_ZEN_URL query string on the Gemini route', async () => {
+    process.env.PUSH_ZEN_URL = 'https://proxy.example/zen/v1/chat/completions?team=a';
+    assert.equal(
+      (await send('gemini-3-flash')).url,
+      'https://proxy.example/zen/v1/models/gemini-3-flash:streamGenerateContent?team=a&alt=sse',
+    );
   });
 
   it('uses the Go table when PUSH_ZEN_URL points at the Go endpoint', async () => {

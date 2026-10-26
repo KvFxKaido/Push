@@ -29,6 +29,7 @@ const providerHandlerMocks = vi.hoisted(() => ({
   handleOllamaChat: vi.fn(),
   handleZenChat: vi.fn(),
   handleZenGoChat: vi.fn(),
+  handleGoogleChat: vi.fn(),
   handleFireworksChat: vi.fn(),
 }));
 vi.mock('./worker-providers', () => providerHandlerMocks);
@@ -1297,6 +1298,44 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       jobId: 'job-zen-claude',
     });
     const { tokens, errors } = await drainAs(stream, 'zen', 'claude-sonnet-4-6');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('ok');
+  });
+
+  it('parses standard-tier Gemini as native Gemini SSE', async () => {
+    providerHandlerMocks.handleZenChat.mockResolvedValue(
+      sseResponse([
+        'data: {"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"},"finishReason":"STOP"}]}\n\n',
+      ]),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'zen',
+      modelId: 'gemini-4-argon',
+      jobId: 'job-zen-gemini',
+    });
+    const { tokens, errors } = await drainAs(stream, 'zen', 'gemini-4-argon');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('ok');
+  });
+
+  it('parses the direct Google route as native Gemini SSE too', async () => {
+    // handleGoogleChat has proxied raw Gemini SSE since the native-pump change;
+    // the OpenAI-shaped pump finds no `choices` in it and yields no text.
+    providerHandlerMocks.handleGoogleChat.mockResolvedValue(
+      sseResponse([
+        'data: {"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"},"finishReason":"STOP"}]}\n\n',
+      ]),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'google',
+      modelId: 'gemini-3.1-pro',
+      jobId: 'job-google',
+    });
+    const { tokens, errors } = await drainAs(stream, 'google', 'gemini-3.1-pro');
     expect(errors).toEqual([]);
     expect(tokens.join('')).toBe('ok');
   });

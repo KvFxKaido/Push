@@ -1,4 +1,4 @@
-import type { AiGatewayBinding, Env } from './worker-middleware';
+import type { AiGatewayBinding, AuthBuilder, Env } from './worker-middleware';
 import type { AiModelsSearchObject } from '@cloudflare/workers-types';
 import { asRecord } from '../lib/utils';
 import {
@@ -985,10 +985,12 @@ export async function handleCloudflareGatewayModels(request: Request, env: Env):
 // and answers the others with `400 ModelProtocolUnsupported`, so the model in the
 // body picks the upstream: Claude (and some Qwen) → /messages via the same
 // tier-parameterised path Go uses, GPT / Grok / Muse → /responses via the shared
-// Responses proxy, everything else → /chat/completions below, unchanged.
+// Responses proxy, Gemini → Google's native generateContent via the same core the
+// Google route uses, everything else → /chat/completions below, unchanged.
 export async function handleZenChat(request: Request, env: Env): Promise<Response> {
   const transport = getZenTransport(await peekRequestModel(request, env));
   if (transport === 'anthropic') return handleZenTierChat(request, env, ZEN_STANDARD_TIER);
+  if (transport === 'gemini') return handleGeminiWireChat(request, env, ZEN_GEMINI_WIRE);
   if (transport === 'responses') {
     return handleResponsesProxy(request, env, {
       providerLabel: 'OpenCode Zen',
@@ -2554,17 +2556,103 @@ function buildGoogleAuth(env: Env, request: Request): string | null {
   return clientAuth;
 }
 
+interface GeminiWireConfig {
+  route: string;
+  /** Error-message prefix: `Google 401: …`, `OpenCode Zen 401: …`. */
+  label: string;
+  routeLabel: string;
+  provider: 'google' | 'zen';
+  /** `…/v1beta` for Google; `https://opencode.ai/zen/v1` for Zen. */
+  apiBase: string;
+  gatewayProvider: string;
+  buildAuth: AuthBuilder;
+  keyMissingError: string;
+  /** Gateway BYOK injects the key itself (Google only — Zen's Gemini route reads
+   *  `x-goog-api-key`, which the gateway's Authorization injection can't set). */
+  byok: (env: Env) => boolean;
+  /** Let a keyless request past the preamble because `resolveKey` has another source. */
+  allowMissingKey: (env: Env) => boolean;
+  /** The raw key for `x-goog-api-key`, from the preamble's auth or a fallback. */
+  resolveKey: (authHeader: string, env: Env, requestId: string) => Promise<string>;
+}
+
+const GOOGLE_GEMINI_WIRE: GeminiWireConfig = {
+  route: 'api/google/chat',
+  label: 'Google',
+  routeLabel: 'Google Gemini',
+  provider: 'google',
+  apiBase: GOOGLE_API_BASE,
+  gatewayProvider: 'google-ai-studio',
+  buildAuth: buildGoogleAuth,
+  keyMissingError:
+    'Google Gemini API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
+  byok: (env) => gatewayByokActive(env, 'google', 'google-ai-studio'),
+  allowMissingKey: () => false,
+  resolveKey: async (authHeader) => authHeader,
+};
+
+// Zen serves Gemini on Google's native API (`/zen/v1/models/{id}:streamGenerateContent`,
+// probed 2026-10-25: 401 "Missing API key" for a real id, 400 "Model is
+// unavailable" for a fake one). Only `x-goog-api-key` is read — a Bearer or
+// `x-api-key` is "Missing API key" — so gateway BYOK can't serve it keyless and
+// the ZEN_KEY_STORE binding fills a keyless request, as for Zen's Messages route.
+const ZEN_GEMINI_WIRE: GeminiWireConfig = {
+  route: 'api/zen/chat',
+  label: 'OpenCode Zen',
+  routeLabel: 'OpenCode Zen',
+  provider: 'zen',
+  apiBase: 'https://opencode.ai/zen/v1',
+  gatewayProvider: 'custom-zen',
+  buildAuth: standardAuth('ZEN_API_KEY'),
+  keyMissingError:
+    'OpenCode Zen API key not configured. Gemini models on Zen cannot use the gateway-injected key — add a Zen key in Settings, set ZEN_API_KEY, or bind ZEN_KEY_STORE.',
+  byok: () => false,
+  allowMissingKey: (env) => Boolean(env.ZEN_KEY_STORE),
+  resolveKey: async (authHeader, env, requestId) => {
+    const callerKey = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (callerKey || !env.ZEN_KEY_STORE) return callerKey;
+    try {
+      const storeKey = (await env.ZEN_KEY_STORE.get())?.trim() ?? '';
+      wlog(storeKey ? 'info' : 'warn', storeKey ? 'zen_store_key_used' : 'zen_store_key_empty', {
+        requestId,
+        route: 'api/zen/chat',
+        transport: 'gemini',
+      });
+      return storeKey;
+    } catch (err) {
+      wlog('warn', 'zen_store_key_failed', {
+        requestId,
+        route: 'api/zen/chat',
+        transport: 'gemini',
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return '';
+    }
+  },
+};
+
 export async function handleGoogleChat(request: Request, env: Env): Promise<Response> {
-  const byok = gatewayByokActive(env, 'google', 'google-ai-studio');
+  return handleGeminiWireChat(request, env, GOOGLE_GEMINI_WIRE);
+}
+
+async function handleGeminiWireChat(
+  request: Request,
+  env: Env,
+  cfg: GeminiWireConfig,
+): Promise<Response> {
+  const byok = cfg.byok(env);
   const preamble = await runPreamble(request, env, {
-    buildAuth: buildGoogleAuth,
-    keyMissingError:
-      'Google Gemini API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
+    buildAuth: cfg.buildAuth,
+    keyMissingError: cfg.keyMissingError,
     needsBody: true,
-    allowMissingKey: byok,
+    allowMissingKey: byok || cfg.allowMissingKey(env),
   });
   if (preamble instanceof Response) return preamble;
-  const { authHeader: apiKey, bodyText, requestId } = preamble;
+  const { bodyText, requestId } = preamble;
+  const apiKey = await cfg.resolveKey(preamble.authHeader, env, requestId);
+  if (!byok && !apiKey) {
+    return Response.json({ error: cfg.keyMissingError }, { status: 401 });
+  }
 
   // Dual-accept (push.stream.v1): neutral wire serialized via
   // `toGeminiGenerateContent`, else the legacy OpenAI→Gemini translation. The
@@ -2573,9 +2661,9 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   // `contract` field reads zero legacy. See
   // docs/runbooks/Anthropic Worker Contract Migration.md.
   const dual = parseDualAcceptRequest(bodyText, {
-    routeLabel: 'Google Gemini',
+    routeLabel: cfg.routeLabel,
     maxOutputTokens: 12_288,
-    provider: 'google',
+    provider: cfg.provider,
   });
   if (!dual.ok) {
     return Response.json({ error: dual.error }, { status: dual.status });
@@ -2583,7 +2671,7 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   if (dual.adjustments.length > 0) {
     wlog('warn', 'chat_request_adjusted', {
       requestId,
-      route: 'api/google/chat',
+      route: cfg.route,
       adjustments: dual.adjustments,
     });
   }
@@ -2598,27 +2686,41 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
       // not a 502 from the upstream catch.
       upstreamBody = JSON.stringify(
         toGeminiGenerateContent(dual.request, {
-          enableGoogleSearch: dual.request.googleSearchGrounding === true,
+          // Google Search grounding is a Google-route feature; it is not
+          // offered through Zen, so never send the tool there.
+          enableGoogleSearch:
+            cfg.provider === 'google' && dual.request.googleSearchGrounding === true,
         }),
       );
     } catch (err) {
       return Response.json(
-        { error: `Google request: ${err instanceof Error ? err.message : String(err)}` },
+        { error: `${cfg.label} request: ${err instanceof Error ? err.message : String(err)}` },
         { status: 400 },
       );
     }
   } else {
     model = typeof dual.parsed.model === 'string' ? dual.parsed.model.trim() : '';
     if (!model) {
-      return Response.json({ error: 'Google request is missing a model id' }, { status: 400 });
+      return Response.json(
+        { error: `${cfg.label} request is missing a model id` },
+        { status: 400 },
+      );
     }
-    upstreamBody = JSON.stringify(buildGeminiGenerateContentRequest(dual.parsed));
+    // Same grounding rule as the neutral branch: the legacy body's
+    // `google_search_grounding` flag is honored on the Google route only.
+    upstreamBody = JSON.stringify(
+      buildGeminiGenerateContentRequest(
+        cfg.provider === 'google'
+          ? dual.parsed
+          : { ...dual.parsed, google_search_grounding: false },
+      ),
+    );
   }
 
   // Gemini puts the model in the URL path and selects SSE framing via
   // `?alt=sse`. Auth is the API key in the `x-goog-api-key` header (preferred
   // over the legacy `?key=` query-param so the secret stays out of access logs).
-  const directUpstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(
+  const directUpstreamUrl = `${cfg.apiBase}/models/${encodeURIComponent(
     model,
   )}:streamGenerateContent?alt=sse`;
   // The AIG google-ai-studio proxy base is generativelanguage.googleapis.com
@@ -2628,13 +2730,13 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   // `/v1beta` direct call, routing gateway traffic to a different API surface.
   const directUpstream = new URL(directUpstreamUrl);
   const { upstreamUrl, gatewayHeaders } = resolveAiGatewayFetchTarget(env, directUpstreamUrl, {
-    provider: 'google-ai-studio',
+    provider: cfg.gatewayProvider,
     pathSuffix: `${directUpstream.pathname}${directUpstream.search}`,
   });
 
   wlog('info', 'request', {
     requestId,
-    route: 'api/google/chat',
+    route: cfg.route,
     model,
     contract: dual.contractKind,
   });
@@ -2665,13 +2767,13 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
       const errBody = await upstream.text().catch(() => '');
       wlog('error', 'upstream_error', {
         requestId,
-        route: 'api/google/chat',
+        route: cfg.route,
         status: upstream.status,
         body: errBody.slice(0, 500),
       });
       return Response.json(
         {
-          error: `Google ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
+          error: `${cfg.label} ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
           code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
         },
         { status: upstream.status },
@@ -2692,12 +2794,12 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
     const isTimeout = err instanceof Error && err.name === 'AbortError';
     wlog('error', 'unhandled', {
       requestId,
-      route: 'api/google/chat',
+      route: cfg.route,
       message,
       timeout: isTimeout,
     });
     return Response.json(
-      { error: isTimeout ? 'Google request timed out after 180 seconds' : message },
+      { error: isTimeout ? `${cfg.label} request timed out after 180 seconds` : message },
       { status: isTimeout ? 504 : 502 },
     );
   }

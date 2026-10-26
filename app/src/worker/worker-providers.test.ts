@@ -515,6 +515,61 @@ describe('handleZenChat — per-model transport (standard tier)', () => {
     expect(get()).toBeUndefined();
   });
 
+  it('sends Gemini to the native generateContent route with x-goog-api-key', async () => {
+    const get = captureUpstream();
+    const response = await handleZenChat(
+      makeZenRequest(chatBody('gemini-4-argon')),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(200);
+    expect(get()?.url).toBe(
+      'https://opencode.ai/zen/v1/models/gemini-4-argon:streamGenerateContent?alt=sse',
+    );
+    const headers = get()!.init.headers as Record<string, string>;
+    // Zen's Gemini route reads x-goog-api-key only (a Bearer is "Missing API key").
+    expect(headers['x-goog-api-key']).toBe('zen-key');
+    expect(headers.Authorization).toBeUndefined();
+    expect(JSON.parse(get()!.init.body as string).contents).toBeDefined();
+  });
+
+  it('never sends Google Search grounding to Zen, even when the wire asks', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest({
+        contract: 'push.stream.v1',
+        ...chatBody('gemini-3-flash'),
+        googleSearchGrounding: true,
+      }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.contents).toBeDefined();
+    expect(JSON.stringify(body.tools ?? [])).not.toContain('googleSearch');
+  });
+
+  it('strips Google Search grounding from a legacy OpenAI-shaped body too', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest({ ...chatBody('gemini-3-flash'), google_search_grounding: true }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.contents).toBeDefined();
+    expect(JSON.stringify(body.tools ?? [])).not.toContain('googleSearch');
+  });
+
+  it('fills a keyless Gemini request from ZEN_KEY_STORE, and 401s with no key source', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest(chatBody('gemini-3.1-pro')),
+      makeEnv({ ZEN_KEY_STORE: { get: async () => 'store-key' } } as unknown as Partial<Env>),
+    );
+    expect((get()!.init.headers as Record<string, string>)['x-goog-api-key']).toBe('store-key');
+
+    const response = await handleZenChat(makeZenRequest(chatBody('gemini-3.1-pro')), makeEnv());
+    expect(response.status).toBe(401);
+  });
+
   // Production shape: gateway on, Zen BYOK held by the gateway, no caller key.
   const BYOK_ENV = {
     CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',
@@ -534,6 +589,18 @@ describe('handleZenChat — per-model transport (standard tier)', () => {
       'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/custom-zen/zen/v1/messages',
     );
     expect((get()!.init.headers as Record<string, string>)['x-api-key']).toBe('store-key');
+  });
+
+  it('routes Gemini through the gateway as passthrough, carrying the key itself', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest(chatBody('gemini-4-argon')),
+      makeEnv({ ...BYOK_ENV, ZEN_KEY_STORE: { get: async () => 'store-key' } } as Partial<Env>),
+    );
+    expect(get()?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/custom-zen/zen/v1/models/gemini-4-argon:streamGenerateContent?alt=sse',
+    );
+    expect((get()!.init.headers as Record<string, string>)['x-goog-api-key']).toBe('store-key');
   });
 
   it('routes keyless GPT through the gateway responses path, letting the gateway inject', async () => {

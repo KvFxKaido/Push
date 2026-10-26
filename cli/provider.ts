@@ -231,6 +231,32 @@ function zenWireConfig(config: ProviderConfig, wire: 'messages' | 'responses'): 
   };
 }
 
+/** Zen's Gemini route is per model (`/models/{id}:streamGenerateContent`), so the
+ * full URL is built here; `buildGeminiUpstreamUrl` passes a URL that already
+ * names `:streamGenerateContent` through untouched. Path-only rewrite, like
+ * `zenWireConfig`, so a query string on PUSH_ZEN_URL survives. */
+function zenGeminiConfig(config: ProviderConfig, model: string): ProviderConfig {
+  return {
+    ...config,
+    get url() {
+      const target = `/models/${encodeURIComponent(model)}:streamGenerateContent`;
+      const raw = config.url.trim();
+      try {
+        const url = new URL(raw);
+        url.pathname = url.pathname.replace(/\/chat\/completions\/?$/, target);
+        url.searchParams.set('alt', 'sse');
+        return url.toString();
+      } catch {
+        return `${raw.replace(/\/chat\/completions\/?$/, target)}?alt=sse`;
+      }
+    },
+    get defaultModel() {
+      return config.defaultModel;
+    },
+    streamShape: 'gemini',
+  };
+}
+
 function resolveEffectiveProviderConfig(config: ProviderConfig): ProviderConfig {
   if (config.id !== 'openrouter' || !useOpenRouterLegacyChatTransport()) {
     return config;
@@ -410,8 +436,8 @@ function createAdapterStream(
 
   // Zen serves each model on exactly one endpoint (lib/zen-transport.ts) and
   // rejects the others with `ModelProtocolUnsupported`, so the wire is chosen
-  // per request: Claude → /messages, GPT / Grok / Muse → /responses, the rest
-  // stay on Chat Completions. A PUSH_ZEN_URL on the Go endpoint uses Go's table.
+  // per request: Claude → /messages, GPT / Grok / Muse → /responses, Gemini →
+  // /models/{id}:streamGenerateContent, the rest stay on Chat Completions. A PUSH_ZEN_URL on the Go endpoint uses Go's table.
   if (config.id === 'zen') {
     const chatStream = createCliProviderStream(config, apiKey, { sessionId: options.sessionId });
     const messagesStream = createCliAnthropicStream(zenWireConfig(config, 'messages'), apiKey);
@@ -425,6 +451,18 @@ function createAdapterStream(
       const transport = getZenTransport(model, { go: /\/zen\/go\//.test(config.url) });
       if (transport === 'anthropic') return messagesStream(req);
       if (transport === 'responses') return responsesStream(req);
+      if (transport === 'gemini') {
+        // Google Search grounding is a Google-route feature, not offered through
+        // Zen; the CLI Gemini stream defaults it on and lets any per-request flag
+        // win, so force it off here, whatever the request asked.
+        return createCliGeminiStream(
+          zenGeminiConfig(config, model),
+          apiKey,
+        )({
+          ...req,
+          googleSearchGrounding: false,
+        });
+      }
       return chatStream(req);
     };
   }
