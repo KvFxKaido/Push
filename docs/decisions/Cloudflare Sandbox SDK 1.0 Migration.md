@@ -534,11 +534,29 @@ same-day workaround: flip the var and fix forward.
 3. **Staging secrets: shared or separate.** Still open; not answerable from the
    repo.
 4. **Base image Node version: 22, as today, or the repo's 24 floor.**
-   **Answered in code: 22** (`Dockerfile.sandbox` copies Node 22.23.4 from
-   `node:22.23.4-bookworm-slim`). The sandbox therefore still sits below the
-   repo-wide Node 24 floor, but now by Push's own pin rather than by inheriting
-   the base image - so the `sandbox/app.py` Node mirror is a choice to re-make,
-   not a constraint. Dependabot #1687 proposes Node 26 on this base.
+   **Decided: 22** (2026-10-24). `Dockerfile.sandbox` copies Node 22.23.4 from
+   `node:22.23.4-bookworm-slim`, and its NOTE ON NODE header states the grounds:
+   the sandbox runs the *user's* repo commands, and `sandbox/app.py` (Modal)
+   mirrors the pin via `setup_22.x`, so the two backends must agree. The
+   `engines: node >=24` warning this produces when Push installs itself inside
+   the sandbox is warn-only and explicitly not a reason to move.
+   (An earlier revision of this line read the sub-floor pin as drift left over
+   from inheriting the 0.12 base. It is not: the header was rewritten with the
+   1.0 image and re-states the decision on its own grounds.)
+   Dependabot #1687 proposed Node 26 and was **closed** 2026-10-26: v26 is
+   `lts: false` while v22/v24 are Jod/Krypton, the image ships no compiler so
+   native modules depend on prebuilts that are thinnest on the newest major,
+   nothing in CI builds this image (`Validate sandbox` only syntax-checks the
+   Modal app, so the first real build is a deploy), and it touched only the
+   Cloudflare half of a documented two-backend pin. `.github/dependabot.yml`
+   now holds both base pins so the decision stops being re-proposed weekly:
+   `library/node` ignores majors (the major *is* the Node release line, so 22.x
+   minors still arrive), and `library/python` ignores majors **and minors**,
+   because Dependabot reads a Docker tag as `major.minor.patch` — 3.11 to 3.15
+   is a semver-minor update, so a major-only rule would have stopped nothing
+   but Python 4. Both reviewers caught that on #1698. `sandbox/app.py`'s Node
+   comment, which still carried the superseded 0.12-base rationale, now points
+   at `Dockerfile.sandbox`'s NOTE ON NODE as the single source of the pin.
 5. **Production switch timing**, set by when 0.x support ends on 2026-12-31.
    Recommended: aim for early December, leaving room to fix forward.
 
