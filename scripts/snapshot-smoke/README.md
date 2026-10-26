@@ -3,11 +3,20 @@
 Verifies the R2-backed snapshot/restore path that shipped in **#647–#651**,
 against a live Worker. Successor to `scripts/cf-sandbox-spike/` (the 2026-04-19
 throwaway that benchmarked the *SDK-native* `createBackup`/`restoreBackup` to
-decide whether to build the provider). The provider shipped — but it rolls its
-own **R2 `tar.gz` archive** snapshot (`createWorkspaceSnapshot` /
-`restoreWorkspaceSnapshot` in `app/src/worker/worker-cf-sandbox.ts`), *not* the
-SDK primitive the spike measured. This test points the spike's benchmark shape
-at the path that actually runs.
+decide whether to build the provider).
+
+`createWorkspaceSnapshot` / `restoreWorkspaceSnapshot` in
+`app/src/worker/worker-cf-sandbox.ts` are still the entry points, but they now
+wrap **the SDK backup primitive the spike measured** — `DirectoryBackup` under
+SDK 1.0, driven through the `Sandbox` Durable Object facade (see
+`docs/decisions/Cloudflare Sandbox SDK 1.0 Migration.md`). `SNAPSHOTS` holds the
+descriptor index, `BACKUP_BUCKET` holds the backup objects. An earlier revision
+of this file described a home-rolled `tar.gz` archive instead; that was true of
+the provider's first cut and is no longer the path under test. (The surviving
+`tar.gz` in the handler is the unrelated `/download` route, which still tars and
+base64s a file or directory for the client.)
+
+This test points the spike's benchmark shape at the path that actually runs.
 
 ## What it covers
 

@@ -1,7 +1,12 @@
 # Cloudflare Sandbox SDK 1.0 Migration
 
-**Status:** Draft. Phase 0 (staging Worker) is ready to start. Every later
-phase needs an owner commitment, and the production switch is one-way.
+**Status:** Current (partially implemented). **Production has run 1.0 since 2026-10-25**
+(`@cloudflare/sandbox` 1.0.3, `app/src/worker/sandbox-do.ts`, a self-owned
+`Dockerfile.sandbox`). Phases 1-5 shipped; the switch was forced early by a
+branch build and deployed by hand (see "Production cutover"). Phase 6 cleanup
+is open, and part of it is live-infra work this repo cannot verify - including
+a leftover 0.12 container application that **keeps billing**. Drop the
+qualifier when Phase 6 closes.
 
 **Date:** 2026-10-24
 
@@ -259,8 +264,10 @@ the owner's go-ahead.
 
 ### Phases 1–3 progress (2026-10-24, branch `feat/sandbox-sdk-1.0`)
 
-Built on a branch and **not deployed anywhere**. Layer 3 and the Modal check
-are deferred to the rehearsal, at the owner's call.
+Built on a branch and, *at the time of writing*, **not deployed anywhere**.
+Layer 3 and the Modal check are deferred to the rehearsal, at the owner's call.
+(Superseded the next day: this branch became production on 2026-10-25 - see
+"Production cutover" below.)
 
 **Image (Phase 1)**
 - **Base and pins:** `Dockerfile.sandbox` now builds on
@@ -407,6 +414,63 @@ which then clears. That's harmless, but expect it in the logs.
 - Delete the leftover 0.12 `push-sandbox` container application.
 - Delete the 0.12-only R2 secrets.
 
+### Reconciliation (2026-10-25, main @ `3fef835c`)
+
+The cutover section's "Still to do" list, checked against main rather than
+against memory.
+
+**Landed since the cutover was written:**
+- *Merge #1674 and this PR into main.* Done - `6cac3376` and `2b392fe5` are on
+  main, so main matches what was hand-deployed.
+- *Set up Worker Previews.* Done - #1683 wires per-branch previews in both
+  `wrangler.jsonc` and `wrangler.staging.jsonc`, pinned by
+  `app/src/worker/wrangler-previews-config.test.ts` and documented in the
+  deployment runbook; #1684 adds logs and traces. #1694 also added
+  `scripts/deploy-worker.mjs`, which retries the sandbox image-push timeout, so
+  the hand-deploy step is a command now rather than a procedure.
+
+**Phases 1-5, confirmed present on main:**
+- **Image:** `Dockerfile.sandbox` is multi-stage on
+  `python:3.11.14-slim-bookworm`, Node 22.23.4 copied from the official image,
+  and `COPY --from=docker.io/cloudflare/sandbox:1.0.3 /usr/local/bin/sandbox-shim`.
+- **Facade:** `app/src/worker/sandbox-do.ts` (485 lines) with
+  `sandbox-do.test.ts` (371).
+- **Handler:** `sandboxFor()` is `env.Sandbox!.getByName(sandboxId)`; the
+  "every backup goes through the R2 binding" note survives at the backup site.
+- `setInactivityTimeout()` is called **both** in the constructor and after
+  `start()`, which is what the migration guide requires.
+- `@cloudflare/workers-types` is now `^5.20261024.1`, which types
+  `signal?: AbortSignal` on `ContainerExecOptions` - the mechanism the open
+  timeouts question needs. Whether it covers every `withExecDeadline` case is
+  still unanswered.
+
+**Closed here, from Phase 6:**
+- `scripts/snapshot-smoke/README.md` described the snapshot path as a
+  home-rolled "R2 `tar.gz` archive", *not* the SDK primitive. That was inverted:
+  `createWorkspaceSnapshot` / `restoreWorkspaceSnapshot` wrap `DirectoryBackup`
+  through the facade, with `SNAPSHOTS` holding the descriptor index and
+  `BACKUP_BUCKET` the objects. Corrected, with a note that the `tar.gz` still in
+  the handler belongs to the unrelated `/download` route.
+
+**Still open, and visible in the repo:**
+- Remove the remaining 0.12-only code.
+- This doc's `(partially implemented)` qualifier, gated on the rest of Phase 6.
+
+**Still open, and NOT verifiable from the repo - needs the owner:**
+- **Delete the leftover 0.12 `push-sandbox` container application.** It keeps
+  running and billing, which makes it the one cleanup item with a meter on it.
+- Delete the 0.12-only R2 secrets.
+- Delete 0.12 DO storage keys by name - never `deleteAll()`, which would also
+  take unconverted backup handles.
+- **Whether Workers Builds was re-enabled on `push`** after the incident
+  disabled it. Isolated previews now exist (#1683/#1684), so the reason it was
+  switched off may be gone; leaving it off indefinitely means every deploy is a
+  hand deploy.
+- Confirm the Modal fallback (`PUSH_SANDBOX_PROVIDER=modal` plus
+  `MODAL_SANDBOX_BASE_URL`), which the escape-hatch section itself records as
+  having "drifted unchecked". With 0.12 unreachable by rollback, this is the
+  only route around a bad 1.0 deploy.
+
 ## Phases after staging
 
 1. **Image:** a new `Dockerfile.sandbox` on its own base. Build it locally and
@@ -446,7 +510,7 @@ which then clears. That's harmless, but expect it in the logs.
      would also delete unconverted backup handles.
    - Remove 0.12-only code and fix `scripts/snapshot-smoke/README.md`, which
      still says snapshots are tar.gz although they're SDK backups.
-   - Flip this doc to Current.
+   - Drop this doc's `(partially implemented)` qualifier.
 
 ## Escape hatch: Modal
 
@@ -467,8 +531,14 @@ same-day workaround: flip the var and fix forward.
 2. **Snapshots: convert or lapse.** **Decided: lapse** (2026-10-24, see
    "Snapshots" above). First recommended convert; the reader it needed cost
    more than seven days of snapshots are worth, and the refusal is not silent.
-3. **Staging secrets: shared or separate.**
+3. **Staging secrets: shared or separate.** Still open; not answerable from the
+   repo.
 4. **Base image Node version: 22, as today, or the repo's 24 floor.**
+   **Answered in code: 22** (`Dockerfile.sandbox` copies Node 22.23.4 from
+   `node:22.23.4-bookworm-slim`). The sandbox therefore still sits below the
+   repo-wide Node 24 floor, but now by Push's own pin rather than by inheriting
+   the base image - so the `sandbox/app.py` Node mirror is a choice to re-make,
+   not a constraint. Dependabot #1687 proposes Node 26 on this base.
 5. **Production switch timing**, set by when 0.x support ends on 2026-12-31.
    Recommended: aim for early December, leaving room to fix forward.
 
@@ -493,8 +563,9 @@ container. Unknowns to spike on staging first:
 
 ## Open questions to settle in staging
 
-- **Instance size:** confirm the 1.0 `start({ instance })` name that matches
-  today's `standard` (4 GiB / ½ vCPU). The docs' example uses `standard-1`.
+- ~~**Instance size:**~~ **Settled.** `sandbox-do.ts` pins
+  `INSTANCE_TYPE = 'standard-1'`, commented as the 0.12 `"standard"` type
+  renamed upstream, and passes it to `start({ instance })`.
 - **Timeouts:** check whether the facade's `exec` timeout (GNU `timeout`)
   covers every `withExecDeadline` case, or whether some calls need an
   `AbortSignal`.
