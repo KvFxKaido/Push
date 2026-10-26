@@ -7,6 +7,7 @@
     "prepare": "husky app/.husky",
     "build": "pnpm --filter my-app run build",
     "build:cli": "cd cli && pnpm exec tsc -p tsconfig.json",
+    "deploy:worker": "node scripts/deploy-worker.mjs",
     "build:mcp:github": "pnpm --filter @push/github-mcp-server run build",
     "check:design-tokens": "pnpm --filter my-app run check:design-tokens --",
     "dev:cli": "node --import tsx cli/cli.ts",
