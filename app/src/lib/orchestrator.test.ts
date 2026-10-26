@@ -234,6 +234,30 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     expect(assistant?.reasoning_blocks).toEqual([{ type: 'redacted_thinking', data: 'enc' }]);
   });
 
+  it('replays signed thinking for standard-tier Zen Claude (Messages transport)', () => {
+    // Claude 5 thinks by default and Anthropic needs the signed thinking block
+    // back in a tool loop. Counting only Go models dropped it for standard Zen.
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'look it up' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: '',
+        reasoningBlocks: [{ type: 'thinking', text: 'plan', signature: 'sig-c5' }],
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'tool result' }),
+    ];
+    const claude = buildLlm(messages, 'zen', 'claude-sonnet-5-5').find(
+      (m) => m.role === 'assistant',
+    );
+    expect(claude?.reasoning_blocks).toEqual([
+      { type: 'thinking', text: 'plan', signature: 'sig-c5' },
+    ]);
+    // A Chat Completions model on the same provider still gets none.
+    const glm = buildLlm(messages, 'zen', 'glm-5.2').find((m) => m.role === 'assistant');
+    expect(glm?.reasoning_blocks).toBeUndefined();
+  });
+
   it('does not emit reasoning_blocks on user messages', () => {
     const messages: ChatMessage[] = [makeMessage({ id: 'u1', role: 'user', content: 'hi' })];
     const llm = buildLlm(messages);

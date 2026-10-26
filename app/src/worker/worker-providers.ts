@@ -35,6 +35,7 @@ import {
   XAI_MODELS,
   ZAI_MODELS,
   KIMI_MODELS,
+  migrateRenamedModel,
 } from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
@@ -987,8 +988,25 @@ export async function handleCloudflareGatewayModels(request: Request, env: Env):
 // tier-parameterised path Go uses, GPT / Grok / Muse → /responses via the shared
 // Responses proxy, Gemini → Google's native generateContent via the same core the
 // Google route uses, everything else → /chat/completions below, unchanged.
-export async function handleZenChat(request: Request, env: Env): Promise<Response> {
-  const transport = getZenTransport(await peekRequestModel(request, env));
+export async function handleZenChat(incoming: Request, env: Env): Promise<Response> {
+  const peek = await peekRequestModel(incoming, env);
+  let request = incoming;
+  let model = peek.model;
+  // A chat locked to a renamed id (`claude-sonnet-4.6` before Zen's dashed
+  // rename) keeps sending it on every client and lane, and Zen answers "Model is
+  // unavailable". Rewrite it here, once, where every Zen request passes.
+  const migrated = migrateRenamedModel('zen', model);
+  if (peek.parsed && migrated !== model) {
+    wlog('info', 'zen_model_migrated', { route: 'api/zen/chat', from: model, to: migrated });
+    const headers = new Headers(incoming.headers);
+    headers.delete('content-length');
+    request = new Request(incoming, {
+      headers,
+      body: JSON.stringify({ ...peek.parsed, model: migrated }),
+    });
+    model = migrated;
+  }
+  const transport = getZenTransport(model);
   if (transport === 'anthropic') return handleZenTierChat(request, env, ZEN_STANDARD_TIER);
   if (transport === 'gemini') return handleGeminiWireChat(request, env, ZEN_GEMINI_WIRE);
   if (transport === 'responses') {
@@ -1013,15 +1031,21 @@ export async function handleZenChat(request: Request, env: Env): Promise<Respons
  *  rejection returns '' and falls through to the Chat Completions handler, whose
  *  preamble then returns the proper 403 / 413 / 400. The rate limiter is left to
  *  that preamble — calling it here too would charge every Zen request twice. */
-async function peekRequestModel(request: Request, env: Env): Promise<string> {
-  if (!validateOrigin(request, new URL(request.url), env).ok) return '';
+async function peekRequestModel(
+  request: Request,
+  env: Env,
+): Promise<{ model: string; parsed: Record<string, unknown> | null }> {
+  const none = { model: '', parsed: null };
+  if (!validateOrigin(request, new URL(request.url), env).ok) return none;
   const body = await readBodyText(request.clone(), MAX_BODY_SIZE_BYTES);
-  if (!body.ok) return '';
+  if (!body.ok) return none;
   try {
-    const parsed = JSON.parse(body.text) as { model?: unknown };
-    return typeof parsed.model === 'string' ? parsed.model : '';
+    const parsed = JSON.parse(body.text) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return none;
+    const record = parsed as Record<string, unknown>;
+    return { model: typeof record.model === 'string' ? record.model : '', parsed: record };
   } catch {
-    return '';
+    return none;
   }
 }
 

@@ -24,6 +24,7 @@ import {
   providerConsumesContentBlocksByDefault,
 } from './provider-definition.js';
 import { getZenGoTransport } from './zen-go.js';
+import { getZenTransport } from './zen-transport.js';
 
 export const MIN_PUSH_CONTEXT_TOKENS = 64_000;
 
@@ -214,7 +215,14 @@ function routeConsumesContentBlocks(
 
 function routeCarriesReasoningBlocks(provider: string, modelId: string): boolean {
   if (providerCarriesReasoningBlocksByDefault(provider)) return true;
-  return provider === 'zen' && getZenGoTransport(modelId) === 'anthropic';
+  // Zen's Messages models on either tier (Go: MiniMax / Qwen; standard: Claude /
+  // some Qwen). The profile can't see the tier, so it takes both tables. Claude 5
+  // thinks by default, and Anthropic needs the signed thinking block replayed in
+  // a tool loop — counting only Go here dropped it for standard-tier Claude.
+  return (
+    provider === 'zen' &&
+    (getZenGoTransport(modelId) === 'anthropic' || getZenTransport(modelId) === 'anthropic')
+  );
 }
 
 function modelSupportsMultimodal(
