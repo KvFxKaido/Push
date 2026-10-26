@@ -28,6 +28,7 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { isSensitivePath } from '../lib/sensitive-paths.ts';
 import {
   collectSensitiveValues,
+  createStreamRedactor,
   mergeSensitiveValues,
   redactDeep,
   redactText,
@@ -441,8 +442,8 @@ function markSessionClosed(session, exitCode, signal, { timedOut = false } = {})
   notifySessionExit(session);
 }
 
-function appendSessionChunk(session, text, source = 'stdout') {
-  if (!session || typeof text !== 'string' || text.length === 0) return;
+function appendSessionChunk(session, rawText, source = 'stdout', { preRedacted = false } = {}) {
+  if (!session || typeof rawText !== 'string' || rawText.length === 0) return;
   // Clear trap state on new output
   if (session.trapTimer) {
     clearTimeout(session.trapTimer);
@@ -450,13 +451,20 @@ function appendSessionChunk(session, text, source = 'stdout') {
   }
   session.interactiveTrap = false;
 
-  // Check for potential interactive trap
-  const isPrompt = detectPromptPattern(text, source);
+  // Check for potential interactive trap (on the raw text: a held-back tail
+  // must not hide a prompt from the detector).
+  const isPrompt = detectPromptPattern(rawText, source);
   if (isPrompt && session.running) {
     session.trapTimer = setTimeout(() => {
       session.interactiveTrap = true;
     }, INTERACTIVE_TRAP_THRESHOLD_MS);
   }
+
+  // Credential values are redacted as the output is stored, so a value split
+  // across chunks (and across exec_poll / exec_wait responses) still matches.
+  const redactor = preRedacted ? null : session.redactors?.[source];
+  const text = redactor ? redactor.push(rawText) : rawText;
+  if (text.length === 0) return;
 
   const chunk = {
     seq: ++session.nextSeq,
@@ -482,6 +490,33 @@ function appendSessionChunk(session, text, source = 'stdout') {
     session.firstAvailableSeq = session.nextSeq + 1;
   } else if (session.firstAvailableSeq < session.chunks[0].seq) {
     session.firstAvailableSeq = session.chunks[0].seq;
+  }
+}
+
+// End of stream: store whatever each redactor still holds back, and log once
+// per session whether anything was redacted (stderr: CLI stdout is user output).
+function flushSessionRedactors(session) {
+  if (!session?.redactors || session.redactorsFlushed) return;
+  session.redactorsFlushed = true;
+  let count = 0;
+  const files = new Set();
+  for (const source of ['stdout', 'stderr']) {
+    const redactor = session.redactors[source];
+    if (!redactor) continue;
+    appendSessionChunk(session, redactor.flush(), source, { preRedacted: true });
+    count += redactor.count;
+    for (const f of redactor.files) files.add(f);
+  }
+  if (count > 0) {
+    console.error(
+      JSON.stringify({
+        level: 'info',
+        event: 'exec_stream_redacted',
+        session_id: session.id,
+        count,
+        files: [...files],
+      }),
+    );
   }
 }
 
@@ -809,6 +844,14 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
   const sandboxBackend = resolveExecSandboxBackend();
   const canUseScriptTty = ttyRequested && sandboxBackend === 'host' && (await hasScriptBinary());
 
+  // Snapshot credential values BEFORE spawning: the session's stdout/stderr
+  // are redacted as they stream (see appendSessionChunk), and a command can
+  // print a file and then overwrite it. It must not sit between the spawn and
+  // the listener registration below — a fast command could exit during the
+  // walk, its `close` would fire unheard, and the session would stay
+  // `running` forever.
+  const sensitiveValues = await collectSensitiveValues(workspaceRoot).catch(() => []);
+
   const subprocessEnv = scrubEnv();
   const { child } = canUseScriptTty
     ? {
@@ -853,6 +896,10 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
     exitWaiters: [],
     interactiveTrap: false,
     trapTimer: null,
+    redactors: {
+      stdout: createStreamRedactor(sensitiveValues),
+      stderr: createStreamRedactor(sensitiveValues),
+    },
   };
 
   const timeoutTimer = setTimeout(() => {
@@ -881,10 +928,12 @@ async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested 
 
   child.on('error', (err) => {
     appendSessionChunk(session, `[push] failed to start command: ${err.message}\n`, 'stderr');
+    flushSessionRedactors(session);
     markSessionClosed(session, 1, null, { timedOut: session.timedOut });
   });
 
   child.on('close', (code, signal) => {
+    flushSessionRedactors(session);
     markSessionClosed(session, typeof code === 'number' ? code : 1, signal, {
       timedOut: session.timedOut,
     });

@@ -17,10 +17,15 @@
  * Symlinked credential files are followed; the caller snapshots before and
  * after each tool call so a read-then-overwrite still matches.
  *
- * Best effort, not a boundary. Misses: a value split across two streamed
- * `exec_poll` / `exec_wait` responses (each is redacted on its own), shorter
- * values, files past the bounded walk, and a value transformed before it's
- * printed. Nothing here stops a command from sending a value elsewhere; it
+ * Exec sessions stream their output in chunks that `exec_poll` / `exec_wait`
+ * return in pieces, so per-result redaction can't see a value split across two
+ * responses. `createStreamRedactor` redacts each session's stream as it is
+ * stored instead, holding back any tail that could still be the start of a
+ * value.
+ *
+ * Best effort, not a boundary. Misses: shorter values, files past the bounded
+ * walk, a value created after an exec session started (per-result redaction
+ * still catches it whole), and a value transformed before it's printed. Nothing here stops a command from sending a value elsewhere; it
  * only keeps values out of what the model reads.
  */
 
@@ -188,4 +193,67 @@ export function redactDeep<T>(
     return node;
   };
   return { value: visit(input) as T, count, files };
+}
+
+/** Held fragments this long or longer are redacted at flush; shorter ones are
+ *  emitted (a 2-character tail is as likely to be ordinary text). */
+const MIN_PARTIAL_REDACT = 8;
+
+export interface StreamRedactor {
+  /** Redact a chunk; returns the text safe to store now (may be empty). */
+  push(text: string): string;
+  /** End of stream: release (or redact) whatever is still held back. */
+  flush(): string;
+  /** Values redacted so far, and the files they came from. */
+  readonly count: number;
+  readonly files: ReadonlySet<string>;
+}
+
+/**
+ * Redact a stream that arrives in chunks — an exec session's stdout or stderr.
+ * A value split across chunks matches no single chunk, so the trailing text
+ * that could still be the start of a value is held back until the next chunk
+ * completes or rules it out, or until `flush` at exit. Everything stored is
+ * then already redacted, so any `exec_poll` / `exec_wait` window reads safe
+ * output whatever its `from_seq`.
+ */
+export function createStreamRedactor(values: SensitiveValue[]): StreamRedactor {
+  let carry = '';
+  let count = 0;
+  const files = new Set<string>();
+  const maxHold = values.reduce((n, v) => Math.max(n, v.value.length - 1), 0);
+  // Longest tail of `text` that is a proper prefix of some value.
+  const heldLength = (text: string): number => {
+    for (let len = Math.min(maxHold, text.length); len > 0; len--) {
+      const tail = text.slice(text.length - len);
+      if (values.some((v) => v.value.length > len && v.value.startsWith(tail))) return len;
+    }
+    return 0;
+  };
+  return {
+    push(text) {
+      if (values.length === 0) return text;
+      const r = redactText(carry + text, values);
+      count += r.count;
+      for (const f of r.files) files.add(f);
+      const hold = heldLength(r.text);
+      carry = hold > 0 ? r.text.slice(r.text.length - hold) : '';
+      return hold > 0 ? r.text.slice(0, r.text.length - hold) : r.text;
+    },
+    flush() {
+      const held = carry;
+      carry = '';
+      if (held.length < MIN_PARTIAL_REDACT) return held;
+      const source = values.find((v) => v.value.startsWith(held));
+      count += 1;
+      if (source) files.add(source.file);
+      return `[redacted partial: ${source?.file ?? 'credential file'}]`;
+    },
+    get count() {
+      return count;
+    },
+    get files() {
+      return files;
+    },
+  };
 }
