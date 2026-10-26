@@ -2635,6 +2635,39 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   return handleGeminiWireChat(request, env, GOOGLE_GEMINI_WIRE);
 }
 
+/** Structure-only summary of a generateContent body for error logs: per turn
+ *  the role and each part's kind (`functionCall` gains `+sig` when it carries a
+ *  thoughtSignature, `text` its length), plus tool / system-prompt counts. No
+ *  content, arguments or results leave the request. */
+export function describeGeminiRequestShape(bodyText: string): unknown {
+  try {
+    const body = JSON.parse(bodyText) as {
+      contents?: Array<{ role?: unknown; parts?: Array<Record<string, unknown>> }>;
+      tools?: Array<{ functionDeclarations?: unknown[] }>;
+      systemInstruction?: { parts?: unknown[] };
+    };
+    return {
+      turns: (body.contents ?? []).map((c) => ({
+        role: c.role,
+        parts: (c.parts ?? []).map((p) => {
+          if ('functionCall' in p) return p.thoughtSignature ? 'functionCall+sig' : 'functionCall';
+          if ('functionResponse' in p) return 'functionResponse';
+          if ('text' in p) return `text(${typeof p.text === 'string' ? p.text.length : '?'})`;
+          return Object.keys(p).join('+') || 'empty';
+        }),
+      })),
+      functionDeclarations: (body.tools ?? []).reduce(
+        (n, t) => n + (Array.isArray(t.functionDeclarations) ? t.functionDeclarations.length : 0),
+        0,
+      ),
+      systemParts: body.systemInstruction?.parts?.length ?? 0,
+      bytes: bodyText.length,
+    };
+  } catch {
+    return { unparseable: true, bytes: bodyText.length };
+  }
+}
+
 async function handleGeminiWireChat(
   request: Request,
   env: Env,
@@ -2770,6 +2803,13 @@ async function handleGeminiWireChat(
         route: cfg.route,
         status: upstream.status,
         body: errBody.slice(0, 500),
+        // Zen can return a Gemini 400 with an empty body, which says nothing
+        // about which part of the request it rejected. Log the request's
+        // STRUCTURE (roles, part kinds, signature presence, sizes) — never text,
+        // arguments or results — plus the response headers that describe it.
+        requestShape: describeGeminiRequestShape(upstreamBody),
+        contentType: upstream.headers.get('content-type'),
+        contentLength: upstream.headers.get('content-length'),
       });
       return Response.json(
         {
