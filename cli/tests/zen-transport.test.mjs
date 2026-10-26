@@ -50,10 +50,11 @@ describe('CLI Zen stream routing', () => {
     else process.env.PUSH_ZEN_URL = originalUrl;
   });
 
-  async function send(model) {
+  async function send(model, extra = {}) {
     const stream = createProviderStream(PROVIDER_CONFIGS.zen, 'zen-key');
     try {
       for await (const _ of stream({
+        ...extra,
         provider: 'zen',
         model,
         messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
@@ -103,6 +104,9 @@ describe('CLI Zen stream routing', () => {
     const body = JSON.parse(call.init.body);
     assert.ok(body.contents, 'expected a Gemini `contents` body');
     assert.ok(!JSON.stringify(body.tools ?? []).includes('googleSearch'));
+    // Even an explicit per-request opt-in must not reach Zen.
+    const forced = await send('gemini-4-argon', { googleSearchGrounding: true });
+    assert.ok(!JSON.stringify(JSON.parse(forced.init.body).tools ?? []).includes('googleSearch'));
   });
 
   it('keeps a PUSH_ZEN_URL query string on the Gemini route', async () => {

@@ -453,13 +453,14 @@ function createAdapterStream(
       if (transport === 'responses') return responsesStream(req);
       if (transport === 'gemini') {
         // Google Search grounding is a Google-route feature, not offered through
-        // Zen; the CLI Gemini stream defaults it on, so pin it off here.
+        // Zen; the CLI Gemini stream defaults it on and lets any per-request flag
+        // win, so force it off here, whatever the request asked.
         return createCliGeminiStream(
           zenGeminiConfig(config, model),
           apiKey,
         )({
           ...req,
-          googleSearchGrounding: req.googleSearchGrounding ?? false,
+          googleSearchGrounding: false,
         });
       }
       return chatStream(req);

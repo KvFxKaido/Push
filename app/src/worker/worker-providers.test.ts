@@ -547,6 +547,17 @@ describe('handleZenChat — per-model transport (standard tier)', () => {
     expect(JSON.stringify(body.tools ?? [])).not.toContain('googleSearch');
   });
 
+  it('strips Google Search grounding from a legacy OpenAI-shaped body too', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest({ ...chatBody('gemini-3-flash'), google_search_grounding: true }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.contents).toBeDefined();
+    expect(JSON.stringify(body.tools ?? [])).not.toContain('googleSearch');
+  });
+
   it('fills a keyless Gemini request from ZEN_KEY_STORE, and 401s with no key source', async () => {
     const get = captureUpstream();
     await handleZenChat(

@@ -2706,7 +2706,15 @@ async function handleGeminiWireChat(
         { status: 400 },
       );
     }
-    upstreamBody = JSON.stringify(buildGeminiGenerateContentRequest(dual.parsed));
+    // Same grounding rule as the neutral branch: the legacy body's
+    // `google_search_grounding` flag is honored on the Google route only.
+    upstreamBody = JSON.stringify(
+      buildGeminiGenerateContentRequest(
+        cfg.provider === 'google'
+          ? dual.parsed
+          : { ...dual.parsed, google_search_grounding: false },
+      ),
+    );
   }
 
   // Gemini puts the model in the URL path and selects SSE framing via
