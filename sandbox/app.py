@@ -31,13 +31,20 @@ sandbox_image = (
     .apt_install("git", "curl", "ripgrep", "jq", "zip", "unzip")
     .pip_install("ruff", "pytest")
     .run_commands(
-        # Node 22 — deliberately NOT the repo-wide Node 24 floor. This image
-        # mirrors Dockerfile.sandbox, whose Node comes from the Cloudflare
-        # sandbox base image (cloudflare/sandbox:0.12.3-python ships v22.23.1 —
-        # verified from the binary in the image, not from its docs). The two
-        # sandbox backends must agree, so this pin moves only when the Cloudflare
-        # base image does. Both images run the *user's* repo commands, not Push's
-        # own toolchain, which is why they sit below the repo's Node 24 floor.
+        # Node 22 — deliberately NOT the repo-wide Node 24 floor. Both sandbox
+        # images run the *user's* repo commands, not Push's own toolchain, which
+        # is why they sit below that floor; they also ship no compiler, so a
+        # native module has to arrive as a prebuilt binary and prebuilts are
+        # thinnest on the newest major. 22 is an LTS line (Jod); v26 is not.
+        # This mirrors Dockerfile.sandbox's NOTE ON NODE header, which is now
+        # the source of truth for the pin — under Sandbox SDK 1.0 that image
+        # copies Node from `node:22.23.4-bookworm-slim` and
+        # `cloudflare/sandbox:1.0.3` supplies only `sandbox-shim`. (This comment
+        # previously said Node came from the 0.12 Cloudflare base image and
+        # moved only when that base did; both halves stopped being true at the
+        # 1.0 migration — see docs/decisions/Cloudflare Sandbox SDK 1.0
+        # Migration.md decision #4.) The two backends must still agree, so move
+        # them together.
         "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
         "apt-get install -y nodejs",
         # Default git identity — overridden per-session when GitHub token is available

@@ -548,9 +548,15 @@ same-day workaround: flip the var and fix forward.
    native modules depend on prebuilts that are thinnest on the newest major,
    nothing in CI builds this image (`Validate sandbox` only syntax-checks the
    Modal app, so the first real build is a deploy), and it touched only the
-   Cloudflare half of a documented two-backend pin. `library/node` and
-   `library/python` majors are now ignored in `.github/dependabot.yml` so the
-   decision stops being re-proposed monthly.
+   Cloudflare half of a documented two-backend pin. `.github/dependabot.yml`
+   now holds both base pins so the decision stops being re-proposed weekly:
+   `library/node` ignores majors (the major *is* the Node release line, so 22.x
+   minors still arrive), and `library/python` ignores majors **and minors**,
+   because Dependabot reads a Docker tag as `major.minor.patch` — 3.11 to 3.15
+   is a semver-minor update, so a major-only rule would have stopped nothing
+   but Python 4. Both reviewers caught that on #1698. `sandbox/app.py`'s Node
+   comment, which still carried the superseded 0.12-base rationale, now points
+   at `Dockerfile.sandbox`'s NOTE ON NODE as the single source of the pin.
 5. **Production switch timing**, set by when 0.x support ends on 2026-12-31.
    Recommended: aim for early December, leaving room to fix forward.
 
