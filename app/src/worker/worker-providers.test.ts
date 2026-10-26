@@ -629,6 +629,32 @@ describe('handleZenChat — per-model transport (standard tier)', () => {
     expect(response.status).toBe(401);
   });
 
+  it('rewrites a renamed dotted Claude id (an old locked chat) before routing', async () => {
+    const get = captureUpstream();
+    const response = await handleZenChat(
+      makeZenRequest(chatBody('claude-sonnet-4.6')),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(200);
+    // Routed as the dashed id: Messages, with the migrated model in the body.
+    expect(get()?.url).toBe('https://opencode.ai/zen/v1/messages');
+    expect(JSON.parse(get()!.init.body as string).model).toBe('claude-sonnet-4-6');
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('"zen_model_migrated"'));
+  });
+
+  it('rewrites the neutral wire too, and leaves ids with no successor alone', async () => {
+    const get = captureUpstream();
+    await handleZenChat(
+      makeZenRequest({ contract: 'push.stream.v1', ...chatBody('claude-opus-4.8') }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(JSON.parse(get()!.init.body as string).model).toBe('claude-opus-4-8');
+
+    // No Zen successor: sent as-is (Zen's "unavailable" is the honest answer).
+    await handleZenChat(makeZenRequest(chatBody('claude-opus-4.1')), makeEnv({ ZEN_API_KEY: 'k' }));
+    expect(JSON.parse(get()!.init.body as string).model).toBe('claude-opus-4.1');
+  });
+
   // Production shape: gateway on, Zen BYOK held by the gateway, no caller key.
   const BYOK_ENV = {
     CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',

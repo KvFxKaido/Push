@@ -43,6 +43,7 @@ import {
   getZaiModelName,
   getKimiModelName,
   getHuggingFaceModelName,
+  getZenGoMode,
   getZenModelName,
   getFireworksModelName,
   getDeepSeekModelName,
@@ -110,7 +111,12 @@ export function routesThroughAnthropicBridge(
   model: string | undefined,
 ): boolean {
   if (!provider || !model) return false;
-  return resolvePushCapabilityProfile(provider, model).reasoningBlocks;
+  // Zen's transport is per tier as well as per model, so say which tier is live.
+  return resolvePushCapabilityProfile(
+    provider,
+    model,
+    provider === 'zen' ? { zenGo: getZenGoMode() } : undefined,
+  ).reasoningBlocks;
 }
 
 /**

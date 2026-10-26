@@ -181,10 +181,10 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     };
   }
 
-  // `minimax-m2.7` routes through the Anthropic bridge in Zen Go
-  // (`getZenGoTransport`), so the orchestrator should emit the wire
-  // sidecar for that route.
-  const anthropicRoute = ['zen', 'minimax-m2.7'] as const;
+  // `claude-sonnet-5-5` is a Messages model on standard Zen (`getZenTransport`;
+  // the default tier, since no Go flag is stored), so the orchestrator should
+  // emit the wire sidecar for that route.
+  const anthropicRoute = ['zen', 'claude-sonnet-5-5'] as const;
 
   function buildLlm(
     messages: ChatMessage[],
@@ -232,6 +232,63 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     const assistant = llm.find((m) => m.role === 'assistant');
     expect(assistant).toBeDefined();
     expect(assistant?.reasoning_blocks).toEqual([{ type: 'redacted_thinking', data: 'enc' }]);
+  });
+
+  it('replays signed thinking for standard-tier Zen Claude (Messages transport)', () => {
+    // Claude 5 thinks by default and Anthropic needs the signed thinking block
+    // back in a tool loop. Counting only Go models dropped it for standard Zen.
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'look it up' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: '',
+        reasoningBlocks: [{ type: 'thinking', text: 'plan', signature: 'sig-c5' }],
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'tool result' }),
+    ];
+    const claude = buildLlm(messages, 'zen', 'claude-sonnet-5-5').find(
+      (m) => m.role === 'assistant',
+    );
+    expect(claude?.reasoning_blocks).toEqual([
+      { type: 'thinking', text: 'plan', signature: 'sig-c5' },
+    ]);
+    // A Chat Completions model on the same provider still gets none.
+    const glm = buildLlm(messages, 'zen', 'glm-5.2').find((m) => m.role === 'assistant');
+    expect(glm?.reasoning_blocks).toBeUndefined();
+  });
+
+  it('decides replay per Zen tier: qwen3.5-plus is Messages on standard, Chat Completions on Go', () => {
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'go' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'ok',
+        reasoningBlocks: [{ type: 'thinking', text: 't', signature: 's' }],
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'next' }),
+    ];
+    const replayed = () =>
+      buildLlm(messages, 'zen', 'qwen3.5-plus').find((m) => m.role === 'assistant')
+        ?.reasoning_blocks;
+
+    // Standard tier (no Go flag stored): the Messages route replays the blocks.
+    expect(replayed()).toEqual([{ type: 'thinking', text: 't', signature: 's' }]);
+
+    // Go tier: the same id is Chat Completions, which can't carry them.
+    const store = new Map<string, string>([['zen_go_mode', 'true']]);
+    const localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+    vi.stubGlobal('window', { localStorage, sessionStorage: localStorage });
+    try {
+      expect(replayed()).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('does not emit reasoning_blocks on user messages', () => {

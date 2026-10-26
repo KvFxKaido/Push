@@ -24,6 +24,7 @@ import {
   providerConsumesContentBlocksByDefault,
 } from './provider-definition.js';
 import { getZenGoTransport } from './zen-go.js';
+import { getZenTransport } from './zen-transport.js';
 
 export const MIN_PUSH_CONTEXT_TOKENS = 64_000;
 
@@ -49,6 +50,11 @@ export type PushCapabilityMetadataLookup = (
 export interface PushCapabilityProfileOptions {
   /** Request body contract for this route. `neutral` routes consume contentBlocks. */
   requestWire?: 'neutral' | 'openai';
+  /** Zen only: which tier serves the request (Go vs standard), since the same id
+   *  can use a different transport on each (`qwen3.5-plus` is Messages on
+   *  standard, Chat Completions on Go). Unset keeps the Go table, the historical
+   *  default. */
+  zenGo?: boolean;
 }
 
 const METADATA_NATIVE_TOOL_PROVIDERS: ReadonlySet<string> = new Set([
@@ -212,9 +218,21 @@ function routeConsumesContentBlocks(
   return providerConsumesContentBlocksByDefault(provider);
 }
 
-function routeCarriesReasoningBlocks(provider: string, modelId: string): boolean {
+function routeCarriesReasoningBlocks(
+  provider: string,
+  modelId: string,
+  options: PushCapabilityProfileOptions | undefined,
+): boolean {
   if (providerCarriesReasoningBlocksByDefault(provider)) return true;
-  return provider === 'zen' && getZenGoTransport(modelId) === 'anthropic';
+  if (provider !== 'zen') return false;
+  // Zen's Messages models, per tier: the two tables disagree on some ids, and
+  // replaying signed blocks to a Chat Completions route only sends an emptied
+  // turn. Claude 5 thinks by default and Anthropic needs its signed thinking back
+  // in a tool loop, so standard-tier Claude must be counted when the caller
+  // says the tier is standard.
+  return options?.zenGo === false
+    ? getZenTransport(modelId) === 'anthropic'
+    : getZenGoTransport(modelId) === 'anthropic';
 }
 
 function modelSupportsMultimodal(
@@ -260,7 +278,7 @@ export function resolvePushCapabilityProfile(
     structuredOutput: resolveStructuredOutputMode(provider, model, metadata, nativeToolCalling),
     openaiWire: resolveOpenAIWire(provider, model, metadata),
     contentBlocks,
-    reasoningBlocks: routeCarriesReasoningBlocks(provider, model),
+    reasoningBlocks: routeCarriesReasoningBlocks(provider, model, options),
     context: resolveContextTier(metadata.contextLimit),
   };
 }
