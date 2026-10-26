@@ -194,6 +194,9 @@ function mockFailoverState(opts?: {
       getZaiModelName: () => 'glm-5.2',
       getPreferredProvider: () => null,
       getLastUsedProvider: () => null,
+      // `zenTransport` below mocks the Go table, so these chats are Go-tier:
+      // the bridge decision is per tier (lib/capability-profile.ts).
+      getZenGoMode: () => true,
     };
   });
   // The transport predicate lives in root lib (`lib/zen-go.ts`) since the
