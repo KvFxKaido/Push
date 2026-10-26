@@ -85,3 +85,27 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    ignore:
+      # Dockerfile.sandbox runs the *user's* repo commands, so its Node and
+      # Python majors are a deliberate choice, not a version to chase.
+      #
+      # Node stays on an LTS line: v22 is Jod, v24 is Krypton, and v26 is
+      # `lts: false` (checked against nodejs.org/dist/index.json, 2026-10-26).
+      # The image also ships no compiler, so every native module has to come
+      # from a prebuilt binary — and prebuilts are thinnest on the newest
+      # major, which makes this image more sensitive to a Current release than
+      # a normal app would be. `sandbox/app.py` (Modal) mirrors the pin via
+      # `setup_22.x` and the two backends must agree, so a bump here is half a
+      # change by construction. See the NOTE ON NODE header in
+      # Dockerfile.sandbox (#1687 closed on these grounds).
+      - dependency-name: "library/node"
+        update-types: ["version-update:semver-major"]
+      # Python majors are a wheel-availability gamble for the same reason: the
+      # image pip-installs matplotlib/numpy/pandas unpinned, with no compiler
+      # to fall back on when a wheel is missing for the new interpreter.
+      # (#1686 closed on these grounds.)
+      - dependency-name: "library/python"
+        update-types: ["version-update:semver-major"]
+      # No ignore for `cloudflare/sandbox`: that tag must track the
+      # @cloudflare/sandbox package version, since the image only carries
+      # `sandbox-shim` and the two are a matched pair.
