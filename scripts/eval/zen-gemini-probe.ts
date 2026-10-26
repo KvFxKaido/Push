@@ -22,11 +22,16 @@ const tools = [
     description: 'Returns the current time.',
     parameters: { type: 'object', properties: {} },
   },
+  {
+    name: 'get_date',
+    description: 'Returns the current date.',
+    parameters: { type: 'object', properties: {} },
+  },
 ];
 const user = {
   id: 'u1',
   role: 'user' as const,
-  content: 'Call the get_time tool, then tell me the time it returned.',
+  content: 'Call get_time and get_date in parallel (both in one turn), then tell me both results.',
   timestamp: 0,
 };
 
@@ -65,8 +70,8 @@ if (calls.length === 0) {
   process.exit(0);
 }
 
-// Round 2: replay the call and its result, as Push does.
-const call = calls[0];
+// Round 2: replay every call and its result, one message per result as Push
+// stores them, then compare the serializer's output with the old split form.
 const round2 = toGeminiGenerateContent({
   provider: 'zen',
   model,
@@ -78,54 +83,52 @@ const round2 = toGeminiGenerateContent({
       role: 'assistant',
       content: '',
       timestamp: 0,
-      contentBlocks: [
-        {
-          type: 'tool_use',
-          id: 'call_1',
-          name: call.name,
-          input: call.args ?? {},
-          ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
-        },
-      ],
+      contentBlocks: calls.map((c, i) => ({
+        type: 'tool_use',
+        id: `call_${i}`,
+        name: c.name,
+        input: c.args ?? {},
+        ...(c.thoughtSignature ? { thoughtSignature: c.thoughtSignature } : {}),
+      })),
     },
-    {
-      id: 'r1',
+    ...calls.map((c, i) => ({
+      id: `r${i}`,
       role: 'user',
       content: '',
       timestamp: 0,
-      contentBlocks: [{ type: 'tool_result', tool_use_id: 'call_1', content: '12:00 UTC' }],
-    },
-  ],
-} as never) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
-
-const stripIds = (body: typeof round2) =>
-  JSON.parse(
-    JSON.stringify(body, (k, v) =>
-      (k === 'functionCall' || k === 'functionResponse') && v && typeof v === 'object'
-        ? Object.fromEntries(Object.entries(v).filter(([kk]) => kk !== 'id'))
-        : v,
-    ),
-  );
-
-const variants: Array<[string, unknown]> = [
-  ['as Push sends it', round2],
-  ['without functionCall/functionResponse ids', stripIds(round2)],
-];
-console.log(
-  'round 2 contents shape:',
-  JSON.stringify(
-    round2.contents.map((c) => ({
-      role: (c as never as { role: string }).role,
-      parts: c.parts.map((p) => Object.keys(p)),
+      contentBlocks: [
+        {
+          type: 'tool_result',
+          tool_use_id: `call_${i}`,
+          content: c.name === 'get_time' ? '12:00 UTC' : '2026-10-26',
+        },
+      ],
     })),
+  ],
+} as never) as { contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> };
+
+// The pre-fix shape: one user turn per functionResponse.
+const split = {
+  ...round2,
+  contents: round2.contents.flatMap((c) =>
+    c.role === 'user' && c.parts.length > 1 && c.parts.every((p) => 'functionResponse' in p)
+      ? c.parts.map((p) => ({ role: 'user', parts: [p] }))
+      : [c],
   ),
-);
-for (const [label, body] of variants) {
-  for (const path of ['streamGenerateContent?alt=sse', 'generateContent']) {
-    const r = await post(path, body);
-    const t = redact(await r.text());
-    console.log(
-      `\nround 2 [${label}] ${path.split('?')[0]}: HTTP ${r.status}\n${t.slice(0, 600) || '(empty body)'}`,
-    );
-  }
+};
+const shape = (b: typeof round2) =>
+  JSON.stringify(
+    b.contents.map((c) => ({ role: c.role, parts: c.parts.map((p) => Object.keys(p)[0]) })),
+  );
+console.log('merged shape:', shape(round2));
+console.log('split shape: ', shape(split));
+for (const [label, body] of [
+  ['merged (fixed serializer)', round2],
+  ['split (one turn per result, pre-fix)', split],
+] as const) {
+  const r = await post('generateContent', body);
+  const t = redact(await r.text());
+  console.log(`
+round 2 [${label}]: HTTP ${r.status}
+${t.slice(0, 400) || '(empty body)'}`);
 }
