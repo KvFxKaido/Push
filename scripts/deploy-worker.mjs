@@ -82,9 +82,16 @@ function log(event, ctx) {
   console.error(JSON.stringify({ level: 'info', event, ...ctx }));
 }
 
+// Pinned: wrangler is not a project dependency, so a bare `npx wrangler` ran
+// whatever release was newest on every production deploy. 4.153.0 (published
+// 2026-10-26 14:24 UTC) coincides with every deploy failing "The Docker CLI is
+// needed to build the configured image … but could not be launched", while
+// 4.152.0 built the same tree. Bump deliberately, watching the first deploy.
+const WRANGLER_VERSION = '4.152.0';
+
 function runWranglerDeploy(args) {
   return new Promise((resolve) => {
-    const child = spawn('npx', ['wrangler', 'deploy', ...args], {
+    const child = spawn('npx', ['--yes', `wrangler@${WRANGLER_VERSION}`, 'deploy', ...args], {
       stdio: ['inherit', 'pipe', 'pipe'],
       shell: process.platform === 'win32',
     });
