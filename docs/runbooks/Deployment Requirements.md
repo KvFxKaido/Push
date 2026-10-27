@@ -17,7 +17,7 @@ allowances at single-user scale. **Workers for Platforms is NOT required**
 
 | Service | Binding(s) | Why | Provisioning |
 |---|---|---|---|
-| Workers + Workers Builds | — | The app itself; deploy-on-merge from `main` (~2 min). Don't `wrangler deploy` by hand. | Connect the repo in dash → Workers Builds; set the production trigger's deploy command to `node scripts/deploy-worker.mjs` (`wrangler deploy` that retries the occasional sandbox-image push timeout to `registry.cloudflare.com`; see the script header) |
+| Workers + Workers Builds | — | The app itself; deploy-on-merge from `main` (~2 min). Don't `wrangler deploy` by hand. | Connect the repo in dash → Workers Builds; set the production trigger's deploy command to `node scripts/deploy-worker.mjs` (`wrangler deploy` at a **pinned** wrangler version, `WRANGLER_VERSION` in the script, that retries the occasional sandbox-image push timeout to `registry.cloudflare.com`; see the script header. Bump the pin deliberately and watch the first deploy) |
 | Durable Objects | `Sandbox`, `CoderJob`, `RELAY_SESSIONS`, `PrReviewJob`, `RUN_HOST` | Sandbox control, background coder jobs, remote-session relay, autonomous PR review, durable runs | Migrations ship in `wrangler.jsonc`; nothing manual |
 | Containers (Sandbox SDK) | via `Sandbox` DO | Cloud workspaces (`Dockerfile.sandbox`, base pinned to the SDK version) | Deploys with the Worker |
 | KV | `SANDBOX_TOKENS`, `SNAPSHOT_INDEX`, `ARTIFACTS`, `CHAT_LIBRARY` | Sandbox auth tokens (durable source of truth), snapshot index, artifact store, chat library | `wrangler kv namespace create <name>` ×4, swap the ids into `wrangler.jsonc` |

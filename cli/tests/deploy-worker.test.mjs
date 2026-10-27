@@ -131,8 +131,8 @@ test('entry point: retries the push timeout and succeeds, forwarding args', () =
   const { status, calls, stderr } = runDeploy(['timeout', 'ok']);
   assert.equal(status, 0);
   assert.deepEqual(calls, [
-    ['wrangler', 'deploy', '--minify'],
-    ['wrangler', 'deploy', '--minify'],
+    ['--yes', 'wrangler@4.152.0', 'deploy', '--minify'],
+    ['--yes', 'wrangler@4.152.0', 'deploy', '--minify'],
   ]);
   assert.match(stderr, /"event":"deploy_retry_succeeded","attempt":2/);
 });
