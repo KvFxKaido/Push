@@ -95,13 +95,12 @@ async function resolveAuditorVerdictFn(
     return { error: `no model configured for provider "${providerId}"` };
   }
 
+  // resolveApiKey throws when credentials are missing; an empty key it returns
+  // is usable (AI Gateway BYOK holds the key).
   let apiKey = '';
   try {
     apiKey = resolveApiKey(cliProvider);
   } catch {
-    apiKey = '';
-  }
-  if (!apiKey) {
     return { error: `no API key available for provider "${providerId}"` };
   }
 

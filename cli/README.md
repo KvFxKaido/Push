@@ -467,6 +467,23 @@ Claude Max and Team plans include monthly Claude Platform API credits ($100 on M
 
 When the month's credits are used up, requests stop until the next grant unless the Console organization has other credits or auto-reload; usage is never charged to the Claude plan. The credits don't cover interactive Claude Code sessions, but that restriction doesn't apply to Push.
 
+### Cloudflare AI Gateway (`anthropic`, `deepseek`)
+
+The CLI can send `anthropic` and `deepseek` through the same Cloudflare AI Gateway the web Worker uses, with the same env names and shared routing code (`lib/ai-gateway.ts`). Set:
+
+| Variable | Meaning |
+|---|---|
+| `CF_AI_GATEWAY_ACCOUNT_ID` | Cloudflare account id the gateway belongs to |
+| `CF_AI_GATEWAY_SLUG` | Gateway name (id) |
+| `CF_AI_GATEWAY_TOKEN` | Gateway token, sent as `cf-aig-authorization` (authenticated gateways) |
+| `CF_AI_GATEWAY_BYOK` | Comma-separated providers whose key the gateway stores, e.g. `anthropic,deepseek` |
+
+With account and slug set, those two providers' **default** endpoints go through the gateway. An endpoint you set yourself (`PUSH_ANTHROPIC_URL`, `--url`, config) is never rewritten, even when it's the built-in URL. Setting it is how you pin a provider direct. Requests get `cf-aig-skip-cache`, and the token is only ever sent to the gateway host.
+
+- **BYOK:** for a provider listed in `CF_AI_GATEWAY_BYOK`, no key is needed. Push sends none and the gateway injects its stored key, so the CLI never holds the raw provider key. The stored key bills whichever Console organization it belongs to. To spend the Max/Team credits above, the gateway's key must come from the credits-linked organization.
+- **Fallback:** when you also have a direct key (`PUSH_ANTHROPIC_API_KEY` / `PUSH_DEEPSEEK_API_KEY` or config), a gateway or transport failure before any output retries the turn on the provider's direct endpoint, and logs `cli_gateway_fell_back_direct` to stderr. That covers network errors, 5xx, and 401/403, the last two meaning a bad gateway token or a BYOK key the gateway lacks. Request errors (400/404/422) and 429s surface as-is, since they would fail direct too or would silently spend a different key. Without a direct key, the gateway error surfaces.
+- With no gateway env set, nothing changes: requests go direct, with no gateway headers.
+
 ## Tools
 
 All providers support prompt-engineered tool calls (fenced JSON blocks in the content stream). OpenAI-compatible native `delta.tool_calls` and direct OpenAI Responses `response.function_call_arguments.*` events are also accepted; the provider pumps accumulate them and flush each assembled call back into the same dispatcher.

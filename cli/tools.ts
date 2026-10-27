@@ -2230,15 +2230,19 @@ function makeAuditorPreCommitGate({
 }) {
   return async () => {
     const cliProvider = providerId ? PROVIDER_CONFIGS[providerId] : null;
+    // resolveApiKey throws when credentials are missing; an empty key it RETURNS
+    // is a usable configuration (AI Gateway BYOK: the gateway holds the key).
     let apiKey = '';
+    let hasCredentials = false;
     if (cliProvider) {
       try {
         apiKey = resolveApiKey(cliProvider);
+        hasCredentials = true;
       } catch {
         apiKey = '';
       }
     }
-    if (!cliProvider || !model || !apiKey) {
+    if (!cliProvider || !model || !hasCredentials) {
       const reason = !cliProvider
         ? `unknown provider "${providerId}"`
         : !model

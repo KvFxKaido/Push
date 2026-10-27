@@ -15,6 +15,7 @@ import {
 } from '../lib/provider-definition.ts';
 import { migrateRenamedModel } from '../lib/provider-models.ts';
 import { getZenTransport } from '../lib/zen-transport.ts';
+import { resolveAiGatewayFetchTarget } from '../lib/ai-gateway.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import {
@@ -61,6 +62,11 @@ export interface ProviderConfig {
   /** Optional. Omitting it defaults to `openai-compat` for backwards
    *  compatibility with every pre-existing entry. */
   streamShape?: CliProviderStreamShape;
+  /** True when the endpoint was set explicitly (env, saved config or `--url`,
+   *  which all land in the provider's URL env var) — even to the built-in
+   *  default, a common way to pin a provider direct. AI Gateway routing only
+   *  applies when this is `false`; unset (a hand-built config) never routes. */
+  urlOverridden?: boolean;
 }
 
 export interface ProviderListEntry {
@@ -257,6 +263,53 @@ function zenGeminiConfig(config: ProviderConfig, model: string): ProviderConfig 
   };
 }
 
+// CLI providers that may route through Cloudflare AI Gateway, with their gateway
+// provider slug. Same gateway, env names and helpers as the Worker
+// (lib/ai-gateway.ts): set CF_AI_GATEWAY_ACCOUNT_ID + CF_AI_GATEWAY_SLUG (+
+// CF_AI_GATEWAY_TOKEN for an authenticated gateway, CF_AI_GATEWAY_BYOK for keys
+// the gateway holds) and these providers' default endpoints go through it.
+const CLI_GATEWAY_PROVIDERS: Readonly<Record<string, string>> = {
+  anthropic: 'anthropic',
+  deepseek: 'deepseek',
+};
+
+/**
+ * The gateway route for `config`, or null to go direct: the provider isn't
+ * gateway-routable, the gateway isn't configured, or the user overrode the
+ * endpoint (an explicit URL always wins).
+ */
+export function cliGatewayRoute(config: ProviderConfig): { url: string; byok: boolean } | null {
+  const slug = CLI_GATEWAY_PROVIDERS[config.id];
+  if (!slug || config.urlOverridden !== false) return null;
+  let direct: URL;
+  try {
+    direct = new URL(config.url);
+  } catch {
+    return null;
+  }
+  const target = resolveAiGatewayFetchTarget(process.env, config.url, {
+    provider: slug,
+    pathSuffix: `${direct.pathname}${direct.search}`,
+  });
+  return target.upstreamUrl === config.url ? null : { url: target.upstreamUrl, byok: target.byok };
+}
+
+/**
+ * Which pre-output gateway failures retry on the direct endpoint. Only gateway or
+ * transport trouble does: no HTTP status (network / connection), 5xx, and
+ * 401/403 (a bad `cf-aig-authorization` or a BYOK key the gateway lacks). A
+ * request-shaped 4xx (400/404/422) would fail direct too, so it surfaces as-is.
+ * 429 surfaces too, deliberately: transient rate limits are retried with backoff
+ * by the lead loop, and on exhausted quota a direct retry would silently spend a
+ * different key's money.
+ */
+function gatewayFailureWorthDirectRetry(error: unknown): boolean {
+  const status =
+    error && typeof error === 'object' ? (error as { status?: unknown }).status : undefined;
+  if (typeof status !== 'number') return true;
+  return status >= 500 || status === 401 || status === 403;
+}
+
 function resolveEffectiveProviderConfig(config: ProviderConfig): ProviderConfig {
   if (config.id !== 'openrouter' || !useOpenRouterLegacyChatTransport()) {
     return config;
@@ -279,6 +332,9 @@ function buildProviderConfig(def: ProviderDefinition): ProviderConfig {
 
   const config: ProviderConfig = {
     id: def.id,
+    get urlOverridden() {
+      return firstLiveEnv(cli.urlEnvVars) !== undefined;
+    },
     get url() {
       return firstLiveEnv(cli.urlEnvVars) ?? cli.defaultUrl;
     },
@@ -388,6 +444,45 @@ function createAdapterStream(
   apiKey: string,
   options: { sessionId?: string },
 ): PushStream<LlmMessage> {
+  // AI Gateway: send through the gateway (keyless when it holds the key), and
+  // fall back to the direct endpoint on a failure before any output — but only
+  // when a direct key exists to fall back with.
+  const route = cliGatewayRoute(config);
+  if (route) {
+    const viaGateway = createAdapterStream(
+      {
+        ...config,
+        urlOverridden: true,
+        get url() {
+          return route.url;
+        },
+        get defaultModel() {
+          return config.defaultModel;
+        },
+      },
+      route.byok ? '' : apiKey,
+      options,
+    );
+    if (!apiKey) return viaGateway;
+    const direct = createAdapterStream({ ...config, urlOverridden: true }, apiKey, options);
+    return (req) =>
+      streamResponsesWithChatFallback({
+        responses: () => viaGateway(req),
+        chat: () => direct(req),
+        shouldFallback: (error) => !req.signal?.aborted && gatewayFailureWorthDirectRetry(error),
+        onFallback: (error) => {
+          console.error(
+            JSON.stringify({
+              level: 'warn',
+              event: 'cli_gateway_fell_back_direct',
+              provider: config.id,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        },
+      });
+  }
+
   // Unless Chat is explicitly forced, OpenRouter decides the primary wire per
   // request and wraps every Responses attempt in the same pre-output fallback
   // policy as web/Worker. A `responses` override forces the primary wire but
@@ -488,7 +583,9 @@ export function resolveApiKey(config: ProviderConfig): string {
     const value: string | undefined = process.env[key];
     if (value && value.trim()) return value.trim();
   }
-  if (config.requiresKey) {
+  // The gateway holds this provider's key (BYOK) and the request routes there:
+  // keyless is the configured state, not a missing key.
+  if (config.requiresKey && !cliGatewayRoute(config)?.byok) {
     throw new Error(`Missing API key for ${config.id}. Set one of: ${config.apiKeyEnv.join(', ')}`);
   }
   return '';
@@ -569,7 +666,8 @@ export function resolveCliFailoverCandidates(
     } catch {
       continue; // no key configured for this provider
     }
-    if (config.requiresKey && !apiKey) continue;
+    // An empty key resolveApiKey returned is only usable through gateway BYOK.
+    if (config.requiresKey && !apiKey && !cliGatewayRoute(config)?.byok) continue;
     out.push({ config, apiKey });
   }
   return out;

@@ -23,7 +23,7 @@ import {
   scopeOpenRouterRequiredParameters,
 } from '../lib/openrouter-parameters.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
-import { aiGatewaySkipCacheHeaders } from '../lib/ai-gateway.ts';
+import { aiGatewayRequestHeaders } from '../lib/ai-gateway.ts';
 import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
 import { parseResponsesReasoningItem } from '../lib/responses-reasoning-item.ts';
 import type { ProviderConfig } from './provider.ts';
@@ -59,7 +59,7 @@ async function* cliOpenAIResponsesStream(
     headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
     headers['X-Title'] = 'Push CLI';
   }
-  Object.assign(headers, aiGatewaySkipCacheHeaders(config.url));
+  Object.assign(headers, aiGatewayRequestHeaders(config.url, process.env));
 
   const model = req.model && req.model.trim() ? req.model : config.defaultModel;
   const baseBody = toOpenAIResponses(req, {
