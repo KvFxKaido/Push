@@ -4,7 +4,13 @@
 import { strict as assert } from 'node:assert';
 import process from 'node:process';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { execFile } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import { createProviderStream, PROVIDER_CONFIGS, resolveApiKey } from '../provider.ts';
+import { executeToolCall } from '../tools.ts';
 
 const ENV_KEYS = [
   'CF_AI_GATEWAY_ACCOUNT_ID',
@@ -148,5 +154,47 @@ describe('CLI AI Gateway routing', () => {
     assert.equal(calls[0].url, 'https://api.anthropic.com/v1/messages');
     assert.equal(calls[0].headers['cf-aig-authorization'], undefined);
     assert.equal(calls[0].headers['cf-aig-skip-cache'], undefined);
+  });
+
+  it('lets the Auditor commit gate run keyless through gateway BYOK', async () => {
+    // Codex P1: resolveApiKey returns '' for BYOK, but the gate read an empty
+    // key as "no credentials" and failed every git_commit closed.
+    gatewayEnv({ CF_AI_GATEWAY_BYOK: 'anthropic' });
+    const verdict = JSON.stringify({ verdict: 'safe', summary: 'ok', risks: [] });
+    responses.push({
+      status: 200,
+      body:
+        `data: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: verdict } })}\n\n` +
+        `data: ${JSON.stringify({ type: 'message_stop' })}\n\n`,
+    });
+    const run = promisify(execFile);
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'push-gw-gate-'));
+    try {
+      await run('git', ['init', '-q'], { cwd: repo });
+      await run('git', ['config', 'user.email', 't@push.dev'], { cwd: repo });
+      await run('git', ['config', 'user.name', 'Push Test'], { cwd: repo });
+      await run('git', ['config', 'commit.gpgsign', 'false'], { cwd: repo });
+      await fs.writeFile(path.join(repo, 'a.txt'), 'hello\n');
+      const result = await executeToolCall(
+        { tool: 'git_commit', args: { message: 'add a' } },
+        repo,
+        {
+          role: 'coder',
+          auditorGate: true,
+          providerId: 'anthropic',
+          model: 'claude-sonnet-5-5',
+        },
+      );
+      assert.ok(!/could not run/.test(result.text), result.text);
+      assert.equal(
+        calls[0]?.url,
+        `${GATEWAY}/anthropic/v1/messages`,
+        'the Auditor ran via the gateway',
+      );
+      assert.equal(calls[0].headers['x-api-key'], undefined);
+      assert.equal(result.ok, true, result.text);
+    } finally {
+      await fs.rm(repo, { recursive: true, force: true }).catch(() => {});
+    }
   });
 });

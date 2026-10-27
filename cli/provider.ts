@@ -645,7 +645,8 @@ export function resolveCliFailoverCandidates(
     } catch {
       continue; // no key configured for this provider
     }
-    if (config.requiresKey && !apiKey) continue;
+    // An empty key resolveApiKey returned is only usable through gateway BYOK.
+    if (config.requiresKey && !apiKey && !cliGatewayRoute(config)?.byok) continue;
     out.push({ config, apiKey });
   }
   return out;
