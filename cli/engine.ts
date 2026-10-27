@@ -46,6 +46,10 @@ export interface RunOptions {
   // CLI tool names that bypass approval prompts in their gate
   // (today: `exec`, `exec_start`).
   alwaysAllow?: string[];
+  // MCP tool patterns allowed to run without approval, including headless
+  // (exact `mcp__server__tool` or a trailing-`*` prefix). Undefined falls back
+  // to `PUSH_MCP_ALLOW`. See docs/decisions/CLI MCP Client — Governed Attach.md.
+  mcpAllow?: string[];
   // Opt-out for the Auditor commit gate. Passed raw (not pre-resolved) to
   // `executeToolCall`, where the `git_commit` case resolves it against
   // `PUSH_AUDITOR_GATE` via the shared `lib/auditor-policy.ts` resolver

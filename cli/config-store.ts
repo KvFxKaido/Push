@@ -70,6 +70,14 @@ export interface PushConfig {
   disabledTools?: string[];
   safeExecPatterns?: string[];
   /**
+   * User-attached MCP servers, in the `.mcp.json` shape (`command`/`args`/`env`
+   * for stdio, `url`/`headers` for streamable HTTP; `${VAR}` expands from the
+   * environment). CLI only — docs/decisions/CLI MCP Client — Governed Attach.md.
+   */
+  mcpServers?: Record<string, Record<string, unknown>>;
+  /** MCP tools that run without approval, headless included (exact names or `prefix*`). */
+  mcpAllow?: string[];
+  /**
    * Auditor commit gate. When true (the default — see `lib/auditor-policy.ts`),
    * `git_commit` is routed through the Auditor SAFE/UNSAFE gate before the
    * commit lands. Set false to opt out. Forwarded to child processes (the
@@ -212,6 +220,7 @@ function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<Push
   });
   add(['PUSH_DISABLED_TOOLS'], ['disabledTools'], parseEnvironmentList);
   add(['PUSH_ALWAYS_ALLOW'], ['alwaysAllow'], parseEnvironmentList);
+  add(['PUSH_MCP_ALLOW'], ['mcpAllow'], parseEnvironmentList);
   add(['PUSH_SCRUB_ALLOW'], ['scrub', 'allow'], parseEnvironmentList);
   add(['PUSH_SCRUB_DISABLED'], ['scrub', 'disabled'], parseStrictEnvironmentBoolean);
 
@@ -379,6 +388,12 @@ export function applyConfigToEnv(config: PushConfig): void {
   }
   if (Array.isArray(config.alwaysAllow) && config.alwaysAllow.length) {
     setEnvIfMissing('PUSH_ALWAYS_ALLOW', config.alwaysAllow.join(','));
+  }
+  // MCP headless/approval allowlist (docs/decisions/CLI MCP Client — Governed
+  // Attach.md). `mcpServers` itself is not forwarded: the daemon reads it from
+  // the config file when it first connects.
+  if (Array.isArray(config.mcpAllow) && config.mcpAllow.length) {
+    setEnvIfMissing('PUSH_MCP_ALLOW', config.mcpAllow.join(','));
   }
 
   // Forward the subprocess env-scrub policy to the daemon so that

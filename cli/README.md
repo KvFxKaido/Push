@@ -335,7 +335,7 @@ Two arrays in `~/.push/config.json` shape what tools the agent can run:
 ```
 
 - `disabledTools` — CLI tool names blocked at dispatch. The agent receives a `TOOL_DISABLED` error and is instructed not to retry.
-- `alwaysAllow` — CLI tool names that bypass approval prompts. Today only `exec` and `exec_start` actually prompt; other entries are forward-compatible no-ops. Does **not** bypass `--allow-exec` in headless mode.
+- `alwaysAllow` — CLI tool names that bypass approval prompts. Today `exec`, `exec_start` and attached MCP tools (see [MCP tools](#mcp-tools-attached-servers)) prompt; other entries are forward-compatible no-ops. Does **not** bypass `--allow-exec` (or the MCP allowlist) in headless mode.
 - `safeExecPatterns` — command-prefix allowlist for single plain `exec` commands. Use this for command-level granularity instead of allowing the whole tool; chained shell commands still prompt/block when they contain a high-risk segment.
 
 The CLI exports both lists to `PUSH_DISABLED_TOOLS` and `PUSH_ALWAYS_ALLOW` (comma-separated) so the `pushd` daemon's delegated tool executors inherit the same policy without re-reading config.
@@ -536,6 +536,36 @@ When a GitHub token is configured (`PUSH_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TO
 | `workflow_run` | mutate | Trigger a `workflow_dispatch` |
 
 Read-only GitHub tools parallelize alongside the CLI's other reads; the write tools (`pr_create`, `pr_merge`, `branch_delete`, `workflow_run`) are side-effecting and follow the one-trailing-side-effect-per-turn budget. **Merges go through the PR flow** — open a PR and merge it; the CLI never merges locally. Write tools require both a configured token and a role that grants `pr:write` (orchestrator/coder); the read-only Explorer is denied them at the capability gate.
+
+### MCP tools (attached servers)
+
+The CLI can attach tools from external [MCP](https://modelcontextprotocol.io) servers: Cloudflare, Notion, Linear and similar products Push talks to but doesn't own. Filesystem, git and shell stay Push's own governed tools, so don't attach MCP servers for those. Design and rationale: [CLI MCP Client — Governed Attach](../docs/decisions/CLI%20MCP%20Client%20—%20Governed%20Attach.md).
+
+Configure servers in `~/.push/config.json` in the `.mcp.json` shape (`url` means streamable HTTP; `command` means stdio). `${VAR}` / `${VAR:-default}` expand from the environment, so tokens stay out of the file. A server whose variable is unset is skipped, never sent a blank bearer.
+
+```json
+{
+  "mcpServers": {
+    "cloudflare-docs": { "type": "http", "url": "https://docs.mcp.cloudflare.com/mcp" },
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp",
+      "headers": { "Authorization": "Bearer ${CLOUDFLARE_API_TOKEN}" }
+    }
+  },
+  "mcpAllow": ["mcp__cloudflare_docs__*"]
+}
+```
+
+- **Names:** tools appear as `mcp__<server>__<tool>`. Each part is sanitized to `[A-Za-z0-9_]` (so `cloudflare-docs` becomes `cloudflare_docs`), and the full name is capped at 64 characters. A server name longer than 24 characters is shortened with a hash; the `mcp_server_connected` log line prints the exact `mcp__<server>__` prefix to use in patterns.
+- **Every call is treated as side-effecting.** A server's `readOnlyHint` is displayed but never trusted, so MCP calls ride the trailing side-effect chain and never skip approval.
+- **Headless runs (`push run`) block MCP calls** (`MCP_DISABLED`) unless the tool matches `mcpAllow`, `PUSH_MCP_ALLOW`, or `--allow-mcp <patterns>`. A pattern is an exact name or a prefix ending in `*`. `--mode yolo` also lifts the block, as it does for exec.
+- **Interactive** surfaces (REPL, TUI, daemon) prompt on every call that isn't allowlisted or listed in `alwaysAllow`. In the REPL, `a` trusts that one tool for the rest of the session.
+- **`disabledTools`** accepts exact MCP names and `mcp__<server>__*` prefixes. Disabled tools are also not advertised to the model.
+- **Roles:** the `mcp:call` capability exists only in local-daemon (CLI) mode, for the lead roles. Explorer, Reviewer and Auditor are denied at the capability gate.
+- Output passes through the same credential redaction as every other tool and is capped at 40k characters. stdio servers get the SDK's minimal environment plus their own `env` block, never Push's provider keys. Set `PUSH_MCP_DEBUG=1` to see a stdio server's stderr.
+- Logs on stderr: `mcp_server_connected` / `mcp_server_connect_failed` / `mcp_server_config_invalid`, and `mcp_tool_called` / `mcp_tool_failed` / `mcp_tool_blocked`.
+- **v1 limits:** tools only (no resources or prompts), no OAuth (use a bearer header), no legacy SSE transport. Tools are lead-only; delegated daemon nodes don't see them. On Windows, stdio `command` is spawned without a shell, so use `node`/an `.exe` (or `cmd /c npx …`), not a bare `npx`.
 
 ### Hashline edits
 

@@ -129,6 +129,7 @@ import { recordMalformedToolCall, resetToolCallMetrics } from './tool-call-metri
 import { recordWriteFile, resetWriteFileMetrics } from './edit-metrics.js';
 import { resetContextMetrics } from './context-metrics.js';
 import { loadUserGoalFile } from './user-goal-file.js';
+import { getMcpRegistry } from './mcp-client.ts';
 import {
   loadTaskLedger,
   saveTaskLedger,
@@ -556,6 +557,7 @@ export async function runLeadKernelTurn(
     execMode = resolveDefaultExecMode(),
     disabledTools,
     alwaysAllow,
+    mcpAllow,
     auditorGate,
     suppressRunComplete = false,
     suppressEventPersist = false,
@@ -750,6 +752,13 @@ export async function runLeadKernelTurn(
   // `executeToolCall`, whose dispatch gate returns the canonical
   // TOOL_DISABLED denial.
   const explorerFanOutEnabled = !isCliToolDisabled('delegate_explorer', disabledTools);
+  // User-attached MCP tools (CLI only; connected once per process on first
+  // use). Disabled ones are not advertised, same as the fan-out arc above; a
+  // stray call still reaches the dispatcher's TOOL_DISABLED denial.
+  const mcpRegistry = await getMcpRegistry();
+  const mcpTools = (mcpRegistry?.tools ?? []).filter(
+    (t) => !isCliToolDisabled(t.name, disabledTools),
+  );
   const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(
     providerConfig.id,
     leadModelId,
@@ -766,7 +775,7 @@ export async function runLeadKernelTurn(
           TODO_TOOL_PROTOCOL,
           ...(explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : []),
         ],
-      })
+      }).concat(mcpRegistry ? mcpRegistry.toolSchemas(mcpTools) : [])
     : undefined;
 
   // Opt-in provider failover can retry a round on another provider, possibly
@@ -781,6 +790,9 @@ export async function runLeadKernelTurn(
   const leadToolProtocol = leanToolProtocols ? toNativeToolProtocol(TOOL_PROTOCOL) : TOOL_PROTOCOL;
   const leadGitHubProtocol =
     githubProtocol && leanToolProtocols ? toNativeToolProtocol(githubProtocol) : githubProtocol;
+  const leadMcpProtocol = mcpRegistry
+    ? mcpRegistry.protocolBlock({ lean: leanToolProtocols, tools: mcpTools })
+    : '';
 
   // Tee the provider stream into the engine event vocabulary so the TUI /
   // REPL / daemon clients render the kernel's rounds exactly like engine
@@ -1111,6 +1123,8 @@ export async function runLeadKernelTurn(
         execMode,
         disabledTools,
         alwaysAllow,
+        mcp: mcpRegistry,
+        mcpAllow,
         auditorGate,
         providerId: providerConfig?.id,
         providerApiKey: apiKey,
@@ -1296,6 +1310,7 @@ export async function runLeadKernelTurn(
           ...(leadGitHubProtocol ? [leadGitHubProtocol] : []),
           TODO_TOOL_PROTOCOL,
           ...(explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : []),
+          ...(leadMcpProtocol ? [leadMcpProtocol] : []),
         ],
         nativeToolSchemas,
         leanToolProtocols,
