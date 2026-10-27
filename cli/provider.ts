@@ -62,9 +62,11 @@ export interface ProviderConfig {
   /** Optional. Omitting it defaults to `openai-compat` for backwards
    *  compatibility with every pre-existing entry. */
   streamShape?: CliProviderStreamShape;
-  /** The provider's built-in endpoint. `url` differing from it means the user
-   *  overrode it (env/config/--url), which AI Gateway routing never hijacks. */
-  defaultUrl?: string;
+  /** True when the endpoint was set explicitly (env, saved config or `--url`,
+   *  which all land in the provider's URL env var) — even to the built-in
+   *  default, a common way to pin a provider direct. AI Gateway routing only
+   *  applies when this is `false`; unset (a hand-built config) never routes. */
+  urlOverridden?: boolean;
 }
 
 export interface ProviderListEntry {
@@ -278,7 +280,7 @@ const CLI_GATEWAY_PROVIDERS: Readonly<Record<string, string>> = {
  */
 export function cliGatewayRoute(config: ProviderConfig): { url: string; byok: boolean } | null {
   const slug = CLI_GATEWAY_PROVIDERS[config.id];
-  if (!slug || !config.defaultUrl || config.url !== config.defaultUrl) return null;
+  if (!slug || config.urlOverridden !== false) return null;
   let direct: URL;
   try {
     direct = new URL(config.url);
@@ -290,6 +292,22 @@ export function cliGatewayRoute(config: ProviderConfig): { url: string; byok: bo
     pathSuffix: `${direct.pathname}${direct.search}`,
   });
   return target.upstreamUrl === config.url ? null : { url: target.upstreamUrl, byok: target.byok };
+}
+
+/**
+ * Which pre-output gateway failures retry on the direct endpoint. Only gateway or
+ * transport trouble does: no HTTP status (network / connection), 5xx, and
+ * 401/403 (a bad `cf-aig-authorization` or a BYOK key the gateway lacks). A
+ * request-shaped 4xx (400/404/422) would fail direct too, so it surfaces as-is.
+ * 429 surfaces too, deliberately: transient rate limits are retried with backoff
+ * by the lead loop, and on exhausted quota a direct retry would silently spend a
+ * different key's money.
+ */
+function gatewayFailureWorthDirectRetry(error: unknown): boolean {
+  const status =
+    error && typeof error === 'object' ? (error as { status?: unknown }).status : undefined;
+  if (typeof status !== 'number') return true;
+  return status >= 500 || status === 401 || status === 403;
 }
 
 function resolveEffectiveProviderConfig(config: ProviderConfig): ProviderConfig {
@@ -314,7 +332,9 @@ function buildProviderConfig(def: ProviderDefinition): ProviderConfig {
 
   const config: ProviderConfig = {
     id: def.id,
-    defaultUrl: cli.defaultUrl,
+    get urlOverridden() {
+      return firstLiveEnv(cli.urlEnvVars) !== undefined;
+    },
     get url() {
       return firstLiveEnv(cli.urlEnvVars) ?? cli.defaultUrl;
     },
@@ -432,6 +452,7 @@ function createAdapterStream(
     const viaGateway = createAdapterStream(
       {
         ...config,
+        urlOverridden: true,
         get url() {
           return route.url;
         },
@@ -443,12 +464,12 @@ function createAdapterStream(
       options,
     );
     if (!apiKey) return viaGateway;
-    const direct = createAdapterStream({ ...config, defaultUrl: undefined }, apiKey, options);
+    const direct = createAdapterStream({ ...config, urlOverridden: true }, apiKey, options);
     return (req) =>
       streamResponsesWithChatFallback({
         responses: () => viaGateway(req),
         chat: () => direct(req),
-        shouldFallback: () => !req.signal?.aborted,
+        shouldFallback: (error) => !req.signal?.aborted && gatewayFailureWorthDirectRetry(error),
         onFallback: (error) => {
           console.error(
             JSON.stringify({

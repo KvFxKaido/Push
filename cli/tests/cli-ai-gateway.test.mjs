@@ -149,6 +149,41 @@ describe('CLI AI Gateway routing', () => {
     assert.equal(calls[0].headers['cf-aig-authorization'], undefined);
   });
 
+  it('stays direct when the endpoint is set explicitly, even to the default value', async () => {
+    // Pinning PUSH_ANTHROPIC_URL to the built-in endpoint is how a user forces
+    // direct; comparing values instead of tracking the override missed it.
+    gatewayEnv({ CF_AI_GATEWAY_BYOK: 'anthropic' });
+    process.env.PUSH_ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+    await send('anthropic', 'direct-key');
+    assert.equal(calls[0].url, 'https://api.anthropic.com/v1/messages');
+    assert.equal(calls[0].headers['x-api-key'], 'direct-key');
+    assert.equal(calls[0].headers['cf-aig-authorization'], undefined);
+  });
+
+  it('does not retry a request-shaped 4xx on direct (it would fail there too)', async () => {
+    gatewayEnv();
+    responses.push({
+      status: 400,
+      body: '{"type":"error","error":{"type":"invalid_request_error"}}',
+    });
+    await assert.rejects(() => send('anthropic', 'direct-key'));
+    assert.equal(calls.length, 1, 'no direct retry for a 400');
+  });
+
+  it('retries on direct when the gateway rejects its own auth (401)', async () => {
+    gatewayEnv({ CF_AI_GATEWAY_BYOK: 'anthropic' });
+    responses.push({ status: 401, body: '{"error":"bad cf-aig-authorization"}' });
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      assert.equal(await send('anthropic', 'direct-key'), 'ok');
+    } finally {
+      console.error = originalError;
+    }
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].url, 'https://api.anthropic.com/v1/messages');
+  });
+
   it('goes direct, with no gateway headers, when the gateway is not configured', async () => {
     await send('anthropic', 'direct-key');
     assert.equal(calls[0].url, 'https://api.anthropic.com/v1/messages');
