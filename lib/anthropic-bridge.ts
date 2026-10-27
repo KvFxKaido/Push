@@ -23,6 +23,10 @@ import type { PushStructuredOutputMode } from './capabilities.ts';
  * double-underscore name avoids colliding with any registry tool
  * (`KNOWN_TOOL_NAMES`).
  */
+
+/** Anthropic's server-side web search tool name (`web_search_20250305`). */
+const NATIVE_WEB_SEARCH_TOOL_NAME = 'web_search';
+
 export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
 
 /**
@@ -626,10 +630,18 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   // them as tool calls, so the user just sees the model's narration + citations.
   const anthropicTools: Array<Record<string, unknown>> = [];
   if (parts.tools && parts.tools.length > 0) {
-    for (const tool of parts.tools) anthropicTools.push(openAIToolToAnthropicTool(tool));
+    for (const tool of parts.tools) {
+      // Anthropic rejects a request whose tools repeat a name ("tools: Tool
+      // names must be unique"). Push's own `web_search` function tool shares the
+      // server tool's name, so with native search enabled the server tool wins:
+      // the caller asked for native search, and the two do the same job. With it
+      // off, the function tool is kept as before.
+      if (parts.enableWebSearch && tool.name === NATIVE_WEB_SEARCH_TOOL_NAME) continue;
+      anthropicTools.push(openAIToolToAnthropicTool(tool));
+    }
   }
   if (parts.enableWebSearch) {
-    anthropicTools.push({ type: 'web_search_20250305', name: 'web_search' });
+    anthropicTools.push({ type: 'web_search_20250305', name: NATIVE_WEB_SEARCH_TOOL_NAME });
   }
   // Structured outputs: modern Claude routes support native JSON outputs via
   // `output_config.format`. Older Anthropic-transport routes fall back to the
