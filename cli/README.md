@@ -557,7 +557,7 @@ Configure servers in `~/.push/config.json` in the `.mcp.json` shape (`url` means
 }
 ```
 
-- **Names:** tools appear as `mcp__<server>__<tool>`. Each part is sanitized to `[A-Za-z0-9_]` (so `cloudflare-docs` becomes `cloudflare_docs`), and the full name is capped at 64 characters.
+- **Names:** tools appear as `mcp__<server>__<tool>`. Each part is sanitized to `[A-Za-z0-9_]` (so `cloudflare-docs` becomes `cloudflare_docs`), and the full name is capped at 64 characters. A server name longer than 24 characters is shortened with a hash; the `mcp_server_connected` log line prints the exact `mcp__<server>__` prefix to use in patterns.
 - **Every call is treated as side-effecting.** A server's `readOnlyHint` is displayed but never trusted, so MCP calls ride the trailing side-effect chain and never skip approval.
 - **Headless runs (`push run`) block MCP calls** (`MCP_DISABLED`) unless the tool matches `mcpAllow`, `PUSH_MCP_ALLOW`, or `--allow-mcp <patterns>`. A pattern is an exact name or a prefix ending in `*`. `--mode yolo` also lifts the block, as it does for exec.
 - **Interactive** surfaces (REPL, TUI, daemon) prompt on every call that isn't allowlisted or listed in `alwaysAllow`. In the REPL, `a` trusts that one tool for the rest of the session.

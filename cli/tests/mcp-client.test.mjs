@@ -14,6 +14,7 @@ import {
   McpRegistry,
   closeMcpRegistry,
   expandEnvRefs,
+  mcpServerPart,
   mcpToolMatches,
   mcpToolName,
 } from '../mcp-client.ts';
@@ -60,6 +61,16 @@ describe('MCP naming and patterns', () => {
     assert.notEqual(long, mcpToolName('server', `${'x'.repeat(99)}y`), 'truncation stays unique');
   });
 
+  it('keeps the mcp__<server>__ prefix whole for long server names (fugu #1705)', () => {
+    const server = 's'.repeat(60);
+    const name = mcpToolName(server, 't'.repeat(80));
+    assert.equal(name.length, 64);
+    const prefix = `mcp__${mcpServerPart(server)}__`;
+    assert.ok(name.startsWith(prefix), name);
+    assert.ok(mcpToolMatches(name, [`${prefix}*`]), 'a server-wide pattern still matches');
+    assert.notEqual(mcpServerPart(server), mcpServerPart(`${'s'.repeat(59)}x`));
+  });
+
   it('matches exact names and trailing-* prefixes only', () => {
     assert.ok(mcpToolMatches(ECHO, [ECHO]));
     assert.ok(mcpToolMatches(ECHO, ['mcp__fake_srv__*']));
@@ -95,6 +106,7 @@ describe('MCP capability mapping', () => {
 });
 
 describe('MCP registry over stdio', () => {
+  const LONG_SERVER = `long-${'s'.repeat(60)}`;
   let registry;
   let workspace;
   const savedSecret = process.env.PUSH_MCP_TEST_SECRET;
@@ -115,6 +127,7 @@ describe('MCP registry over stdio', () => {
           headers: { Authorization: 'Bearer ${PUSH_MCP_TEST_UNSET_VAR}' },
         },
         off: { ...FAKE, disabled: true },
+        [LONG_SERVER]: FAKE,
       });
     } finally {
       cap.restore();
@@ -122,7 +135,11 @@ describe('MCP registry over stdio', () => {
     const events = cap.events();
     assert.ok(
       events.some(
-        (e) => e.event === 'mcp_server_connected' && e.server === 'fake-srv' && e.tools === 3,
+        (e) =>
+          e.event === 'mcp_server_connected' &&
+          e.server === 'fake-srv' &&
+          e.tools === 4 &&
+          e.prefix === 'mcp__fake_srv__',
       ),
     );
     assert.ok(events.some((e) => e.event === 'mcp_server_connect_failed' && e.server === 'broken'));
@@ -151,11 +168,18 @@ describe('MCP registry over stdio', () => {
     executeToolCall(call, workspace, { role: 'coder', mcp: registry, ...options });
 
   it('lists tools under namespaced names with normalized schemas', () => {
-    assert.deepEqual(registry.tools.map((t) => t.name).sort(), [
-      'mcp__fake_srv__echo',
-      'mcp__fake_srv__env_probe',
-      'mcp__fake_srv__fail',
-    ]);
+    assert.deepEqual(
+      registry.tools
+        .filter((t) => t.server === 'fake-srv')
+        .map((t) => t.name)
+        .sort(),
+      [
+        'mcp__fake_srv__echo',
+        'mcp__fake_srv__env_probe',
+        'mcp__fake_srv__fail',
+        'mcp__fake_srv__make_item',
+      ],
+    );
     const [schema] = registry.toolSchemas().filter((s) => s.name === ECHO);
     assert.deepEqual(schema.input_schema.required, ['text']);
     assert.equal(schema.input_schema.additionalProperties, false);
@@ -163,6 +187,50 @@ describe('MCP registry over stdio', () => {
       schema.description,
       /^\[MCP · fake-srv · server says read-only\] Echo the text back\. Second line/,
     );
+  });
+
+  it('inlines $defs / definitions refs, bounding cycles (fugu #1705)', () => {
+    const { properties, required } = registry.get('mcp__fake_srv__make_item').inputSchema;
+    assert.deepEqual(required, ['item']);
+    assert.deepEqual(properties.item, {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+      description: 'The item',
+    });
+    assert.deepEqual(properties.legacy, { type: 'string', enum: ['a', 'b'] });
+    // The cyclic Node ref inlines once, then stops at an open object.
+    assert.deepEqual(properties.tree, {
+      type: 'object',
+      properties: { child: { type: 'object' } },
+    });
+    assert.ok(!JSON.stringify(properties).includes('$ref'), 'no dangling refs reach the model');
+  });
+
+  it('disables a long-named server with its server-wide prefix (fugu #1705)', async () => {
+    const tool = registry.tools.find((t) => t.server === LONG_SERVER && t.toolName === 'echo');
+    assert.ok(tool, 'long-named server attached');
+    const prefix = `mcp__${mcpServerPart(LONG_SERVER)}__*`;
+    const result = await exec(
+      { tool: tool.name, args: { text: 'x' } },
+      { disabledTools: [prefix], mcpAllow: ['*'] },
+    );
+    assert.equal(result.structuredError?.code, 'TOOL_DISABLED');
+  });
+
+  it('marks a transport failure non-retryable: the outcome is unknown (fugu #1705)', async () => {
+    const cap = captureStderr();
+    let result;
+    try {
+      result = await registry.call(ECHO, { text: 'x' }, { signal: AbortSignal.abort() });
+    } finally {
+      cap.restore();
+    }
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.code, 'MCP_CALL_FAILED');
+    assert.equal(result.structuredError.retryable, false);
+    assert.match(result.text, /Outcome unknown/);
+    assert.ok(cap.events().some((e) => e.event === 'mcp_tool_failed' && e.reason === 'transport'));
   });
 
   it('blocks headless calls that are not allowlisted, and logs it', async () => {

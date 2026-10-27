@@ -16,6 +16,9 @@ import { loadConfig } from './config-store.ts';
 
 export const MCP_TOOL_PREFIX = 'mcp__';
 const MAX_TOOL_NAME_LENGTH = 64;
+// Bounded so `mcp__<server>__` (at most 31 chars) always fits whole.
+const MAX_SERVER_PART_LENGTH = 24;
+const MAX_REF_DEPTH = 8;
 const CONNECT_TIMEOUT_MS = 15_000;
 const CALL_TIMEOUT_MS = 120_000;
 const MAX_LIST_PAGES = 20;
@@ -71,13 +74,29 @@ function sanitizePart(part: string): string {
   return cleaned || '_';
 }
 
-/** `mcp__<server>__<tool>`, `[A-Za-z0-9_]` only, at most 64 chars. */
-export function mcpToolName(server: string, tool: string): string {
-  const full = `${MCP_TOOL_PREFIX}${sanitizePart(server)}__${sanitizePart(tool)}`;
-  if (full.length <= MAX_TOOL_NAME_LENGTH) return full;
+function shortHash(text: string): string {
+  return createHash('sha1').update(text).digest('hex').slice(0, 6);
+}
+
+/** The server segment of every tool name: sanitized, at most 24 chars. */
+export function mcpServerPart(server: string): string {
+  const part = sanitizePart(server);
+  if (part.length <= MAX_SERVER_PART_LENGTH) return part;
   // Keep it unique when truncating: a short hash of the untruncated name.
-  const hash = createHash('sha1').update(`${server}\0${tool}`).digest('hex').slice(0, 6);
-  return `${full.slice(0, MAX_TOOL_NAME_LENGTH - 7)}_${hash}`;
+  return `${part.slice(0, MAX_SERVER_PART_LENGTH - 7)}_${shortHash(server)}`;
+}
+
+/**
+ * `mcp__<server>__<tool>`, `[A-Za-z0-9_]` only, at most 64 chars. Only the
+ * tool segment is ever cut, so the `mcp__<server>__` prefix stays whole and a
+ * `mcp__<server>__*` disabledTools / allowlist pattern matches every tool.
+ */
+export function mcpToolName(server: string, tool: string): string {
+  const prefix = `${MCP_TOOL_PREFIX}${mcpServerPart(server)}__`;
+  const toolPart = sanitizePart(tool);
+  const room = MAX_TOOL_NAME_LENGTH - prefix.length;
+  if (toolPart.length <= room) return `${prefix}${toolPart}`;
+  return `${prefix}${toolPart.slice(0, room - 7)}_${shortHash(`${server}\0${tool}`)}`;
 }
 
 /**
@@ -201,12 +220,53 @@ function planTransport(config: McpServerConfig): TransportPlan {
   return { kind: 'stdio', transport };
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Inline local `#/$defs/X` / `#/definitions/X` refs. The shared tool schema
+ * carries only `properties`/`required`, and provider adapters (Gemini's
+ * converter in particular) drop a bare `$ref`, so pydantic/FastMCP/zod-style
+ * schemas would otherwise reach the model with dangling references. A cyclic,
+ * unresolvable, or too-deep ref becomes an open object instead.
+ */
+function inlineLocalRefs(
+  node: unknown,
+  defs: Record<string, unknown>,
+  depth = 0,
+  seen: readonly string[] = [],
+): unknown {
+  if (Array.isArray(node)) return node.map((n) => inlineLocalRefs(n, defs, depth, seen));
+  const obj = asObject(node);
+  if (!obj) return node;
+  if (typeof obj.$ref === 'string') {
+    const ref = obj.$ref;
+    const match = /^#\/(?:\$defs|definitions)\/(.+)$/.exec(ref);
+    const target = match ? asObject(defs[match[1]]) : null;
+    const { $ref: _ref, ...siblings } = obj;
+    if (!target || seen.includes(ref) || depth >= MAX_REF_DEPTH) {
+      return { type: 'object', ...siblings };
+    }
+    return inlineLocalRefs({ ...target, ...siblings }, defs, depth + 1, [...seen, ref]);
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === '$defs' || k === 'definitions') continue;
+    out[k] = inlineLocalRefs(v, defs, depth, seen);
+  }
+  return out;
+}
+
 function normalizeInputSchema(schema: unknown): ToolFunctionSchema['input_schema'] {
-  const s = (schema && typeof schema === 'object' ? schema : {}) as Record<string, unknown>;
-  const properties =
-    s.properties && typeof s.properties === 'object' && !Array.isArray(s.properties)
-      ? (s.properties as ToolFunctionSchema['input_schema']['properties'])
-      : {};
+  const s = asObject(schema) ?? {};
+  const defs = { ...asObject(s.definitions), ...asObject(s.$defs) };
+  const rawProperties = asObject(s.properties) ?? {};
+  const properties = (
+    Object.keys(defs).length ? inlineLocalRefs(rawProperties, defs) : rawProperties
+  ) as ToolFunctionSchema['input_schema']['properties'];
   const required = Array.isArray(s.required)
     ? s.required.filter((r): r is string => typeof r === 'string')
     : [];
@@ -349,6 +409,8 @@ export class McpRegistry {
       }
       log('info', 'mcp_server_connected', {
         server: name,
+        // The exact prefix for disabledTools / mcpAllow patterns.
+        prefix: `${MCP_TOOL_PREFIX}${mcpServerPart(name)}__`,
         transport: plan.kind,
         tools: tools.length,
       });
@@ -466,8 +528,15 @@ export class McpRegistry {
       });
       return {
         ok: false,
-        text: `[MCP ${tool.server} — ${tool.toolName}] ${message}`,
-        structuredError: { code: 'MCP_CALL_FAILED', message, retryable: true },
+        text: `[MCP ${tool.server} — ${tool.toolName}] ${message}. Outcome unknown: the server may have applied the call, so check its state before calling again.`,
+        // Not retryable: every MCP call is treated as side-effecting, and a
+        // timeout or dropped stream doesn't mean the server didn't apply it —
+        // a retry could duplicate a write (an API mutation, a created issue).
+        structuredError: {
+          code: 'MCP_CALL_FAILED',
+          message: `${message} (outcome unknown: the server may have applied the call)`,
+          retryable: false,
+        },
       };
     }
   }

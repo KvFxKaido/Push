@@ -77,9 +77,17 @@ between them:
 Tool names are namespaced `mcp__<server>__<tool>`, each part sanitized to
 `[A-Za-z0-9_]` (so `cloudflare-docs` → `cloudflare_docs`) and the whole name
 capped at 64 characters, the strictest limit across Push's native-calling
-providers and the text-dispatch parser's identifier rule. A collision after
+providers and the text-dispatch parser's identifier rule. The server part is
+capped at 24 characters (truncated + short hash), and only the tool part is
+ever cut after that, so the `mcp__<server>__` prefix always survives whole and
+a `mcp__<server>__*` disabledTools / allowlist entry matches every tool of the
+server; `mcp_server_connected` logs the exact prefix. A collision after
 sanitization drops the later tool with an `mcp_tool_name_collision` log — never
 a silent overwrite.
+
+Input schemas keep `properties` / `required` (the shared tool-schema contract)
+with local `$defs` / `definitions` refs **inlined**, since provider adapters
+drop a bare `$ref`; a cyclic or too-deep ref becomes an open object.
 
 ### 4. Every MCP call is side-effecting by default
 
@@ -127,7 +135,9 @@ resources become one-line placeholders; `isError: true` becomes `ok: false`
 with `MCP_TOOL_ERROR`. Output is capped (with a truncation note) so one
 chatty server cannot flood the context window. A transport throw becomes a
 structured tool result, not a fatal run error (same contract as the GitHub
-fork).
+fork), and is **not retryable**: a timeout or dropped stream does not mean the
+server didn't apply a side-effecting call, so the result says the outcome is
+unknown rather than inviting a duplicate write.
 
 ### 7. Observability
 

@@ -23,6 +23,26 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    // pydantic/FastMCP-style schema: properties reference shared $defs,
+    // including a self-referencing (cyclic) one.
+    name: 'make-item',
+    description: 'Takes $ref-shaped arguments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        item: { $ref: '#/$defs/Item', description: 'The item' },
+        tree: { $ref: '#/$defs/Node' },
+        legacy: { $ref: '#/definitions/Legacy' },
+      },
+      required: ['item'],
+      $defs: {
+        Item: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+        Node: { type: 'object', properties: { child: { $ref: '#/$defs/Node' } } },
+      },
+      definitions: { Legacy: { type: 'string', enum: ['a', 'b'] } },
+    },
+  },
+  {
     name: 'fail',
     description: 'Always reports a tool error.',
     inputSchema: { type: 'object', properties: {} },
