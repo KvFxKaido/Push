@@ -439,6 +439,78 @@ describe('buildAnthropicMessagesRequest', () => {
     expect(tools[1]).toEqual({ type: 'web_search_20250305', name: 'web_search' });
   });
 
+  it("keeps tool names unique: native web search replaces Push's own web_search tool", () => {
+    // Anthropic 400s "tools: Tool names must be unique" — seen live from the CLI,
+    // whose registry has a `web_search` function tool and whose Anthropic stream
+    // enables native search by default.
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5-5',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+      anthropic_web_search: true,
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'sandbox_read_file',
+            description: 'd',
+            parameters: {
+              type: 'object',
+              properties: {},
+              required: [],
+              additionalProperties: false,
+            },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'web_search',
+            description: 'd',
+            parameters: {
+              type: 'object',
+              properties: {},
+              required: [],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+    } as never);
+    const tools = body.tools as Array<Record<string, unknown>>;
+    const names = tools.map((t) => t.name);
+    expect(names).toEqual(['sandbox_read_file', 'web_search']);
+    expect(new Set(names).size).toBe(names.length);
+    expect(tools[1]).toEqual({ type: 'web_search_20250305', name: 'web_search' });
+  });
+
+  it("keeps Push's web_search function tool when native search is off", () => {
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5-5',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true,
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'web_search',
+            description: 'd',
+            parameters: {
+              type: 'object',
+              properties: {},
+              required: [],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+    } as never);
+    const tools = body.tools as Array<Record<string, unknown>>;
+    expect(tools).toEqual([
+      expect.objectContaining({ name: 'web_search', input_schema: expect.any(Object) }),
+    ]);
+  });
+
   it('drops an empty captured text block from assistant_content_blocks', () => {
     const serverToolUse = { type: 'server_tool_use', id: 'su_1', name: 'web_search', input: {} };
     const body = buildAnthropicMessagesRequest({
