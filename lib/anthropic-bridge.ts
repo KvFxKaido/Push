@@ -23,11 +23,10 @@ import type { PushStructuredOutputMode } from './capabilities.ts';
  * double-underscore name avoids colliding with any registry tool
  * (`KNOWN_TOOL_NAMES`).
  */
+export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
 
 /** Anthropic's server-side web search tool name (`web_search_20250305`). */
 const NATIVE_WEB_SEARCH_TOOL_NAME = 'web_search';
-
-export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
 
 /**
  * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7+, Sonnet 5,
