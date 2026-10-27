@@ -452,7 +452,7 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       }
     });
 
-    it('local-daemon orchestrator extras are exactly git:branch + sandbox:download', () => {
+    it('local-daemon orchestrator extras are exactly git:branch + sandbox:download + mcp:call', () => {
       const cloudCaps = getEffectiveCapabilities('orchestrator', 'cloud');
       const daemonCaps = getEffectiveCapabilities('orchestrator', 'local-daemon');
       const extras = new Set<Capability>();
@@ -461,7 +461,9 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
       }
       // sandbox:exec/test moved to the base grant (collapse); git:branch and
       // sandbox:download stay daemon-only (download gates promote_to_github).
-      expect(extras).toEqual(new Set<Capability>(['git:branch', 'sandbox:download']));
+      // mcp:call is daemon-only because MCP attach is CLI-only (no web/cloud
+      // surface advertises or dispatches mcp__* tools).
+      expect(extras).toEqual(new Set<Capability>(['git:branch', 'sandbox:download', 'mcp:call']));
     });
 
     it('cloud-only orchestrator caps are the remote-bound PR/workflow + git:push', () => {

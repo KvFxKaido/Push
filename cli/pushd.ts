@@ -252,6 +252,7 @@ import {
   handleSandboxReadFile,
   handleSandboxWriteFile,
 } from './pushd/file-operation-handlers.js';
+import { closeMcpRegistry } from './mcp-client.ts';
 
 export {
   isNamedPipePath,
@@ -874,6 +875,9 @@ export async function main() {
 
     // Session runtime owns active-run and approval teardown traversal.
     sessionRuntime.shutdownSessions();
+
+    // Attached MCP servers (stdio children, HTTP sessions), if any opened.
+    await closeMcpRegistry().catch(() => {});
 
     // Phase 2.e: close the outbound relay first so any in-flight
     // `relay_phone_*` envelope finishes flushing before the daemon

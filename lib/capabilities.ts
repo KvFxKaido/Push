@@ -49,7 +49,8 @@ export type Capability =
   | 'web:fetch' // Fetch a specific public URL and read its content
   | 'user:ask' // Ask the user a structured question
   | 'artifacts:write' // Create renderable artifacts (HTML/React/Mermaid/file-tree)
-  | 'memory:read'; // Search/recall persisted typed-memory records (verbatim)
+  | 'memory:read' // Search/recall persisted typed-memory records (verbatim)
+  | 'mcp:call'; // Call a tool on a user-attached MCP server (CLI only)
 
 /** All known capabilities (for validation/iteration). */
 export const ALL_CAPABILITIES: readonly Capability[] = [
@@ -78,6 +79,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'user:ask',
   'artifacts:write',
   'memory:read',
+  'mcp:call',
 ];
 
 // ---------------------------------------------------------------------------
@@ -295,6 +297,20 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 };
 
 /**
+ * User-attached MCP tools (`mcp__<server>__<tool>`, CLI only) are dynamic, so
+ * the static table cannot hold them; the prefix maps them all to `mcp:call`.
+ * Mapping them (rather than leaving them unmapped) is what makes the gate
+ * fail CLOSED for roles without the grant — Explorer, Reviewer, Auditor —
+ * instead of fail-open as an unknown tool. See
+ * docs/decisions/CLI MCP Client — Governed Attach.md.
+ */
+const MCP_TOOL_CAPABILITIES: readonly Capability[] = ['mcp:call'];
+
+function isMcpCapabilityName(name: string): boolean {
+  return typeof name === 'string' && name.startsWith('mcp__') && name.length > 'mcp__'.length;
+}
+
+/**
  * Look up the capabilities required by a canonical tool name.
  * Returns an empty array for unknown tools (fail-open for forward compat).
  *
@@ -312,6 +328,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
  * here.
  */
 export function getToolCapabilities(canonicalName: string): readonly Capability[] {
+  if (isMcpCapabilityName(canonicalName)) return MCP_TOOL_CAPABILITIES;
   if (!Object.hasOwn(TOOL_CAPABILITIES, canonicalName)) return [];
   return TOOL_CAPABILITIES[canonicalName];
 }
@@ -324,7 +341,7 @@ export function getToolCapabilities(canonicalName: string): readonly Capability[
  * strict enforcement must compose this check explicitly.
  */
 export function isCapabilityMapped(canonicalName: string): boolean {
-  return Object.hasOwn(TOOL_CAPABILITIES, canonicalName);
+  return isMcpCapabilityName(canonicalName) || Object.hasOwn(TOOL_CAPABILITIES, canonicalName);
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +640,11 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
  * everything else — relevant if a cloud → local-daemon Coder delegation
  * ever lands. Explorer is similarly unaffected (no pr:write to drop).
  */
+const LOCAL_DAEMON_MCP_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>([
+  'orchestrator',
+  'coder',
+]);
+
 export function getEffectiveCapabilities(
   role: AgentRole,
   mode: ExecutionMode = 'cloud',
@@ -638,6 +660,11 @@ export function getEffectiveCapabilities(
     if (!opts.remoteGitHubAvailable && LOCAL_DAEMON_REMOTE_ONLY_CAPS.has(cap)) continue;
     result.add(cap);
   }
+  // MCP attach is CLI-only, so `mcp:call` exists only in local-daemon mode and
+  // never in the static (cloud) grant. The CLI lead runs as `coder`; only the
+  // lead's executor threads an MCP registry, so a delegated sub-Coder that
+  // also holds the grant has nothing to call.
+  if (LOCAL_DAEMON_MCP_ROLES.has(role)) result.add('mcp:call');
   if (role === 'orchestrator') {
     for (const cap of LOCAL_DAEMON_ORCHESTRATOR_EXTRA) result.add(cap);
     for (const cap of LOCAL_DAEMON_ORCHESTRATOR_REMOTE_GIT) result.delete(cap);
@@ -822,6 +849,7 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   'user:ask': 'ask questions',
   'artifacts:write': 'create artifacts',
   'memory:read': 'recall prior memory',
+  'mcp:call': 'call attached MCP tools',
 };
 
 /**

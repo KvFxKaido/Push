@@ -71,6 +71,7 @@ import {
   type SkillDiagnostic,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
+import { closeMcpRegistry, resolveMcpAllowList } from './mcp-client.ts';
 import { ATTACH_CLIENT_CAPABILITIES } from '../lib/daemon-capabilities.js';
 import { isToolCardPayload } from '../lib/tool-cards.js';
 import { formatToolCard } from './tool-card-format.js';
@@ -141,6 +142,7 @@ const KNOWN_OPTIONS = new Set([
   'headless',
   'allow-exec',
   'allowExec',
+  'allow-mcp',
   'skill',
   'mode',
   'help',
@@ -313,6 +315,8 @@ Options:
   --accept <cmd>                Acceptance check command (repeatable)
   --max-rounds <n>              Tool-loop cap per user prompt (default: 50, max: 200; harness may extend on healthy progress)
   --allow-exec                  Allow exec tool in headless mode (blocked by default)
+  --allow-mcp <patterns>        Allow MCP tools without approval, incl. headless (comma-separated
+                                mcp__server__tool names or mcp__server__* prefixes; adds to mcpAllow)
   --worktree                    Run in an isolated git worktree + branch (auto-named); kept on exit only if it has changes
   --worktree-name <name>        --worktree with a custom branch name
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
@@ -641,6 +645,8 @@ async function runHeadless(
     // explicit `[]` is an opt-out and is preserved.
     disabledTools,
     alwaysAllow,
+    // MCP allowlist (`--allow-mcp` + config); `undefined` → PUSH_MCP_ALLOW.
+    mcpAllow,
     // Auditor commit gate (opt-out, default on). `undefined` → the tool layer
     // resolves it against `PUSH_AUDITOR_GATE` then the default.
     auditorGate,
@@ -721,6 +727,7 @@ async function runHeadless(
       execMode,
       disabledTools,
       alwaysAllow,
+      mcpAllow,
       auditorGate,
       explicitMaxRounds,
     });
@@ -943,10 +950,39 @@ async function runHeadless(
   }
 }
 
+// MCP calls (`detail` = "<mcp tool name> <json args>") get their own prompt:
+// "a" trusts that one tool for the session. There is no "p" — an exec prefix
+// means nothing for an MCP call and must never be saved from one.
+async function approveMcpCall(rl, detail, trusted) {
+  const name = detail.split(' ', 1)[0];
+  if (trusted.has(name)) {
+    process.stdout.write(`
+${fmt.dim('[auto-approved]')} ${detail}
+`);
+    return true;
+  }
+  process.stdout.write(`
+${fmt.yellow('[!]')} ${fmt.warn('MCP tool call:')}
+    ${detail}
+`);
+  const answer = await rl.question('    Allow? (y/N/a=always this tool this session) ');
+  const choice = answer.trim().toLowerCase();
+  if (choice === 'a') {
+    trusted.add(name);
+    process.stdout.write(`    ${fmt.dim('[trusted for session]')}
+`);
+    return true;
+  }
+  return choice === 'y';
+}
+
 function makeInteractiveApprovalFn(rl, { config, safeExecPatterns }) {
   const trustedPatterns = new Set();
 
+  const trustedMcpTools = new Set();
+
   return async (tool, detail) => {
+    if (tool === 'mcp') return approveMcpCall(rl, String(detail ?? ''), trustedMcpTools);
     // Session trust: auto-approve if this risk pattern was previously trusted
     const patIdx = matchingRiskPatternIndex(detail);
     if (patIdx >= 0 && trustedPatterns.has(patIdx)) {
@@ -3734,6 +3770,7 @@ export async function main() {
       headless: { type: 'boolean', default: false },
       'allow-exec': { type: 'boolean' },
       allowExec: { type: 'boolean' },
+      'allow-mcp': { type: 'string', multiple: true },
       mode: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       // Opt-in git-worktree sandbox for `push run` (cli/worktree.ts). `--worktree`
@@ -4530,6 +4567,15 @@ export async function main() {
       const headlessAlwaysAllow = Array.isArray(runtimeConfig.alwaysAllow)
         ? runtimeConfig.alwaysAllow
         : undefined;
+      // `--allow-mcp` adds to the config/env allowlist (`mcpAllow` →
+      // PUSH_MCP_ALLOW via applyConfigToEnv); absent, the tool layer reads env.
+      const allowMcpFlag = (Array.isArray(values['allow-mcp']) ? values['allow-mcp'] : [])
+        .flatMap((v) => String(v).split(','))
+        .map((v) => v.trim())
+        .filter(Boolean);
+      const headlessMcpAllow = allowMcpFlag.length
+        ? [...resolveMcpAllowList(), ...allowMcpFlag]
+        : undefined;
       const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
       // Raw (not pre-resolved) so PUSH_AUDITOR_GATE can still override at the
       // tool layer. Default on when unset.
@@ -4541,6 +4587,7 @@ export async function main() {
         execMode: headlessExecMode,
         disabledTools: headlessDisabledTools,
         alwaysAllow: headlessAlwaysAllow,
+        mcpAllow: headlessMcpAllow,
         auditorGate: headlessAuditorGate,
         outputSchema,
         explicitMaxRounds,
@@ -4591,6 +4638,9 @@ export async function main() {
       runtimeConfig,
     });
   } finally {
+    // Close attached MCP servers (stdio children, HTTP sessions) so the
+    // process can exit; a no-op when none were opened.
+    await closeMcpRegistry();
     // Clean-if-clean teardown: remove the worktree only when it has no
     // uncommitted changes and no commits beyond base; otherwise keep it and
     // report the path so unpushed work is never silently destroyed.

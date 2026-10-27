@@ -58,6 +58,7 @@ import { buildAuditorGateRuntimeContext } from './auditor-gate-memory.ts';
 import { recordAuditGateVerdict } from './audit-eval-store.ts';
 import { runMemoryGrep, runMemoryExpand } from '../lib/memory-tool-exec.ts';
 import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
+import { isMcpToolName, mcpToolMatches, resolveMcpAllowList } from './mcp-client.ts';
 import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provider.js';
 import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
 import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
@@ -707,9 +708,9 @@ function canonicalizeCliToolName(name) {
  * dispatcher's canonical TOOL_DISABLED denial (Codex P2 on #1370).
  */
 export function isCliToolDisabled(toolName, disabledTools) {
-  return resolveToolPolicyList(disabledTools, 'PUSH_DISABLED_TOOLS').has(
-    canonicalizeCliToolName(toolName),
-  );
+  const list = resolveToolPolicyList(disabledTools, 'PUSH_DISABLED_TOOLS');
+  const canonical = canonicalizeCliToolName(toolName);
+  return list.has(canonical) || (isMcpToolName(canonical) && mcpToolMatches(canonical, list));
 }
 
 // Resolve a comma-separated env var into a Set of canonicalized tool names,
@@ -725,6 +726,51 @@ function resolveToolPolicyList(explicit, envVar) {
   const raw = process.env[envVar];
   if (!raw) return new Set();
   return normalize(raw.split(','));
+}
+
+/**
+ * Headless allowlist + approval gate for MCP calls, modeled on
+ * `guardExecCommand`. MCP tools are side-effecting by default — a server's
+ * `readOnlyHint` never skips this gate.
+ *   - Allowlisted (`mcpAllow` / `PUSH_MCP_ALLOW` / `--allow-mcp`) or yolo → run.
+ *   - Headless (no approvalFn) → MCP_DISABLED.
+ *   - `alwaysAllow` → run without prompting.
+ *   - Otherwise → approvalFn('mcp', "<name> <args>").
+ */
+async function guardMcpCall(name, args, options = {}) {
+  const blocked = (code, text, reason) => {
+    console.error(JSON.stringify({ level: 'warn', event: 'mcp_tool_blocked', tool: name, reason }));
+    return {
+      ok: false,
+      result: { ok: false, text, structuredError: { code, message: text, retryable: false } },
+    };
+  };
+  if ((options.execMode ?? 'auto') === 'yolo') return { ok: true };
+  if (mcpToolMatches(name, resolveMcpAllowList(options.mcpAllow))) return { ok: true };
+  if (!options.approvalFn) {
+    return blocked(
+      'MCP_DISABLED',
+      `Blocked: MCP tool "${name}" is not allowlisted for headless runs. Allow it with --allow-mcp ${name} (or mcpAllow in config). Do not retry.`,
+      'headless_not_allowlisted',
+    );
+  }
+  if (Array.isArray(options.alwaysAllow) && options.alwaysAllow.includes(name)) return { ok: true };
+  let detail = '';
+  try {
+    detail = JSON.stringify(args ?? {});
+  } catch {
+    detail = '{}';
+  }
+  if (detail.length > 500) detail = `${detail.slice(0, 499)}…`;
+  const approved = await options.approvalFn('mcp', `${name} ${detail}`);
+  if (!approved) {
+    return blocked(
+      'APPROVAL_DENIED',
+      `Denied by user: MCP tool "${name}" was not approved. Do not retry.`,
+      'approval_denied',
+    );
+  }
+  return { ok: true };
 }
 
 async function guardExecCommand(command, options = {}, mode = 'exec') {
@@ -2416,9 +2462,9 @@ async function redactToolResult(result, tool, workspaceRoot, before) {
 }
 
 async function executeToolCallUnredacted(call, workspaceRoot, options = {}) {
-  const disabledList = resolveToolPolicyList(options.disabledTools, 'PUSH_DISABLED_TOOLS');
   const callCanonical = canonicalizeCliToolName(call?.tool);
-  if (disabledList.has(callCanonical)) {
+  // MCP names also honor `mcp__<server>__*` prefix entries.
+  if (isCliToolDisabled(callCanonical, options.disabledTools)) {
     return {
       ok: false,
       text: `Blocked: tool "${call.tool}" is disabled by user config (disabledTools). Do not retry — pick a different approach.`,
@@ -2581,6 +2627,38 @@ async function executeToolCallUnredacted(call, workspaceRoot, options = {}) {
   const alwaysAllowList = resolveToolPolicyList(options.alwaysAllow, 'PUSH_ALWAYS_ALLOW');
   if (alwaysAllowList.size > 0) {
     options = { ...options, alwaysAllow: [...alwaysAllowList] };
+  }
+
+  // User-attached MCP tools (CLI only — docs/decisions/CLI MCP Client —
+  // Governed Attach.md). disabledTools, the `mcp:call` capability gate, and
+  // pre-hooks have already run above; `guardMcpCall` adds the headless
+  // allowlist + approval gate, and `executeToolCall` redacts the result like
+  // any other tool's. Own try/catch: a transport throw is a tool result, not a
+  // fatal run error (same contract as the GitHub fork below).
+  if (isMcpToolName(callCanonical)) {
+    const registry = options.mcp;
+    if (!registry || !registry.get(callCanonical)) {
+      return {
+        ok: false,
+        text: `Unknown MCP tool: ${call.tool}. No attached MCP server provides it${registry ? ` (attached: ${registry.tools.map((t) => t.name).join(', ') || 'none'})` : ''}.`,
+        structuredError: {
+          code: 'UNKNOWN_TOOL',
+          message: `Unknown MCP tool: ${call.tool}`,
+          retryable: false,
+        },
+      };
+    }
+    const gate = await guardMcpCall(callCanonical, call.args, options);
+    if (!gate.ok) return gate.result;
+    try {
+      return await registry.call(callCanonical, call.args ?? {}, { signal: options.signal });
+    } catch (err) {
+      return {
+        ok: false,
+        text: `[MCP — ${call.tool}] ${err instanceof Error ? err.message : String(err)}`,
+        structuredError: classifyToolError(err),
+      };
+    }
   }
 
   // GitHub tools route to the shared core dispatcher, NOT the CLI switch — the
