@@ -41,7 +41,7 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
-import { aiGatewaySkipCacheHeaders } from '../lib/ai-gateway.ts';
+import { aiGatewayRequestHeaders } from '../lib/ai-gateway.ts';
 import { anthropicEventStream, toAnthropicMessages } from '../lib/anthropic-bridge.ts';
 import { continueAnthropicPauseTurns } from '../lib/anthropic-pause-continuation.ts';
 import { CliProviderError } from './openai-stream.ts';
@@ -89,7 +89,7 @@ async function* cliAnthropicStream(
     'anthropic-version': ANTHROPIC_API_VERSION,
   };
   if (apiKey) headers['x-api-key'] = apiKey;
-  Object.assign(headers, aiGatewaySkipCacheHeaders(config.url));
+  Object.assign(headers, aiGatewayRequestHeaders(config.url, process.env));
 
   // Transport and serializer stay CLI-local; the replay state machine is
   // shared with the web Anthropic family so cap/ordering/empty-block behavior

@@ -728,78 +728,22 @@ export function passthroughAuth(_env: Env, request: Request): string | null {
 // stays bit-identical to pre-gateway behavior.
 // ---------------------------------------------------------------------------
 
-export interface AiGatewayBinding {
-  /** Gateway provider slug (e.g. `openrouter`). Forms the path segment after the gateway id. */
-  provider: string;
-  /** Path appended after the provider slug, e.g. `/chat/completions`. Includes the leading slash. */
-  pathSuffix: string;
-}
-
-/**
- * Returns the AI-Gateway-rewritten upstream URL when the gateway is configured,
- * or `null` when callers should fall back to the direct provider URL.
- */
-export function buildAiGatewayUrl(env: Env, binding: AiGatewayBinding): string | null {
-  const account = env.CF_AI_GATEWAY_ACCOUNT_ID?.trim();
-  const slug = env.CF_AI_GATEWAY_SLUG?.trim();
-  if (!account || !slug) return null;
-  if (!isCustomGatewaySlugEnabled(env, binding.provider)) return null;
-  return `https://gateway.ai.cloudflare.com/v1/${account}/${slug}/${binding.provider}${binding.pathSuffix}`;
-}
-
-/**
- * First-party gateway providers (e.g. `openai`, `anthropic`) are always eligible
- * once the gateway env is set. A **custom** provider (`custom-{slug}`) is not: the
- * `custom-{slug}` path 404s unless that provider has been registered + enabled on
- * the gateway, so it must opt in per-slug via `CF_AI_GATEWAY_CUSTOM_SLUGS` rather
- * than ride the global CF_AI_GATEWAY_* toggle (already set in prod). An unlisted
- * custom binding returns false here and `buildAiGatewayUrl` falls back to direct.
- */
-export function isCustomGatewaySlugEnabled(env: Env, provider: string): boolean {
-  const CUSTOM_PREFIX = 'custom-';
-  if (!provider.startsWith(CUSTOM_PREFIX)) return true;
-  const wanted = provider.slice(CUSTOM_PREFIX.length);
-  return (env.CF_AI_GATEWAY_CUSTOM_SLUGS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .includes(wanted);
-}
-
-/**
- * True when `providerId`'s key lives in the AI Gateway (BYOK) rather than being
- * sent by Push. Requires the gateway to be configured — a BYOK provider with no
- * gateway would have nothing to inject the key, so we keep sending the caller
- * key in that case. Callers that see `true` must route through the gateway,
- * omit the provider auth header (the gateway injects the stored key), and pass
- * `allowMissingKey: true` to `runPreamble`.
- */
-export function isGatewayByokProvider(env: Env, providerId: string): boolean {
-  if (!env.CF_AI_GATEWAY_ACCOUNT_ID?.trim() || !env.CF_AI_GATEWAY_SLUG?.trim()) return false;
-  // A custom provider reaches here two ways: as the gateway binding slug
-  // (`custom-sakana`) from the handler, and as the bare id (`sakana`) from the
-  // engine-capability check. Normalize to the bare id so CF_AI_GATEWAY_BYOK
-  // lists one canonical name per provider and both call sites agree.
-  const id = providerId.startsWith('custom-') ? providerId.slice('custom-'.length) : providerId;
-  return (env.CF_AI_GATEWAY_BYOK ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .includes(id);
-}
-
-/**
- * Returns the value for the `cf-aig-authorization` header when
- * `CF_AI_GATEWAY_TOKEN` is set, otherwise `null`. Independent of account/slug
- * presence — callers should only attach the header when the request is
- * actually being routed through the gateway (i.e. `buildAiGatewayUrl` returned
- * a non-null URL), so an orphan token never leaks to the direct provider.
- */
-export function getAiGatewayAuthHeader(env: Env): string | null {
-  const token = env.CF_AI_GATEWAY_TOKEN?.trim();
-  if (!token) return null;
-  return `Bearer ${token}`;
-}
+// The gateway routing core lives in shared lib/ (the CLI routes through the
+// same gateway); re-exported here so Worker call sites keep their imports.
+import {
+  buildAiGatewayUrl,
+  getAiGatewayAuthHeader,
+  isCustomGatewaySlugEnabled,
+  isGatewayByokProvider,
+  type AiGatewayBinding,
+} from '@push/lib/ai-gateway';
+export {
+  buildAiGatewayUrl,
+  getAiGatewayAuthHeader,
+  isCustomGatewaySlugEnabled,
+  isGatewayByokProvider,
+  type AiGatewayBinding,
+};
 
 // ---------------------------------------------------------------------------
 // Stream proxy factory — for SSE chat endpoints

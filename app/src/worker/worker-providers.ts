@@ -6,8 +6,6 @@ import {
   createJsonProxyHandler,
   standardAuth,
   buildAiGatewayUrl,
-  getAiGatewayAuthHeader,
-  isGatewayByokProvider,
   runPreamble,
   readBodyText,
   validateOrigin,
@@ -27,6 +25,7 @@ import {
 } from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { getZenTransport } from '@push/lib/zen-transport';
+import { gatewayByokActive, resolveAiGatewayFetchTarget } from '@push/lib/ai-gateway';
 import {
   ANTHROPIC_MODELS,
   CLOUDFLARE_GATEWAY_MODELS,
@@ -1845,46 +1844,10 @@ interface ResponsesProxyOptions {
   gateway?: AiGatewayBinding;
 }
 
-function resolveAiGatewayFetchTarget(
-  env: Env,
-  directUrl: string,
-  gateway?: AiGatewayBinding,
-): { upstreamUrl: string; gatewayHeaders: Record<string, string>; byok: boolean } {
-  const gatewayUrl = gateway ? buildAiGatewayUrl(env, gateway) : null;
-  const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
-  return {
-    upstreamUrl: gatewayUrl ?? directUrl,
-    gatewayHeaders: gatewayUrl
-      ? {
-          'cf-aig-skip-cache': 'true',
-          ...(aigAuth ? { 'cf-aig-authorization': aigAuth } : {}),
-        }
-      : {},
-    // BYOK is only real when the request actually routes through the gateway:
-    // a BYOK-listed custom binding whose slug isn't enabled falls back to the
-    // direct URL above, where a keyless call 401s at the upstream — callers
-    // must keep sending the key (and keep the key-missing gate) in that case.
-    byok: gatewayUrl !== null && gateway ? isGatewayByokProvider(env, gateway.provider) : false,
-  };
-}
-
-/**
- * BYOK is only safe to act on (omit the provider auth header, skip the
- * key-missing fallback) when a keyless call would ACTUALLY route through the
- * gateway — `buildAiGatewayUrl` resolving (account + slug set; and for a custom
- * binding, its slug enabled) — AND the provider is BYOK-listed. Otherwise the
- * request falls back to the direct provider, where a keyless call 401s, so the
- * caller must keep sending the key. Mirrors the `resolveAiGatewayFetchTarget`
- * gate for handlers that need the decision before the fetch (allowMissingKey).
- * `gatewaySlug` is the CF gateway binding string, which differs from the
- * canonical BYOK id for google (`google-ai-studio` vs `google`).
- */
-export function gatewayByokActive(env: Env, byokId: string, gatewaySlug: string = byokId): boolean {
-  return (
-    buildAiGatewayUrl(env, { provider: gatewaySlug, pathSuffix: '' }) !== null &&
-    isGatewayByokProvider(env, byokId)
-  );
-}
+// Gateway fetch-target resolution and the BYOK gate live in shared lib/ (the
+// CLI routes through the same gateway); `gatewayByokActive` is re-exported for
+// existing importers.
+export { gatewayByokActive };
 
 /**
  * Shared `/v1/responses` reverse proxy for the Responses-native providers
