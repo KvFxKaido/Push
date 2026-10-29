@@ -5,6 +5,32 @@ import { CardRenderer } from './CardRenderer';
 import { DelegationResultCard } from './DelegationResultCard';
 
 describe('CardRenderer', () => {
+  it('preserves legacy artifact source as escaped, read-only text', () => {
+    const card = {
+      type: 'artifact',
+      data: {
+        record: {
+          title: 'Saved demo',
+          kind: 'html',
+          source: '<script>alert(1)</script>',
+          files: [{ path: 'index.html', content: '<iframe src="https://example.com" />' }],
+        },
+      },
+    } as unknown as ChatCard;
+    const html = renderToStaticMarkup(<CardRenderer card={card} />);
+    expect(html).toContain('Saved demo');
+    expect(html).toContain('html');
+    expect(html).toContain('index.html');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&lt;iframe');
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<iframe');
+  });
+
+  it('tolerates malformed persisted artifacts', () => {
+    const card = { type: 'artifact', data: null } as unknown as ChatCard;
+    expect(renderToStaticMarkup(<CardRenderer card={card} />)).toContain('Legacy artifact');
+  });
   it('renders the delegation result card', () => {
     const html = renderToStaticMarkup(
       <DelegationResultCard

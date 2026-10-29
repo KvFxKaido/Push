@@ -26,4 +26,17 @@ test "$(git -C /tmp/restored branch --show-current)" = work
 git -C /tmp/restored fsck --full
 push-artifactfs --cleanup
 ! mountpoint -q /workspace
+mkdir -p /tmp/fail-git
+cat >/tmp/fail-git/git <<'EOF'
+#!/bin/sh
+if [ "$*" = '-C /workspace remote rename origin push-artifacts' ]; then exit 1; fi
+exec /usr/bin/git "$@"
+EOF
+chmod +x /tmp/fail-git/git
+if PATH="/tmp/fail-git:$PATH" push-artifactfs main file:///tmp/source; then
+  echo 'Expected injected remote setup failure' >&2
+  exit 1
+fi
+! mountpoint -q /workspace
+test ! -e /var/lib/push-artifactfs
 echo 'ArtifactFS write/rename/commit/branch/checkpoint/cleanup smoke passed'

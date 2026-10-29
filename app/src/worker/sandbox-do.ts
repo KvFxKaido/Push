@@ -641,7 +641,7 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
         [
           'bash',
           '-c',
-          'timeout -k 5 60 git clone --depth 1 --branch checkpoint -- "$PUSH_ARTIFACT_REMOTE" "$1" >/dev/null 2>&1 && test "$(git -C "$1" rev-parse HEAD)" = "$2" && timeout -k 5 30 push-artifacts-checkpoint restore "$1" "$3"',
+          'timeout -k 5 60 git clone --no-checkout --depth 1 --branch checkpoint -- "$PUSH_ARTIFACT_REMOTE" "$1" >/dev/null 2>&1 && test "$(git -C "$1" rev-parse HEAD)" = "$2" && timeout -k 5 30 push-artifacts-checkpoint restore "$1" "$3"',
           'restore',
           stage,
           handle.commit,

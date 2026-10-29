@@ -2,7 +2,7 @@
 set -euo pipefail
 export ARTIFACT_FS_ROOT=/var/lib/push-artifactfs
 cleanup() {
-  if mountpoint -q /workspace; then fusermount3 -u /workspace; fi
+  if mountpoint -q /workspace; then fusermount3 -u /workspace || return 1; fi
   if [ -f "$ARTIFACT_FS_ROOT/daemon.pid" ]; then
     kill "$(cat "$ARTIFACT_FS_ROOT/daemon.pid")" 2>/dev/null || true
   fi
@@ -11,6 +11,13 @@ cleanup() {
 }
 if [ "${1:-}" = --cleanup ]; then cleanup; exit; fi
 test -z "$(find /workspace -mindepth 1 -maxdepth 1 -print -quit)"
+finish() {
+  local status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ]; then cleanup || status=1; fi
+  exit "$status"
+}
+trap finish EXIT
 mkdir -p "$ARTIFACT_FS_ROOT"
 timeout -k 5 60 artifact-fs add-repo --name workspace --remote "$PUSH_ARTIFACT_REMOTE" \
   --ref "refs/heads/$1" --depth 1 --refresh never --mount-root / >/dev/null 2>&1

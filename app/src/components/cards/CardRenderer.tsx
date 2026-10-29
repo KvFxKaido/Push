@@ -8,6 +8,7 @@ import { AuditVerdictCard } from './AuditVerdictCard';
 import { EvaluationCard } from './EvaluationCard';
 import { WorkspacePatchCard } from './WorkspacePatchCard';
 import { ConfirmationCard } from './ConfirmationCard';
+import { LegacyArtifactCard } from './LegacyArtifactCard';
 
 // --- Lazy-loaded card components (code-split) ---
 const PRCard = lazyWithRecovery(
@@ -204,6 +205,7 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
+  artifact: LegacyArtifactCard,
   pr: PRCard,
   'pr-list': PRListCard,
   'commit-list': CommitListCard,

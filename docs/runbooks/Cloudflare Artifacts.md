@@ -18,6 +18,8 @@ Worker Previews still use Modal and do not bind this store. The old `ARTIFACTS`
 KV binding, renderable-artifact tools, routes, CLI store, renderers, and their
 exclusive dependencies have been removed. Existing remote KV records and local
 `~/.push/artifacts` files are not deleted. Pinned chat notes are independent.
+Saved chat artifact cards retain a read-only title, kind, source, and file view;
+legacy HTML, React, and Mermaid content is displayed as text, never executed.
 
 ## Checkpoints
 
@@ -28,13 +30,17 @@ unpushed commits, staged changes, working-tree changes, symlinks, and file modes
 Ignored untracked files are excluded. Checkpoint file inspection can use the
 Artifacts binding's `readFile` with `workspace/<path>`; no new user-facing
 history/fork UI is introduced by this transport change.
+Transport Git attributes are neutralized during capture and before checkout
+on restore, preserving line endings, ident strings, and encoded bytes without
+running clean/smudge filters. Empty working trees restore with their Git metadata.
 
 The R2 descriptor and restore-token authorization remain the entry point.
 Restore pins the saved transport commit and reconstructs Git metadata in an
 empty staging directory before the existing workspace-materialization path.
 Short-lived write/read tokens are revoked after transfer. Authenticated URLs
 are not returned to callers or logged. Promisor objects are hydrated before
-capture, and the Cloudflare remote is removed from the saved Git config.
+capture only for partial/promisor repositories, and the Cloudflare remote is
+removed from the saved Git config.
 
 Cloudflare currently limits a push to 64 MiB, files to 32 MiB, and repositories
 to 1 GB. A rejected capture/upload falls back to DirectoryBackup for ordinary
@@ -46,7 +52,9 @@ when snapshot capture fails.
 ## ArtifactFS
 
 The image builds `cloudflare/artifact-fs` at
-`2b87a48691ef4ae82d391b7bbe4976c06c7fadf7` with Go 1.26 and installs fuse3.
+`2b87a48691ef4ae82d391b7bbe4976c06c7fadf7` with a digest-pinned Go 1.26 image
+and installs fuse3. Failed mount setup cleans up its daemon and mount before
+returning; an unmount failure preserves runtime state for a cleanup retry.
 Public GitHub branches import into a read-only Artifacts source repository,
 then mount at `/workspace`. GitHub credentials are stripped before import.
 Private imports fail back to the existing authenticated shallow clone.
@@ -92,10 +100,12 @@ References: [binding API](https://developers.cloudflare.com/artifacts/api/worker
 
 ## Local verification (2026-10-28)
 
-- App: 430 test files, 7,535 passing tests, 4 todo.
+- App: 430 test files, 7,537 passing tests, 4 todo.
 - MCP: 74 passing tests. Typechecks, ESLint, and changed-file formatting pass.
 - Real shallow-Git round trip and Docker FUSE smoke pass, including an actual
-  writable mount, rename, commit, branch switch, capture/restore, and unmount.
+  writable mount, rename, commit, branch switch, capture/restore, unmount, and
+  injected post-mount failure cleanup. Four clone-based checkpoint tests cover
+  shallow history/index preservation, attributes, filters, and empty worktrees.
 - Staging config types generated with Wrangler 4.155.0. Full container-build
   dry run and final Worker-only dry run pass. No Worker was deployed.
 - CLI artifact-removal drift checks: 8 passing. Provider rerun with inherited

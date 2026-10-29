@@ -5,11 +5,66 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HELPER = Path(__file__).resolve().parents[1] / 'sandbox/bin/push-artifacts-checkpoint'
 
 
 class CheckpointRoundTrip(unittest.TestCase):
+    def round_trip(self, workspace, root):
+        stage = root / 'checkpoint'
+        subprocess.run(['python3', str(HELPER), 'capture', str(workspace), str(stage)], check=True)
+        transport = root / 'download'
+        subprocess.run(['git', 'clone', '--no-checkout', '--quiet', stage.as_uri(), str(transport)], check=True)
+        restored = root / 'restored'
+        subprocess.run(['python3', str(HELPER), 'restore', str(transport), str(restored)], check=True)
+        return restored
+
+    def make_repo(self, root):
+        workspace = root / 'workspace'
+        workspace.mkdir()
+        subprocess.run(['git', 'init', '--quiet', '--initial-branch=main', str(workspace)], check=True)
+        (workspace / 'file.txt').write_bytes(b'original\n')
+        subprocess.run(['git', 'add', '.'], cwd=workspace, check=True)
+        subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                        'commit', '--quiet', '-m', 'base'], cwd=workspace, check=True)
+        return workspace
+
+    def test_attributes_do_not_rewrite_working_tree_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = self.make_repo(root)
+            (workspace / '.gitattributes').write_text('*.txt text eol=lf ident\n')
+            content = b'changed\r\n$Id: preserve-this-exactly $\r\n'
+            (workspace / 'file.txt').write_bytes(content)
+            restored = self.round_trip(workspace, root)
+            self.assertEqual((restored / 'file.txt').read_bytes(), content)
+
+    def test_restores_an_empty_working_tree_after_clone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = self.make_repo(root)
+            (workspace / 'file.txt').unlink()
+            restored = self.round_trip(workspace, root)
+            self.assertEqual([entry.name for entry in restored.iterdir()], ['.git'])
+            self.assertEqual(subprocess.check_output(['git', 'status', '--porcelain'], cwd=restored), b' D file.txt\n')
+
+    def test_transport_never_runs_filters_or_encoding_conversions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = self.make_repo(root)
+            config = root / 'global-config'
+            marker = root / 'filter-ran'
+            for direction in ['clean', 'smudge']:
+                subprocess.run(['git', 'config', '--file', str(config),
+                                f'filter.probe.{direction}', f'touch {marker}; cat'], check=True)
+            (workspace / '.gitattributes').write_text('*.txt filter=probe working-tree-encoding=UTF-16\n')
+            (workspace / 'file.txt').write_bytes(b'not UTF-16\r\n')
+            with patch.dict(os.environ, {'GIT_CONFIG_GLOBAL': str(config), 'GIT_CONFIG_NOSYSTEM': '1'}):
+                restored = self.round_trip(workspace, root)
+            self.assertFalse(marker.exists())
+            self.assertEqual((restored / 'file.txt').read_bytes(), b'not UTF-16\r\n')
+
     def test_preserves_shallow_history_index_and_working_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -54,8 +109,10 @@ class CheckpointRoundTrip(unittest.TestCase):
             stage = root / 'checkpoint'
             subprocess.run(['python3', str(HELPER), 'capture', str(workspace), str(stage)], check=True)
             self.assertEqual(before, git('status', '--porcelain=v1', '-z', cwd=workspace))
+            transport = root / 'download'
+            git('clone', '--no-checkout', stage.as_uri(), str(transport))
             restored = root / 'restored'
-            subprocess.run(['python3', str(HELPER), 'restore', str(stage), str(restored)], check=True)
+            subprocess.run(['python3', str(HELPER), 'restore', str(transport), str(restored)], check=True)
             self.assertEqual(head, git('rev-parse', 'HEAD', cwd=restored))
             self.assertEqual(before, git('status', '--porcelain=v1', '-z', cwd=restored))
             self.assertEqual(git('show', ':tracked', cwd=restored), b'staged\n')
