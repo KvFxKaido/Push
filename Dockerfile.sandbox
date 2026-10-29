@@ -35,7 +35,7 @@ FROM docker.io/library/golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e6
 RUN go install github.com/cloudflare/artifact-fs/cmd/artifact-fs@2b87a48691ef4ae82d391b7bbe4976c06c7fadf7
 FROM docker.io/cloudflare/sandbox:1.0.3 AS shim
 
-FROM docker.io/library/python:3.11.14-slim-bookworm
+FROM docker.io/library/python:3.11.17-slim-bookworm
 
 # Node from the official image (binary + npm/npx/corepack). Copied piecewise:
 # the Python image also lives in /usr/local, so the whole tree can't be copied.
