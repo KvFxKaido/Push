@@ -31,6 +31,8 @@
 #   docker run --rm --entrypoint sh <image> -c 'node -v; bun --version; python3 --version'
 
 FROM docker.io/library/node:22.23.4-bookworm-slim AS node
+FROM docker.io/library/golang:1.26-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS artifactfs
+RUN go install github.com/cloudflare/artifact-fs/cmd/artifact-fs@2b87a48691ef4ae82d391b7bbe4976c06c7fadf7
 FROM docker.io/cloudflare/sandbox:1.0.3 AS shim
 
 FROM docker.io/library/python:3.11.14-slim-bookworm
@@ -38,6 +40,7 @@ FROM docker.io/library/python:3.11.14-slim-bookworm
 # Node from the official image (binary + npm/npx/corepack). Copied piecewise:
 # the Python image also lives in /usr/local, so the whole tree can't be copied.
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=artifactfs /go/bin/artifact-fs /usr/local/bin/artifact-fs
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
@@ -65,6 +68,7 @@ RUN apt-get update \
       ca-certificates \
       curl \
       git \
+      fuse3 \
       jq \
       procps \
       unzip \
@@ -119,6 +123,8 @@ COPY plugins/capacitor-native-git ./plugins/capacitor-native-git
 RUN HUSKY=0 CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 ONNXRUNTIME_NODE_INSTALL=skip pnpm install --frozen-lockfile
 
 COPY sandbox/bin/push-sandbox-doctor /usr/local/bin/push-sandbox-doctor
+COPY sandbox/bin/push-artifacts-checkpoint sandbox/bin/push-artifactfs /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/push-artifacts-checkpoint /usr/local/bin/push-artifactfs
 RUN chmod 0755 /usr/local/bin/push-sandbox-doctor
 
 # No EXPOSE: SDK 1.0 reaches ports through `ctx.container.getTcpPort(port)`, and

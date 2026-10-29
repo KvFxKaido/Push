@@ -35,8 +35,23 @@ import {
   type DirectoryBackupRecord,
   Files,
 } from '@cloudflare/sandbox';
-import type { Container, DurableObjectState, R2Bucket } from '@cloudflare/workers-types';
+import type {
+  ArtifactsRepo,
+  Container,
+  DurableObjectState,
+  R2Bucket,
+} from '@cloudflare/workers-types';
 import type { Env } from './worker-middleware';
+import {
+  artifactFailureReason,
+  artifactRepoName,
+  authenticatedArtifactRemote,
+  validateArtifactBackup,
+  waitForArtifactRepo,
+  ARTIFACT_REPO_PREFIX,
+  ARTIFACT_SOURCE_PREFIX,
+  type ArtifactBackupHandle,
+} from './cloudflare-artifacts';
 
 /** Matches the 0.12 `sleepAfter: '1h'` in worker-cf-sandbox.ts. */
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
@@ -85,7 +100,9 @@ export interface SandboxProcessInfo {
 }
 
 /** What createBackup returns and descriptors store; `dir` may be overridden on restore. */
-export type SandboxBackupHandle = DirectoryBackupRecord & { expiresAt?: string };
+export type SandboxBackupHandle =
+  | (DirectoryBackupRecord & { expiresAt?: string })
+  | ArtifactBackupHandle;
 
 export interface CreateBackupOptions {
   dir: string;
@@ -127,7 +144,7 @@ export interface SandboxFacade {
   ): Promise<{ entries: Array<{ name: string; type: string; isDirectory: boolean }> }>;
   gitCheckout(
     repoUrl: string,
-    options?: { branch?: string; targetDir?: string; depth?: number },
+    options?: { branch?: string; targetDir?: string; depth?: number; artifactFs?: boolean },
   ): Promise<void>;
   startProcess(
     command: string,
@@ -147,6 +164,8 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
   #starting: Promise<void> | null = null;
   #files: Files | null = null;
   #backups: DirectoryBackup | null = null;
+  #artifactSource: string | null | undefined;
+  #artifactLeaseRefreshedAt = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -184,6 +203,7 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
 
   /** Start the container once; concurrent callers share the same start. */
   async #ensureRunning(): Promise<void> {
+    await this.#touchArtifactLease();
     if (this.#container.running) return;
     this.#starting ??= (async () => {
       try {
@@ -204,6 +224,20 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
       this.#starting = null;
     });
     await this.#starting;
+  }
+
+  async #touchArtifactLease(): Promise<void> {
+    if (this.env.CF_ARTIFACTS && this.env.SANDBOX_TOKENS) {
+      if (this.#artifactSource === undefined) {
+        this.#artifactSource = (await this.ctx.storage.get<string>('artifact-source')) ?? null;
+      }
+      if (this.#artifactSource && Date.now() - this.#artifactLeaseRefreshedAt > 300_000) {
+        await this.env.SANDBOX_TOKENS.put(`artifact-lease:${this.#artifactSource}`, 'active', {
+          expirationTtl: 172800,
+        });
+        this.#artifactLeaseRefreshedAt = Date.now();
+      }
+    }
   }
 
   async #run(argv: string[], options: SandboxExecOptions = {}) {
@@ -294,8 +328,75 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
   /** 0.12 `gitCheckout`: throws git's own message, so clone-failure classifiers keep matching. */
   async gitCheckout(
     repoUrl: string,
-    options: { branch?: string; targetDir?: string; depth?: number } = {},
+    options: { branch?: string; targetDir?: string; depth?: number; artifactFs?: boolean } = {},
   ): Promise<void> {
+    if (
+      options.artifactFs &&
+      this.env.CF_ARTIFACTS &&
+      this.env.SANDBOX_TOKENS &&
+      this.env.PUSH_ARTIFACT_FS === '1' &&
+      (options.targetDir ?? WORKSPACE) === WORKSPACE &&
+      options.branch
+    ) {
+      const source = new URL(repoUrl);
+      // Cloudflare import currently supports public HTTPS sources only. Never
+      // send a user's GitHub credential to the import service.
+      source.username = '';
+      source.password = '';
+      if (source.hostname === 'github.com') {
+        const name = artifactRepoName(ARTIFACT_SOURCE_PREFIX, Date.now() + 24 * 60 * 60 * 1000);
+        try {
+          const created = await this.env.CF_ARTIFACTS.import({
+            source: { url: source.toString(), branch: options.branch, depth: 1 },
+            target: { name, opts: { readOnly: true } },
+          });
+          using sourceRepo = await waitForArtifactRepo(this.env.CF_ARTIFACTS, name);
+          // The imported public source is read-only. Bound its token to the
+          // service maximum; source deletion revokes it with the repository.
+          const readToken = await sourceRepo.createToken('read', 31_536_000);
+          await sourceRepo.revokeToken(created.token);
+          const mounted = await this.#run(
+            ['bash', '/usr/local/bin/push-artifactfs', options.branch, source.toString()],
+            {
+              cwd: '/',
+              timeout: 90_000,
+              env: {
+                PUSH_ARTIFACT_REMOTE: authenticatedArtifactRemote(
+                  created.remote,
+                  readToken.plaintext,
+                ),
+              },
+            },
+          );
+          if (mounted.exitCode !== 0) throw new Error('ArtifactFS mount failed');
+          await this.env.SANDBOX_TOKENS.put(`artifact-lease:${name}`, 'active', {
+            expirationTtl: 172800,
+          });
+          await this.ctx.storage.put('artifact-source', name);
+          this.#artifactSource = name;
+          this.#artifactLeaseRefreshedAt = Date.now();
+          console.log(JSON.stringify({ event: 'cf_artifactfs_mounted', source: name }));
+          return;
+        } catch (error) {
+          // A failed mount must be gone before cloning into the target.
+          const cleaned = await this.#run(['bash', '/usr/local/bin/push-artifactfs', '--cleanup'], {
+            cwd: '/',
+          });
+          if (cleaned.exitCode !== 0)
+            throw new Error('ArtifactFS cleanup failed; refusing to overwrite workspace', {
+              cause: error,
+            });
+          await this.env.CF_ARTIFACTS.delete(name).catch(() => {});
+          console.log(
+            JSON.stringify({
+              level: 'warn',
+              event: 'cf_artifactfs_fallback',
+              reason: artifactFailureReason(error),
+            }),
+          );
+        }
+      }
+    }
     const args = ['git', 'clone'];
     if (options.depth) args.push('--depth', String(options.depth));
     if (options.branch) args.push('--branch', options.branch);
@@ -416,6 +517,29 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
     if (!options.dir.startsWith('/'))
       throw codedError('INVALID_BACKUP_CONFIG', `dir must be absolute: ${options.dir}`);
     await this.#ensureRunning();
+    if (
+      this.env.CF_ARTIFACTS &&
+      this.env.PUSH_ARTIFACT_CHECKPOINTS === '1' &&
+      options.dir === WORKSPACE
+    ) {
+      try {
+        const handle = await this.#createArtifactBackup(options);
+        console.log(JSON.stringify({ event: 'cf_artifact_checkpoint_captured', id: handle.id }));
+        return handle;
+      } catch (error) {
+        const reason = artifactFailureReason(error);
+        const mounted = await this.#run(['mountpoint', '-q', WORKSPACE]);
+        if (mounted.exitCode === 0) {
+          console.log(
+            JSON.stringify({ level: 'error', event: 'cf_artifact_checkpoint_failed', reason }),
+          );
+          throw codedError('BACKUP_FAILED', 'Artifacts checkpoint failed for mounted workspace');
+        }
+        console.log(
+          JSON.stringify({ level: 'warn', event: 'cf_artifact_checkpoint_fallback', reason }),
+        );
+      }
+    }
     const record = await this.#backupApi.backup({
       dir: options.dir,
       ...(options.name ? { name: options.name } : {}),
@@ -438,16 +562,18 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
     if (!handle?.id || !handle.dir?.startsWith('/')) {
       throw codedError('INVALID_BACKUP_CONFIG', 'backup handle needs an id and an absolute dir');
     }
+    if (handle.format === 'push-artifacts-v1') return this.#restoreArtifactBackup(handle);
+    const legacyId = handle.id;
     if (!handle.format) {
       // A descriptor written by 0.12 (SquashFS). Not converted: it would have
       // expired within seven days of the cutover anyway, and BACKUP_EXPIRED
       // routes callers to the same "start fresh" path an aged-out one takes.
       console.log(
-        JSON.stringify({ level: 'warn', event: 'cf_legacy_backup_refused', backup_id: handle.id }),
+        JSON.stringify({ level: 'warn', event: 'cf_legacy_backup_refused', backup_id: legacyId }),
       );
       throw codedError(
         'BACKUP_EXPIRED',
-        `backup ${handle.id} was made by Sandbox SDK 0.12 and is not restorable after the 1.0 upgrade`,
+        `backup ${legacyId} was made by Sandbox SDK 0.12 and is not restorable after the 1.0 upgrade`,
       );
     }
     await this.#ensureRunning();
@@ -469,6 +595,91 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
     return { success: true, dir: handle.dir, id: handle.id };
   }
 
+  async #createArtifactBackup(options: CreateBackupOptions): Promise<ArtifactBackupHandle> {
+    const artifacts = this.env.CF_ARTIFACTS!;
+    const expiresAt = Date.now() + (options.ttl ?? DEFAULT_BACKUP_TTL_SECONDS) * 1000;
+    const id = artifactRepoName(ARTIFACT_REPO_PREFIX, expiresAt);
+    const stage = `/tmp/${id}`;
+    try {
+      const captured = await this.#run(
+        ['timeout', '-k', '5', '90', 'push-artifacts-checkpoint', 'capture', options.dir, stage],
+        { timeout: 90_000 },
+      );
+      const commit = captured.stdout.trim();
+      if (captured.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(commit))
+        throw new Error('Checkpoint capture failed');
+      const created = await artifacts.create(id, { setDefaultBranch: 'checkpoint' });
+      using repo = (await artifacts.get(id)) as ArtifactsRepo & Disposable;
+      const token = await repo.createToken('write', 300);
+      await repo.revokeToken(created.token);
+      try {
+        const pushed = await this.#run(
+          [
+            'bash',
+            '-c',
+            'timeout -k 5 90 git -c core.hooksPath=/dev/null push "$PUSH_ARTIFACT_REMOTE" HEAD:refs/heads/checkpoint',
+          ],
+          {
+            cwd: stage,
+            timeout: 90_000,
+            env: {
+              PUSH_ARTIFACT_REMOTE: authenticatedArtifactRemote(created.remote, token.plaintext),
+            },
+          },
+        );
+        if (pushed.exitCode !== 0) throw new Error('Checkpoint upload failed');
+      } finally {
+        await repo.revokeToken(token.plaintext);
+      }
+      return {
+        format: 'push-artifacts-v1',
+        id,
+        dir: options.dir,
+        commit,
+        expiresAt: new Date(expiresAt).toISOString(),
+      };
+    } catch (error) {
+      await artifacts.delete(id).catch(() => {});
+      throw error;
+    } finally {
+      await this.#run(['rm', '-rf', '--', stage], { cwd: '/' });
+    }
+  }
+
+  async #restoreArtifactBackup(handle: ArtifactBackupHandle) {
+    validateArtifactBackup(handle);
+    if (!this.env.CF_ARTIFACTS)
+      throw codedError('INVALID_BACKUP_CONFIG', 'CF_ARTIFACTS binding is missing');
+    const stage = `/tmp/push-artifact-download-${crypto.randomUUID()}`;
+    using repo = (await this.env.CF_ARTIFACTS.get(handle.id)) as ArtifactsRepo & Disposable;
+    const info = await repo.info();
+    const token = await repo.createToken('read', 300);
+    try {
+      const result = await this.#run(
+        [
+          'bash',
+          '-c',
+          'timeout -k 5 60 git clone --no-checkout --depth 1 --branch checkpoint -- "$PUSH_ARTIFACT_REMOTE" "$1" >/dev/null 2>&1 && test "$(git -C "$1" rev-parse HEAD)" = "$2" && timeout -k 5 30 push-artifacts-checkpoint restore "$1" "$3"',
+          'restore',
+          stage,
+          handle.commit,
+          handle.dir,
+        ],
+        {
+          cwd: '/',
+          timeout: 90_000,
+          env: { PUSH_ARTIFACT_REMOTE: authenticatedArtifactRemote(info.remote, token.plaintext) },
+        },
+      );
+      if (result.exitCode !== 0)
+        throw codedError('BACKUP_RESTORE_FAILED', 'Artifacts checkpoint restore failed');
+      return { success: true, id: handle.id, dir: handle.dir };
+    } finally {
+      await repo.revokeToken(token.plaintext);
+      await this.#run(['rm', '-rf', '--', stage], { cwd: '/' });
+    }
+  }
+
   #bucket(): R2Bucket {
     if (!this.env.BACKUP_BUCKET)
       throw codedError('INVALID_BACKUP_CONFIG', 'BACKUP_BUCKET binding is missing');
@@ -481,5 +692,15 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
 
   async destroy(): Promise<void> {
     if (this.ctx.container?.running) await this.ctx.container.destroy();
+    if (this.env.CF_ARTIFACTS) {
+      const source =
+        this.#artifactSource ?? (await this.ctx.storage.get<string>('artifact-source'));
+      if (source) {
+        await this.env.CF_ARTIFACTS.delete(source);
+        await this.env.SANDBOX_TOKENS?.delete(`artifact-lease:${source}`);
+        await this.ctx.storage.delete('artifact-source');
+        this.#artifactSource = null;
+      }
+    }
   }
 }

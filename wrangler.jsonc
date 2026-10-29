@@ -14,6 +14,7 @@
   },
   // Bumped from 2026-02-01 on 2026-04-20 when adding Cloudflare Sandbox SDK.
   // Sandbox SDK ships with the post-GA runtime; recent date unlocks it.
+  "artifacts": [{ "binding": "CF_ARTIFACTS", "namespace": "push" }],
   "compatibility_date": "2026-04-20",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
@@ -36,6 +37,8 @@
   // or edit this file and redeploy.
   "vars": {
     "PUSH_SANDBOX_PROVIDER": "cloudflare",
+    "PUSH_ARTIFACT_CHECKPOINTS": "0",
+    "PUSH_ARTIFACT_FS": "0",
     "PUSH_RELAY_ENABLED": "1",
     // Autonomous webhook PR reviewer (docs/runbooks/Enabling Autonomous PR
     // Review.md): provider/model resolve settings doc → legacy KV → env →

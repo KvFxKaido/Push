@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Transport a workspace without changing its index, HEAD, or shallow boundary."""
+import os
+from pathlib import Path
+import shutil
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+def git(*args, cwd=None):
+    return subprocess.check_output(['git', *args], cwd=cwd, stderr=subprocess.PIPE)
+
+
+def neutralize_transport_attributes(repository):
+    # info/attributes has higher precedence than every copied .gitattributes,
+    # including nested rules and macros. Disable encoding conversions as well
+    # as line-ending, ident, and clean/smudge transformations.
+    gitdir = Path(os.fsdecode(git('rev-parse', '--absolute-git-dir', cwd=repository)).strip())
+    (gitdir / 'info').mkdir(exist_ok=True)
+    (gitdir / 'info/attributes').write_text(
+        '* -text -eol -filter -ident -working-tree-encoding -diff -merge\n')
+
+
+def transport_git(*args, cwd):
+    return git('-c', 'core.autocrlf=false', '-c', 'core.attributesFile=/dev/null',
+               '-c', 'core.hooksPath=/dev/null', *args, cwd=cwd)
+
+
+def has_promisor_objects(workspace):
+    partial = subprocess.run(['git', 'config', '--get', 'extensions.partialClone'],
+                             cwd=workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    promisors = subprocess.run(['git', 'config', '--type=bool', '--get-regexp',
+                               r'^remote\..*\.promisor$'], cwd=workspace,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return partial.returncode == 0 or any(
+        line.endswith(b' true') for line in promisors.stdout.splitlines())
+
+
+def capture(workspace, destination):
+    workspace = Path(workspace).resolve()
+    destination = Path(destination).resolve()
+    tree = destination / 'workspace'
+    tree.mkdir(parents=True)
+    paths = git('ls-files', '-z', '--cached', '--others', '--exclude-standard', cwd=workspace)
+    for raw in set(paths.split(b'\0')) - {b''}:
+        relative = Path(os.fsdecode(raw))
+        if relative.is_absolute() or '..' in relative.parts:
+            raise ValueError('Invalid workspace path')
+        # A tracked directory can have become an untracked symlink. Its old
+        # index entries must be treated as deletions, never followed outside
+        # the workspace or through a symlink already copied into staging.
+        if any((workspace / parent).is_symlink() for parent in relative.parents if parent != Path('.')):
+            continue
+        source = workspace / relative
+        target = tree / relative
+        if source.is_symlink():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(os.readlink(source))
+        elif source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        elif source.is_dir():
+            raise ValueError('Submodule checkpoints require DirectoryBackup')
+
+    # Store git metadata separately: committing .git as an ordinary subtree is
+    # prohibited by Git. Chunks also stay below Artifacts' per-blob limit.
+    gitdir = Path(os.fsdecode(git('rev-parse', '--absolute-git-dir', cwd=workspace)).strip())
+    # Materialize promisor objects before archiving a lazy ArtifactFS gitdir.
+    if has_promisor_objects(workspace):
+        objects = git('rev-list', '--objects', '--all', cwd=workspace)
+        object_ids = [line.split(b' ', 1)[0] for line in objects.splitlines()]
+        with open(os.devnull, 'wb') as sink:
+            subprocess.run(['git', 'cat-file', '--batch'], cwd=workspace,
+                           input=b'\n'.join(object_ids) + b'\n', stdout=sink,
+                           stderr=subprocess.PIPE, check=True)
+    with tempfile.TemporaryDirectory(prefix='push-git-') as temporary:
+        metadata = Path(temporary) / 'git'
+        shutil.copytree(gitdir, metadata, symlinks=True)
+        if (metadata / 'commondir').exists() or (metadata / 'objects/info/alternates').exists():
+            raise ValueError('External git metadata requires DirectoryBackup')
+        for lock in metadata.rglob('*.lock'):
+            lock.unlink()
+        config = metadata / 'config'
+        for args in [('remote.push-artifacts',), ('core.worktree',), ('extensions.partialClone',)]:
+            option = '--remove-section' if args[0].startswith('remote.') else '--unset-all'
+            subprocess.run(['git', 'config', '--file', str(config), option, *args],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # The live checkout may have authenticated remotes in config/reflogs.
+        for path in [config, metadata / 'FETCH_HEAD', *list((metadata / 'logs').rglob('*'))]:
+            if path.is_file():
+                data = path.read_bytes()
+                path.write_bytes(re.sub(rb'(https?://)[^/\s@]+@', rb'\1', data))
+        archive = Path(temporary) / 'git.tar'
+        with tarfile.open(archive, 'w') as output:
+            output.add(metadata, arcname='git')
+        with archive.open('rb') as source:
+            index = 0
+            while chunk := source.read(16 * 1024 * 1024):
+                (destination / f'git-{index:06d}.chunk').write_bytes(chunk)
+                index += 1
+    git('init', '--initial-branch=checkpoint', str(destination))
+    neutralize_transport_attributes(destination)
+    transport_git('add', '-f', '--all', cwd=destination)
+    git('-c', 'user.name=Push Checkpoint', '-c', 'user.email=checkpoint@push.invalid',
+        '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'Workspace checkpoint', cwd=destination)
+    print(git('rev-parse', 'HEAD', cwd=destination).decode().strip())
+
+
+def restore(source, destination):
+    source = Path(source).resolve()
+    destination = Path(destination).resolve()
+    # The caller clones with --no-checkout so copied attributes never get a
+    # chance to run filters or conversions before this override is installed.
+    neutralize_transport_attributes(source)
+    transport_git('checkout', '--force', 'HEAD', '--', '.', cwd=source)
+    tree = source / 'workspace'
+    if tree.is_symlink() or (tree.exists() and not tree.is_dir()):
+        raise ValueError('Invalid checkpoint workspace')
+    chunks = sorted(source.glob('git-*.chunk'))
+    if not chunks:
+        raise ValueError('Checkpoint git metadata missing')
+    with tempfile.TemporaryDirectory(prefix='push-git-restore-') as temporary:
+        archive = Path(temporary) / 'git.tar'
+        with archive.open('wb') as output:
+            for chunk in chunks:
+                with chunk.open('rb') as part:
+                    shutil.copyfileobj(part, output)
+        with tarfile.open(archive) as packed:
+            packed.extractall(temporary, filter='data')
+        destination.mkdir(parents=True, exist_ok=True)
+        if any(destination.iterdir()):
+            raise ValueError('Restore destination must be empty')
+        # Git does not store empty directories. Valid metadata without a
+        # workspace tree represents an intentionally empty working tree.
+        if tree.exists():
+            shutil.copytree(tree, destination, dirs_exist_ok=True, symlinks=True)
+        shutil.copytree(Path(temporary) / 'git', destination / '.git', symlinks=True)
+
+
+if __name__ == '__main__':
+    try:
+        {'capture': capture, 'restore': restore}[sys.argv[1]](*sys.argv[2:])
+    except Exception:
+        # Git stderr can contain a credential-bearing URL. The caller reports
+        # the operation, never the raw transport output.
+        print('Checkpoint operation failed', file=sys.stderr)
+        sys.exit(1)

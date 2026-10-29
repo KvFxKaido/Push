@@ -2,7 +2,7 @@
 // Generated from wrangler.jsonc on 2026-10-24; keep it in step by hand.
 // Differences from production: name push-staging; its own KV namespaces and
 // R2 bucket (push-staging-snapshots); its own ratelimit namespaces; analytics
-// dataset suffixed _staging; no cron triggers; no logpush; its own container
+// dataset suffixed _staging; daily Artifacts cleanup; no logpush; its own container
 // name; max_instances 3. Deploy by hand only, never Workers Builds:
 //   npx wrangler deploy -c wrangler.staging.jsonc
 // On 0.12, backups also needed these Worker secrets (values never committed):
@@ -16,14 +16,18 @@
     "command": "pnpm --filter my-app run build",
     "watch_dir": "./app/src"
   },
+  "artifacts": [{ "binding": "CF_ARTIFACTS", "namespace": "push-staging" }],
   "compatibility_date": "2026-04-20",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./app/dist",
     "binding": "ASSETS"
   },
+  "triggers": { "crons": ["17 4 * * *"] },
   "vars": {
     "PUSH_SANDBOX_PROVIDER": "cloudflare",
+    "PUSH_ARTIFACT_CHECKPOINTS": "1",
+    "PUSH_ARTIFACT_FS": "1",
     "PUSH_RELAY_ENABLED": "1",
     "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,zen,zai,moonshot,huggingface",
     "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen,zai,moonshot,grok,huggingface"

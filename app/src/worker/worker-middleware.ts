@@ -6,6 +6,7 @@
  */
 
 import type {
+  Artifacts,
   Ai,
   DurableObjectNamespace,
   Fetcher,
@@ -101,6 +102,11 @@ export interface Env {
   // or test envs may not bind it; the cloudflare-sandbox-provider must 503
   // gracefully when it's absent so the Modal fallback path stays safe.
   Sandbox?: DurableObjectNamespace;
+  // Cloudflare Artifacts (Git storage) for sandbox checkpoints and ArtifactFS
+  // mounts. Unrelated to the renderable-artifact KV store (`ARTIFACTS`).
+  CF_ARTIFACTS?: Artifacts;
+  PUSH_ARTIFACT_CHECKPOINTS?: string;
+  PUSH_ARTIFACT_FS?: string;
   // CoderJob Durable Object binding — background Coder delegations (Phase 1
   // background-tasks). Optional so local/test envs without the v2 migration
   // can still boot; /api/jobs/* fails closed with NOT_CONFIGURED when

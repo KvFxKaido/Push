@@ -84,19 +84,120 @@ function makeBucket(objects: Record<string, string> = {}) {
   };
 }
 
-function makeSandbox(execImpl?: Parameters<typeof makeContainer>[0], bucket = makeBucket()) {
+function makeSandbox(
+  execImpl?: Parameters<typeof makeContainer>[0],
+  bucket = makeBucket(),
+  extraEnv: Record<string, unknown> = {},
+) {
   const { container, calls } = makeContainer(execImpl);
   const ctx = {
     container,
     exports: { DirectoryBackupGateway: { name: 'gateway' } },
     blockConcurrencyWhile: vi.fn(async (fn: () => Promise<void>) => fn()),
+    storage: {
+      get: vi.fn(async () => undefined),
+      put: vi.fn(async () => {}),
+      delete: vi.fn(async () => {}),
+    },
   };
-  const sandbox = new Sandbox(ctx as never, { BACKUP_BUCKET: bucket } as never);
+  const sandbox = new Sandbox(ctx as never, { BACKUP_BUCKET: bucket, ...extraEnv } as never);
   return { sandbox, container, calls, bucket };
 }
 
 beforeEach(() => {
   for (const fn of [...Object.values(files), ...Object.values(backups)]) fn.mockReset();
+});
+
+describe('Sandbox facade: Cloudflare Artifacts', () => {
+  function binding() {
+    const repo = {
+      [Symbol.dispose]: vi.fn(),
+      createToken: vi.fn(async () => ({ plaintext: 'short-lived?expires=123' })),
+      revokeToken: vi.fn(async () => true),
+      info: vi.fn(async () => ({
+        remote:
+          'https://0123456789abcdef0123456789abcdef.artifacts.cloudflare.net/git/push/test.git',
+      })),
+    };
+    return {
+      repo,
+      create: vi.fn(async () => ({
+        remote:
+          'https://0123456789abcdef0123456789abcdef.artifacts.cloudflare.net/git/push/test.git',
+        token: 'initial',
+      })),
+      get: vi.fn(async () => repo),
+      delete: vi.fn(async () => true),
+      import: vi.fn(),
+    };
+  }
+
+  it('uploads a checkpoint without changing the live repo and revokes write access', async () => {
+    const artifacts = binding();
+    const { sandbox, calls } = makeSandbox(
+      (argv) => ({
+        exitCode: 0,
+        stdout: argv.includes('push-artifacts-checkpoint') ? 'a'.repeat(40) : '',
+      }),
+      makeBucket(),
+      { CF_ARTIFACTS: artifacts, PUSH_ARTIFACT_CHECKPOINTS: '1' },
+    );
+    const handle = await sandbox.createBackup({ dir: '/workspace', ttl: 3600 });
+    expect(handle).toMatchObject({ format: 'push-artifacts-v1', commit: 'a'.repeat(40) });
+    expect(backups.backup).not.toHaveBeenCalled();
+    expect(
+      calls.find((call) => call.argv[2]?.includes('git -c core.hooksPath'))?.options.cwd,
+    ).toMatch(/^\/tmp\/push-checkpoint-/);
+    expect(artifacts.repo.revokeToken.mock.calls).toEqual([
+      ['initial'],
+      ['short-lived?expires=123'],
+    ]);
+  });
+
+  it('falls back to DirectoryBackup on capture failure for an ordinary workspace', async () => {
+    const artifacts = binding();
+    backups.backup.mockResolvedValue({ id: 'fallback', dir: '/workspace', format: 'tar.zst' });
+    const { sandbox } = makeSandbox(
+      (argv) => ({
+        exitCode: argv[0] === 'mountpoint' || argv.includes('push-artifacts-checkpoint') ? 1 : 0,
+      }),
+      makeBucket(),
+      { CF_ARTIFACTS: artifacts, PUSH_ARTIFACT_CHECKPOINTS: '1' },
+    );
+    expect(await sandbox.createBackup({ dir: '/workspace' })).toMatchObject({ id: 'fallback' });
+  });
+
+  it('never returns a DirectoryBackup containing an external ArtifactFS gitdir', async () => {
+    const artifacts = binding();
+    const { sandbox } = makeSandbox(
+      (argv) => ({ exitCode: argv.includes('push-artifacts-checkpoint') ? 1 : 0 }),
+      makeBucket(),
+      { CF_ARTIFACTS: artifacts, PUSH_ARTIFACT_CHECKPOINTS: '1' },
+    );
+    await expect(sandbox.createBackup({ dir: '/workspace' })).rejects.toThrow('BACKUP_FAILED');
+    expect(backups.backup).not.toHaveBeenCalled();
+  });
+
+  it('does not forward GitHub credentials to import and falls back after cleanup', async () => {
+    const artifacts = binding();
+    artifacts.import.mockRejectedValue(new Error('private repository'));
+    const { sandbox, calls } = makeSandbox(undefined, makeBucket(), {
+      CF_ARTIFACTS: artifacts,
+      PUSH_ARTIFACT_FS: '1',
+      SANDBOX_TOKENS: { put: vi.fn() },
+    });
+    await sandbox.gitCheckout('https://x-access-token:secret@github.com/owner/repo.git', {
+      branch: 'main',
+      artifactFs: true,
+    });
+    expect(artifacts.import).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: { url: 'https://github.com/owner/repo.git', branch: 'main', depth: 1 },
+      }),
+    );
+    expect(calls.some((call) => call.argv.includes('--cleanup'))).toBe(true);
+    expect(calls.at(-1)?.argv.slice(0, 2)).toEqual(['git', 'clone']);
+  });
 });
 
 describe('Sandbox facade: container lifecycle', () => {

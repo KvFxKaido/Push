@@ -100,6 +100,17 @@ Source notes:
 [`Cloudflare Native Backup Migration`](<../archive/decisions/Cloudflare Native Backup Migration.md>),
 [`Cloudflare Artifacts`](<../archive/decisions/Cloudflare Artifacts.md>).
 
+### Cloudflare Artifacts rollout (2026-10-28)
+
+Checkpoint storage and ArtifactFS are implemented behind separate switches,
+with production disabled pending staging validation. This is Cloudflare's Git
+storage product, separate from Push's renderable artifacts, which stay. Checkpoints preserve Git metadata rather
+than flattening unpushed history. Fresh public branches can mount an imported
+read-only Artifacts source; private repositories and snapshot recovery retain
+ordinary clones. Source leases prevent active mounts from being garbage-collected.
+See [Cloudflare Artifacts](<../runbooks/Cloudflare Artifacts.md>) for configuration,
+limits, fallback behavior, and the staging acceptance checks.
+
 ### 6. Long-running sandbox commands need a detached path
 
 Buffered `exec()` remains fine for small commands. Long-running commands should

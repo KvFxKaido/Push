@@ -115,3 +115,5 @@ npx wrangler preview base-config secret put <NAME> -c C:/dev/Push-v1/wrangler.js
    - `GET /accounts/<id>/containers/applications` shows no new or changed app;
    - the Preview URL asks you to sign in;
    - a sandbox create on the Preview succeeds.
+
+Cloudflare Artifacts (Git storage for sandbox checkpoints and ArtifactFS mounts) uses its own `CF_ARTIFACTS` namespace binding, unrelated to the `ARTIFACTS` KV store above. See [Cloudflare Artifacts](<Cloudflare Artifacts.md>) for namespace setup and staging validation.

@@ -678,9 +678,25 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       // pure cold-start tax. `depth: 1` is SDK-supported; deeper history can
       // still be fetched on demand if a tool needs it.
       let directCloneSucceeded = false;
+      // Recovery mutates the entire workspace including .git. Keep it on the
+      // ordinary filesystem; a lazy mount is only for a fresh source checkout.
+      const useArtifactFs =
+        env.PUSH_ARTIFACT_FS === '1' &&
+        env.PUSH_ARTIFACT_CHECKPOINTS === '1' &&
+        !!env.CF_ARTIFACTS &&
+        !!branch &&
+        !!env.SNAPSHOT_INDEX &&
+        (await getSnapshot(env.SNAPSHOT_INDEX, repo, branch)
+          .then((entry) => !entry)
+          .catch(() => false));
       try {
         await time('clone', () =>
-          sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
+          sandbox.gitCheckout(cloneUrl, {
+            branch,
+            targetDir: '/workspace',
+            depth: 1,
+            ...(useArtifactFs ? { artifactFs: true } : {}),
+          }),
         );
         directCloneSucceeded = true;
       } catch (branchCloneErr) {
@@ -929,7 +945,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       // re-clone a stale snapshot before the sandbox can become ready.
       const branchLooksDefault =
         branch === defaultBranch || (!defaultBranch && (branch === 'main' || branch === 'master'));
-      if (directCloneSucceeded && !branchLooksDefault && env.SNAPSHOT_INDEX) {
+      if (directCloneSucceeded && !useArtifactFs && !branchLooksDefault && env.SNAPSHOT_INDEX) {
         const tipResult = (await withExecDeadline(
           sandbox.exec('git -C /workspace rev-parse HEAD'),
         ).catch(() => ({ stdout: '', exitCode: 1 }))) as { stdout?: string; exitCode?: number };
@@ -1033,18 +1049,20 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
         withExecDeadline(
           sandbox.exec(
             "timeout -k 5 30 bash -c '" +
-              'src=/opt/push-cache; ' +
+              'src=/opt/push-cache; copy_cache() { if mountpoint -q /workspace; then ' +
+              'cp -a "$1" "$2"; ' +
+              'else cp -al "$1" "$2"; fi; }; ' +
               'if [ -f "$src/pnpm-lock.yaml" ] && ' +
               'cmp -s "$src/pnpm-lock.yaml" /workspace/pnpm-lock.yaml 2>/dev/null && ' +
               '[ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
-              'cp -al "$src/node_modules" /workspace/node_modules; ' +
+              'copy_cache "$src/node_modules" /workspace/node_modules; ' +
               'if [ -d "$src/app/node_modules" ] && [ -d /workspace/app ] && ' +
               '[ ! -e /workspace/app/node_modules ]; then ' +
-              'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi; ' +
+              'copy_cache "$src/app/node_modules" /workspace/app/node_modules; fi; ' +
               'if [ -d "$src/mcp/github-server/node_modules" ] && ' +
               '[ -d /workspace/mcp/github-server ] && ' +
               '[ ! -e /workspace/mcp/github-server/node_modules ]; then ' +
-              'cp -al "$src/mcp/github-server/node_modules" ' +
+              'copy_cache "$src/mcp/github-server/node_modules" ' +
               '/workspace/mcp/github-server/node_modules; fi; ' +
               'fi' +
               "' || { rm -rf /workspace/node_modules /workspace/app/node_modules " +
@@ -3219,6 +3237,26 @@ async function routeDeleteSnapshot(env: Env, body: Json): Promise<Response> {
     );
   }
 
+  if (snapshotId.startsWith(BACKUP_DESCRIPTOR_PREFIX)) {
+    const object = await env.SNAPSHOTS.get(snapshotId);
+    const descriptor = object ? parseBackupDescriptor(await object.text()) : null;
+    if (descriptor?.backupHandle.format === 'push-artifacts-v1') {
+      if (!env.CF_ARTIFACTS) {
+        return Response.json(
+          { ok: false, code: 'INVALID_BACKUP_CONFIG', error: 'CF_ARTIFACTS binding is missing' },
+          { status: 503 },
+        );
+      }
+      const id = descriptor.backupHandle.id;
+      if (!/^push-checkpoint-\d+-[0-9a-f-]{36}$/.test(id)) {
+        return Response.json(
+          { ok: false, code: 'INVALID_BACKUP_CONFIG', error: 'Invalid Artifacts checkpoint' },
+          { status: 503 },
+        );
+      }
+      await env.CF_ARTIFACTS.delete(id);
+    }
+  }
   await env.SNAPSHOTS.delete(snapshotId);
 
   const repoFullName = str(body.repo_full_name);
