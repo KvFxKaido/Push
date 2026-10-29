@@ -684,7 +684,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     // guidance must not steer the model toward them.
     expect(sandbox).not.toContain('inspect PRs / commits / CI');
     expect(sandbox).not.toMatch(/open or merge a PR/);
-    expect(sandbox).toContain('cannot open or merge PRs, promote to GitHub, or prompt the user');
+    expect(sandbox).toContain('cannot open or merge PRs, promote to GitHub, create artifacts');
     expect(sandbox).toContain('after a meaningful verified edit');
     expect(sandbox).not.toContain('session likely expired');
   });

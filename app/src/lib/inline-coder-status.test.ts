@@ -34,7 +34,7 @@ describe('translateCoderStatus', () => {
   });
 
   it('keeps mutating/exec tools as Editing', () => {
-    for (const tool of ['sandbox_exec', 'write_file', 'commit_and_push']) {
+    for (const tool of ['sandbox_exec', 'write_file', 'create_artifact', 'commit_and_push']) {
       expect(translateCoderStatus('Coder executing...', tool).phase).toBe('Editing');
     }
   });

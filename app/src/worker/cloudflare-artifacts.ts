@@ -16,7 +16,7 @@ export async function waitForArtifactRepo(
   }
 }
 
-/** Separate from the retired renderable-artifact KV namespace. */
+/** Cloudflare Artifacts checkpoint; unrelated to the renderable-artifact KV store. */
 export interface ArtifactBackupHandle {
   format: 'push-artifacts-v1';
   id: string;

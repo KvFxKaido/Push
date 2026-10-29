@@ -153,7 +153,10 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    */
   role: AgentRole;
   /**
-   * Durable web chat identifier for chat-scoped operations.
+   * Web-only chat identifier. Threaded through so artifact creation can
+   * file records under the durable `repoFullName + branch + chatId`
+   * triple that `ArtifactScope` expects. CLI callers leave this
+   * undefined — CLI artifacts file under the branch-scoped key.
    */
   chatId?: string;
   /**

@@ -32,12 +32,14 @@ import { mapSandboxReadToGitHubCall } from './sandbox-read-github-fallback';
 import { executeSandboxToolCall } from './sandbox-tools';
 import { nativeFsScopeFrom } from './native-fs';
 import { executeWebSearch } from './web-search-tools';
+import { executeArtifactToolCall } from './artifact-tools';
 import { runMemoryGrep, runMemoryExpand } from '@push/lib/memory-tool-exec';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { getActiveProvider, type ActiveProvider } from './orchestrator';
 import { getApprovalMode } from './approval-mode';
 import { type AnyToolCall } from './tool-dispatch';
 import { execInSandbox } from './sandbox-client';
+import type { ArtifactAuthor, ArtifactScope } from '@push/lib/artifacts/types';
 
 // ---------------------------------------------------------------------------
 // Pure helpers — private to the Web adapter.
@@ -56,6 +58,7 @@ export function getHookToolArgs(toolCall: AnyToolCall): Record<string, unknown> 
     case 'delegate':
     case 'web-search':
     case 'ask-user':
+    case 'artifacts':
       return { ...toolCall.call.args };
     case 'scratchpad':
       return toolCall.call.content ? { content: toolCall.call.content } : {};
@@ -79,6 +82,7 @@ export function applyHookToolArgs(
     case 'delegate':
     case 'web-search':
     case 'ask-user':
+    case 'artifacts':
       Object.assign(toolCall.call.args, modifiedArgs);
       return;
     case 'scratchpad':
@@ -616,6 +620,61 @@ export class WebToolExecutionRuntime
             text: '[Tool Result] Question sent to user. The system will wait for their response.',
             card: { type: 'ask-user', data: toolCall.call.args },
           };
+          break;
+        }
+
+        case 'artifacts': {
+          if (!context.allowedRepo) {
+            const err: StructuredToolError = {
+              type: 'INVALID_ARG',
+              retryable: false,
+              message: 'Artifact creation requires an active repo.',
+              detail: `NO_ACTIVE_REPO — Attempted tool: ${toolCall.call.tool}`,
+            };
+            result = {
+              text: `[Tool Error] ${err.message}`,
+              structuredError: err,
+            };
+            break;
+          }
+          // Web artifacts must be chat-scoped. The CLI files under
+          // repo+branch by design (no chatId), but on the web the wider
+          // scope causes cross-chat list pollution, so the runtime
+          // refuses to persist a web artifact without one. Surface
+          // misconfigured callers immediately as a non-retryable
+          // INVALID_ARG rather than silently filing branch-scoped.
+          if (!context.chatId) {
+            const err: StructuredToolError = {
+              type: 'INVALID_ARG',
+              retryable: false,
+              message: 'Artifact creation on the web surface requires a chat id.',
+              detail: `MISSING_CHAT_ID — Attempted tool: ${toolCall.call.tool}`,
+            };
+            result = {
+              text: `[Tool Error] ${err.message}`,
+              structuredError: err,
+            };
+            break;
+          }
+          // Branch is best-effort: prefer the Push-tracked branch (sandbox-
+          // independent), fall back to a live sandbox read, then to null. The
+          // Worker accepts `branch: null` (CLI sessions outside a git repo do
+          // the same), so an artifact filed before a sandbox warms up — or
+          // while it's down — still persists, just under a wider scope.
+          const branch =
+            context.currentBranch ??
+            (context.sandboxId ? await this.getSandboxBranch(context.sandboxId) : null);
+          const scope: ArtifactScope = {
+            repoFullName: context.allowedRepo,
+            branch,
+            chatId: context.chatId,
+          };
+          const author: ArtifactAuthor = {
+            surface: 'web',
+            role: context.role,
+            createdAt: Date.now(),
+          };
+          result = await executeArtifactToolCall(toolCall.call.args, scope, author);
           break;
         }
 

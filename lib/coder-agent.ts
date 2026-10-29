@@ -676,8 +676,8 @@ General rules: if retryable is false, pivot to a different approach — don't re
  * Which lead tool families the current surface actually wires, so lead
  * guidance never instructs the model to use tools that aren't executable
  * here. `'full'` is the web inline lead (sandbox + GitHub PR/CI + ask-user +
- * user interaction); `'sandbox'` is a sandbox + web-search surface only (the
- * background CoderJob DO main-chat lead), where PR / merge / promote
+ * artifacts); `'sandbox'` is a sandbox + web-search surface only (the
+ * background CoderJob DO main-chat lead), where PR / merge / promote, artifact
  * creation, and ask-user tools are NOT wired. Keep this a named scope, not a
  * pile of per-tool booleans — surfaces declare their profile, the guidance
  * derives from it.
@@ -734,7 +734,7 @@ function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = '
   if (leadMode) {
     // Surface-aware tool references: the 'sandbox' scope keeps the planning /
     // inspection behavior but drops the GitHub PR/CI, PR-open/merge/promote,
-    // ask-user instructions for tools it can't execute (the
+    // artifact, and ask-user instructions for tools it can't execute (the
     // background DO is sandbox + web-search only). Repo-activity questions are
     // answered from the sandbox (git log / status via sandbox_exec) instead.
     const sandboxOnly = leadToolScope === 'sandbox';
@@ -742,7 +742,7 @@ function buildCoderGuidelines(leadMode = false, leadToolScope: LeadToolScope = '
       ? '- Investigate before answering when the question needs it — use the sandbox tools to read files, search the codebase, and run commands. Answer repo-activity questions ("what changed recently?") from the sandbox via git (e.g. `git log` / `git status` through sandbox_exec); GitHub PR/CI tools are not available on this surface.'
       : '- Investigate before answering when the question needs it — use the sandbox and GitHub tools to read files, search the codebase, and inspect PRs / commits / CI.';
     const noDelegateLine = sandboxOnly
-      ? `- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. This surface cannot open or merge PRs, promote to GitHub, or prompt the user with a tool — do the work in the sandbox and put any question to the user directly in your reply.`
+      ? `- Do NOT call ${delegateCoderName} or ${delegateExplorerName}; you are the single lead and do the work yourself. This surface cannot open or merge PRs, promote to GitHub, create artifacts, or prompt the user with a tool — do the work in the sandbox and put any question to the user directly in your reply.`
       : `- Do NOT call ${delegateCoderName}; you are the single lead and do your own coding. You MAY call ${delegateExplorerName} to offload read-only investigation when a question spans many files or you want to trace a flow without spending your own context — keep the brief precise (task, files, knownContext, deliverable). You can fan out up to two ${delegateExplorerName} calls in one turn (emit them together) when two independent threads are worth exploring in parallel; do the editing yourself once they report back. Avoid ${createPrName} / ${mergePrName} unless the user explicitly asks to open or merge a PR.`;
     const discoverStep = sandboxOnly
       ? '2. Discover cheaply first: use list/search/symbol tools before broad file reads; answer repo-activity questions from the sandbox (git log / status), since GitHub PR/CI tools are not wired here.'
@@ -1107,7 +1107,7 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
   /**
    * Additional tool-protocol prompt blocks to advertise beyond the
    * sandbox/web-search/memory surface. The Inline Foreground Lane threads the
-   * GitHub, ask_user protocols here so the collapsed
+   * GitHub, ask_user, and create_artifact protocols here so the collapsed
    * single lead matches the Orchestrator's tool surface; the delegated Coder
    * leaves it undefined and keeps its narrow surface. Each entry is appended
    * to `tool_instructions`. Advertise a block only when the matching executor
@@ -1228,7 +1228,7 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
    * executable here. Defaults to `'full'` (the web inline lead + CLI lead,
    * which keep their existing guidance). The background CoderJob DO main-chat
    * lead passes `'sandbox'` — sandbox + web-search only, no PR / merge /
-   * promote / ask-user tools. Only meaningful with `leadMode`.
+   * promote / artifact / ask-user tools. Only meaningful with `leadMode`.
    */
   leadToolScope?: LeadToolScope;
   /**
@@ -1436,7 +1436,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   }
 
   // Extra lead-surface protocols (Inline Foreground Lane: github, ask_user,
-  // ask_user). Advertised only when the caller wired the matching
+  // create_artifact). Advertised only when the caller wired the matching
   // executor sources into the bindings, so there are no advertised-but-denied
   // tools.
   if (extraToolProtocols) {

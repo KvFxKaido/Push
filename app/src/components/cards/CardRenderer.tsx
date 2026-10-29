@@ -8,7 +8,6 @@ import { AuditVerdictCard } from './AuditVerdictCard';
 import { EvaluationCard } from './EvaluationCard';
 import { WorkspacePatchCard } from './WorkspacePatchCard';
 import { ConfirmationCard } from './ConfirmationCard';
-import { LegacyArtifactCard } from './LegacyArtifactCard';
 
 // --- Lazy-loaded card components (code-split) ---
 const PRCard = lazyWithRecovery(
@@ -143,6 +142,12 @@ const JobCard = lazyWithRecovery(
     (module) => module.JobCard,
   ),
 );
+const ArtifactCard = lazyWithRecovery(
+  toDefaultExport(
+    () => import('@/components/artifacts/ArtifactCard'),
+    (module) => module.ArtifactCard,
+  ),
+);
 
 interface CardRendererProps {
   card: ChatCard;
@@ -205,7 +210,6 @@ class CardErrorBoundary extends Component<CardErrorBoundaryProps, CardErrorBound
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
-  artifact: LegacyArtifactCard,
   pr: PRCard,
   'pr-list': PRListCard,
   'commit-list': CommitListCard,
@@ -227,6 +231,7 @@ const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
   'web-search': WebSearchCard,
   'delegation-result': DelegationResultCard,
   'coder-progress': CoderProgressCard,
+  artifact: ArtifactCard,
 };
 
 const ACTION_CARDS: Record<

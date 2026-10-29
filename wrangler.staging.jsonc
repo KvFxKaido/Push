@@ -90,6 +90,10 @@
       "id": "aa4bd99905e74901ba2bc7baff43a288"
     },
     {
+      "binding": "ARTIFACTS",
+      "id": "e99b0e009c3041749be4064d8d88a698"
+    },
+    {
       "binding": "CHAT_LIBRARY",
       "id": "585b42cdbc664a1dbab505a4cd128dcd"
     }
@@ -257,6 +261,10 @@
       {
         "binding": "SANDBOX_TOKENS",
         "id": "aa4bd99905e74901ba2bc7baff43a288"
+      },
+      {
+        "binding": "ARTIFACTS",
+        "id": "e99b0e009c3041749be4064d8d88a698"
       },
       {
         "binding": "CHAT_LIBRARY",

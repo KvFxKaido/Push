@@ -32,6 +32,7 @@ const WEB_TYPES = readFileSync(join(ROOT, 'app', 'src', 'types', 'index.ts'), 'u
  */
 const TOOL_CARD_TYPES = [
   'approval',
+  'artifact',
   'ask-user',
   'audit-verdict',
   'branch-list',

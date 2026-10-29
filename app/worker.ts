@@ -50,6 +50,12 @@ import { handleSettingsRoute, matchSettingsRoute } from './src/worker/worker-set
 import { handleRelayRequest, matchRelayRoute } from './src/worker/relay-routes';
 import { handleRunHostRoute, matchRunHostRoute } from './src/worker/run-host-routes';
 import { handleStats } from './src/worker/worker-stats';
+import {
+  handleArtifactsCreate,
+  handleArtifactsDelete,
+  handleArtifactsGet,
+  handleArtifactsList,
+} from './src/worker/worker-artifacts';
 import { reapExpiredArtifactRepos } from './src/worker/cloudflare-artifacts';
 import { handleMemoryEmbed } from './src/worker/worker-memory-embed';
 import { handleProviderEngineCapabilities } from './src/worker/worker-provider-capabilities';
@@ -452,6 +458,12 @@ const EXACT_API_ROUTES: ExactApiRoute[] = [
   // signature (not the deployment token — see isDeploymentTokenExemptPath), so
   // it does no origin check and forwards to the PrReviewJob DO.
   { path: '/api/github/webhook', method: 'POST', handler: handleGitHubWebhook },
+  // Artifacts — all POST so scope + args ride in the JSON body. See
+  // app/src/worker/worker-artifacts.ts for the request/response shape.
+  { path: '/api/artifacts/create', method: 'POST', handler: handleArtifactsCreate },
+  { path: '/api/artifacts/list', method: 'POST', handler: handleArtifactsList },
+  { path: '/api/artifacts/get', method: 'POST', handler: handleArtifactsGet },
+  { path: '/api/artifacts/delete', method: 'POST', handler: handleArtifactsDelete },
   // Semantic memory embeddings — turns text into BGE vectors via env.AI for
   // context-memory retrieval. See app/src/worker/worker-memory-embed.ts.
   { path: '/api/memory/embed', method: 'POST', handler: handleMemoryEmbed },

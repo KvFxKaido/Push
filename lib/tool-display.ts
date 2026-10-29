@@ -134,6 +134,7 @@ export const TOOL_VERB_NOUN: Record<string, ToolVerbNoun> = {
   todo_clear: { noun: 'todo list', verb: 'Cleared' },
   // Interaction / artifacts / memory
   ask_user: { noun: 'question', verb: 'Asked' },
+  create_artifact: { noun: 'artifact', verb: 'Created' },
   memory_grep: { noun: 'memory', verb: 'Recalled' },
   memory_expand: { noun: 'memory', verb: 'Recalled' },
   default: { noun: 'tool', verb: 'Used' },

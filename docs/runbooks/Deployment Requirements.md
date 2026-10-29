@@ -20,7 +20,7 @@ allowances at single-user scale. **Workers for Platforms is NOT required**
 | Workers + Workers Builds | — | The app itself; deploy-on-merge from `main` (~2 min). Don't `wrangler deploy` by hand. | Connect the repo in dash → Workers Builds; set the production trigger's deploy command to `node scripts/deploy-worker.mjs` (`wrangler deploy` at a **pinned** wrangler version, `WRANGLER_VERSION` in the script, that retries the occasional sandbox-image push timeout to `registry.cloudflare.com`; see the script header. Bump the pin deliberately and watch the first deploy) |
 | Durable Objects | `Sandbox`, `CoderJob`, `RELAY_SESSIONS`, `PrReviewJob`, `RUN_HOST` | Sandbox control, background coder jobs, remote-session relay, autonomous PR review, durable runs | Migrations ship in `wrangler.jsonc`; nothing manual |
 | Containers (Sandbox SDK) | via `Sandbox` DO | Cloud workspaces (`Dockerfile.sandbox`, base pinned to the SDK version) | Deploys with the Worker |
-| KV | `SANDBOX_TOKENS`, `SNAPSHOT_INDEX`, `CHAT_LIBRARY` | Sandbox auth tokens (durable source of truth), snapshot index, chat library | `wrangler kv namespace create <name>` ×3, swap the ids into `wrangler.jsonc` |
+| KV | `SANDBOX_TOKENS`, `SNAPSHOT_INDEX`, `ARTIFACTS`, `CHAT_LIBRARY` | Sandbox auth tokens (durable source of truth), snapshot index, artifact store, chat library | `wrangler kv namespace create <name>` ×4, swap the ids into `wrangler.jsonc` |
 | R2 | `SNAPSHOTS`, `BACKUP_BUCKET` (same bucket) | Workspace snapshots/backup descriptors + SDK backup archives | `wrangler r2 bucket create push-cf-snapshots`, then the 7-day lifecycle rule (`npm run r2:snapshots:lifecycle`) |
 | Workers AI | `AI` | Optional provider (`cloudflare` in the picker) — no key needed | Binding only |
 | AI Gateway | — | Optional: BYOK key consolidation per provider (`push-gate`). Disable guardrails on a fresh gateway (they can bill more than the calls they guard) and mind response caching if you run evals | Create gateway in dash, set the `CF_AI_GATEWAY_*` secrets |
@@ -116,4 +116,4 @@ npx wrangler preview base-config secret put <NAME> -c C:/dev/Push-v1/wrangler.js
    - the Preview URL asks you to sign in;
    - a sandbox create on the Preview succeeds.
 
-Cloudflare Artifacts uses the separate `CF_ARTIFACTS` namespace binding. See [Cloudflare Artifacts](<Cloudflare Artifacts.md>) for namespace setup and staging validation. Removing the old `ARTIFACTS` KV binding does not delete its stored records.
+Cloudflare Artifacts (Git storage for sandbox checkpoints and ArtifactFS mounts) uses its own `CF_ARTIFACTS` namespace binding, unrelated to the `ARTIFACTS` KV store above. See [Cloudflare Artifacts](<Cloudflare Artifacts.md>) for namespace setup and staging validation.

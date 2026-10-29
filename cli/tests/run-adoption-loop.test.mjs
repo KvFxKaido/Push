@@ -65,7 +65,7 @@ function makeCheckpoint(overrides = {}) {
 test('pin: exact deferred tool-source set', () => {
   assert.deepEqual(
     [...ADOPTION_DEFERRED_TOOL_SOURCES],
-    ['scratchpad', 'todo', 'delegate', 'ask-user', 'github'],
+    ['scratchpad', 'todo', 'delegate', 'ask-user', 'artifacts', 'github'],
   );
 });
 

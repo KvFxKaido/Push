@@ -14,12 +14,9 @@ and on in staging:
 - `PUSH_ARTIFACT_FS=1`: use ArtifactFS for eligible fresh checkouts. Requires
   checkpoint support, snapshot indexing, and the sandbox token KV store.
 
-Worker Previews still use Modal and do not bind this store. The old `ARTIFACTS`
-KV binding, renderable-artifact tools, routes, CLI store, renderers, and their
-exclusive dependencies have been removed. Existing remote KV records and local
-`~/.push/artifacts` files are not deleted. Pinned chat notes are independent.
-Saved chat artifact cards retain a read-only title, kind, source, and file view;
-legacy HTML, React, and Mermaid content is displayed as text, never executed.
+Worker Previews still use Modal and do not bind this store. Despite the name,
+this is unrelated to Push's renderable artifacts (`create_artifact`, the
+`ARTIFACTS` KV binding, `~/.push/artifacts`), which are unchanged.
 
 ## Checkpoints
 
@@ -100,18 +97,17 @@ References: [binding API](https://developers.cloudflare.com/artifacts/api/worker
 
 ## Local verification (2026-10-28)
 
-- App: 430 test files, 7,537 passing tests, 4 todo.
-- MCP: 74 passing tests. Typechecks, ESLint, and changed-file formatting pass.
+- App: 441 test files, 7,617 passing tests, 4 todo (after restoring the
+  renderable-artifact feature, which this change originally removed).
+- MCP: 74 passing tests. Typechecks, ESLint, and formatting pass.
 - Real shallow-Git round trip and Docker FUSE smoke pass, including an actual
   writable mount, rename, commit, branch switch, capture/restore, unmount, and
   injected post-mount failure cleanup. Four clone-based checkpoint tests cover
   shallow history/index preservation, attributes, filters, and empty worktrees.
 - Staging config types generated with Wrangler 4.155.0. Full container-build
   dry run and final Worker-only dry run pass. No Worker was deployed.
-- CLI artifact-removal drift checks: 8 passing. Provider rerun with inherited
-  `CF_AI_GATEWAY_*` removed from the test process: 65 passing. The broad CLI
-  run is not green: Windows file-lock cleanup and Windows/WSL cwd assumptions
-  remain failing in the launcher, sandbox-exec, and tool-policy suites.
+- CLI artifact, tool-card drift, daemon-integration, adoption-loop, and
+  tool-policy suites: 325 passing on Windows.
 
 Remote namespace provisioning, Git push/clone against the Artifacts service,
 and staging lifecycle acceptance remain unverified. Production switches stay off.

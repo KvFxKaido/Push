@@ -83,6 +83,7 @@ export const ADOPTION_APPROVAL_RESOLVED_NOTE_MARKER = '[APPROVAL_RESOLVED]';
  *   - `ask-user` — there is no user attached. Full-auto/autonomous runs are
  *     told to proceed on best judgment; supervised runs PAUSE instead (see
  *     `createAdoptionToolGate`).
+ *   - `artifacts` — in-page artifact store, same deferral as scratchpad.
  *   - `github` — GitHub tools ride the user's session credentials, which are
  *     never provisioned to an adopted run; PR/commit delivery waits for the
  *     user's return.
@@ -92,6 +93,7 @@ export const ADOPTION_DEFERRED_TOOL_SOURCES = [
   'todo',
   'delegate',
   'ask-user',
+  'artifacts',
   'github',
 ] as const;
 
@@ -264,6 +266,7 @@ export function buildAdoptionDeferralNote(source: string, tool: string): string 
   switch (source) {
     case 'scratchpad':
     case 'todo':
+    case 'artifacts':
       return `${head} The call was recorded in the transcript and will surface when the user returns. Continue without it.`;
     case 'delegate':
       return `${head} Delegation isn't available here — do the work inline with sandbox tools instead.`;

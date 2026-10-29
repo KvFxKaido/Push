@@ -30,6 +30,7 @@
  * with a value export here.
  */
 
+import type { ArtifactRecord } from './artifacts/types.js';
 import type { ApprovalGateCategory } from './approval-gates.js';
 import type { AskUserCardData } from './ask-user-tools.js';
 import type { AuditVerdictCardData } from './auditor-agent.js';
@@ -37,7 +38,13 @@ import type { WorkspacePatchCardData } from './protocol-schema.js';
 import type { DelegationGateVerdict, DelegationStatus } from './runtime-contract.js';
 import type { CoderWorkingMemory } from './working-memory.js';
 
-export type { AskUserCardData, AuditVerdictCardData, CoderWorkingMemory, WorkspacePatchCardData };
+export type {
+  ArtifactRecord,
+  AskUserCardData,
+  AuditVerdictCardData,
+  CoderWorkingMemory,
+  WorkspacePatchCardData,
+};
 
 /**
  * Confirmation-card severity band. A structural alias of the runtime's
@@ -77,6 +84,7 @@ export type ToolCard =
   | { type: 'approval'; data: ApprovalCardData }
   | { type: 'coder-progress'; data: CoderWorkingMemory }
   | { type: 'coder-job'; data: CoderJobCardData }
+  | { type: 'artifact'; data: ArtifactCardData }
   | { type: 'workspace-patch'; data: WorkspacePatchCardData };
 
 /**
@@ -90,6 +98,12 @@ export type ToolCard =
 export interface ToolCardPayload {
   type: string;
   data: Record<string, unknown>;
+}
+
+/** Inline artifact card — wraps a fully-formed `ArtifactRecord` so the renderer
+ *  can dispatch on `record.kind` without a second fetch. */
+export interface ArtifactCardData {
+  record: ArtifactRecord;
 }
 
 // --- Background Coder Job ---
@@ -595,6 +609,7 @@ export const TOOL_CARD_TYPES = [
   'approval',
   'coder-progress',
   'coder-job',
+  'artifact',
   'workspace-patch',
 ] as const satisfies readonly ToolCard['type'][];
 

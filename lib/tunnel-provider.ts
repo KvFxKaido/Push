@@ -11,7 +11,8 @@
  * Two distinct concerns share this contract:
  *   - `sandbox-port`: a service inside a managed sandbox (CF / Modal). The
  *     sandbox is already reachable from the Worker, so the "tunnel" is an
- *     authenticated reverse proxy + token mint.
+ *     authenticated reverse proxy + token mint — see `LivePreviewArtifact` in
+ *     `lib/artifacts/types.ts`, which already commits the URL/token shape.
  *   - `local-port`: a service on the user's own machine (where `pushd` runs),
  *     behind NAT, so it needs a real tunnel (cloudflared / ngrok) or can ride
  *     the existing `pushd_relay_*` WebSocket relay as an HTTP channel.
@@ -25,6 +26,7 @@
  *
  * Design references:
  *   - Vercel Open Agents Review §5.2: sandbox port exposure / dev-server previews
+ *   - lib/artifacts/types.ts: LivePreviewArtifact (committed URL + token shape)
  *   - sandbox-provider.ts: the abstraction pattern this mirrors
  */
 

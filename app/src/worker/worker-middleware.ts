@@ -102,6 +102,8 @@ export interface Env {
   // or test envs may not bind it; the cloudflare-sandbox-provider must 503
   // gracefully when it's absent so the Modal fallback path stays safe.
   Sandbox?: DurableObjectNamespace;
+  // Cloudflare Artifacts (Git storage) for sandbox checkpoints and ArtifactFS
+  // mounts. Unrelated to the renderable-artifact KV store (`ARTIFACTS`).
   CF_ARTIFACTS?: Artifacts;
   PUSH_ARTIFACT_CHECKPOINTS?: string;
   PUSH_ARTIFACT_FS?: string;
@@ -180,11 +182,16 @@ export interface Env {
   // Local wrangler escape hatch: use the R2 binding directly instead of
   // production presigned URLs/FUSE. Set only in .dev.vars.
   SANDBOX_BACKUP_LOCAL_BUCKET?: string;
+  // Renderable artifact store (HTML/React/Mermaid/file-tree) — same
+  // fail-closed pattern as SANDBOX_TOKENS: optional binding, every
+  // /api/artifacts/* route returns NOT_CONFIGURED 503 when unset so the
+  // operator notices instead of silently returning empty lists.
+  ARTIFACTS?: KVNamespace;
   // Chat library — user-scoped persistent file store so attachments
   // uploaded once can be re-attached to any future chat. Same
   // fail-closed pattern: /api/library/* routes return NOT_CONFIGURED
   // 503 when the binding is unset. Auth-scoping is deferred (matches
-  // snapshot index); KV keys are flat `library:<id>` today.
+  // ARTIFACTS); KV keys are flat `library:<id>` today.
   CHAT_LIBRARY?: KVNamespace;
   // Local-dev escape hatch for the per-exec sandbox deadline. Set to "1" in
   // .dev.vars to raise SANDBOX_EXEC_TIMEOUT_MS from 150s to 300s — covers
@@ -447,7 +454,7 @@ export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
  * `/api/*` route requires a valid allowlisted session EXCEPT a small exempt set
  * that is either bootstrap (you call it *before* you have a session) or carries
  * its own independent auth. This widens the original metered-only gate so the
- * deployment token can retire (step 3b) without leaving library KV,
+ * deployment token can retire (step 3b) without leaving artifact/library KV,
  * model lists, or the GitHub proxy publicly reachable.
  *
  * Exempt, and why:
@@ -463,7 +470,7 @@ export const SESSION_GATE_REQUIRED_CODE = 'SESSION_AUTH_REQUIRED';
  *
  * Everything else — including `/api/auth-probe` (the client's session probe:
  * 200 = valid session, 401 = none, which the GitHub sign-in gate keys on),
- * library KV, model lists, search, sandbox, jobs, `github/tools`,
+ * artifacts/library KV, model lists, search, sandbox, jobs, `github/tools`,
  * `repo-coverage`, and `pr-reviews` — requires a session.
  */
 const SESSION_EXEMPT_EXACT: ReadonlySet<string> = new Set([
