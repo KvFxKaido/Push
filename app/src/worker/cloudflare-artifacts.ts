@@ -44,11 +44,19 @@ export function validateArtifactBackup(handle: ArtifactBackupHandle): void {
   }
 }
 
+/** Loggable failure cause: bounded, with any URL credentials stripped. */
+export function artifactFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\/\/[^/\s@]+@/g, '//').slice(0, 200);
+}
+
 export function authenticatedArtifactRemote(remote: string, token: string): string {
   const url = new URL(remote);
   if (
     url.protocol !== 'https:' ||
-    url.hostname !== 'artifacts.cloudflare.net' ||
+    // The binding returns account-scoped remotes
+    // (`<account id>.artifacts.cloudflare.net`); the bare host is the REST/docs form.
+    !/^(?:[0-9a-f]{32}\.)?artifacts\.cloudflare\.net$/.test(url.hostname) ||
     url.username ||
     url.password
   ) {

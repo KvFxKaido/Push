@@ -49,6 +49,24 @@ describe('Cloudflare Artifacts lifecycle', () => {
     ).toBe('https://x:secret@artifacts.cloudflare.net/ns/repo');
   });
 
+  it('accepts the account-scoped remote the binding actually returns', () => {
+    // Shape from the binding/REST docs: https://<ACCOUNT_ID>.artifacts.cloudflare.net/git/<ns>/<repo>.git
+    const account = '0123456789abcdef0123456789abcdef';
+    expect(
+      authenticatedArtifactRemote(
+        `https://${account}.artifacts.cloudflare.net/git/push-staging/repo.git`,
+        'secret?expires=123',
+      ),
+    ).toBe(`https://x:secret@${account}.artifacts.cloudflare.net/git/push-staging/repo.git`);
+    for (const host of [
+      'evil.artifacts.cloudflare.net.example',
+      'a.b.artifacts.cloudflare.net',
+      'evilartifacts.cloudflare.net',
+    ]) {
+      expect(() => authenticatedArtifactRemote(`https://${host}/git/ns/repo.git`, 's')).toThrow();
+    }
+  });
+
   it('rejects expired and malformed restore handles before remote access', () => {
     const handle = {
       format: 'push-artifacts-v1' as const,

@@ -1,6 +1,6 @@
 # Cloudflare Artifacts
 
-Status: Draft (implemented locally; Cloudflare staging validation pending)
+Status: Draft (staging-validated 2026-10-28: checkpoints pass; ArtifactFS fails on real repos, keep it off)
 
 ## Configuration
 
@@ -109,5 +109,40 @@ References: [binding API](https://developers.cloudflare.com/artifacts/api/worker
 - CLI artifact, tool-card drift, daemon-integration, adoption-loop, and
   tool-policy suites: 325 passing on Windows.
 
-Remote namespace provisioning, Git push/clone against the Artifacts service,
-and staging lifecycle acceptance remain unverified. Production switches stay off.
+## Staging acceptance (2026-10-28)
+
+Deployed to `push-staging` and driven through `/api/sandbox-cf/*` (create, exec,
+hibernate, restore-snapshot, delete-snapshot, cleanup).
+
+The first staging run found three defects that local checks could not:
+
+1. The binding returns account-scoped remotes
+   (`<account id>.artifacts.cloudflare.net`), and the remote guard accepted only
+   the bare host, so every mount and checkpoint threw and silently fell back.
+   The guard now accepts both, and the fixtures use the real shape.
+2. ArtifactFS strips inline credentials and hydrates blobs with ambient Git
+   credentials. With none configured, any Git command that needed a missing
+   blob failed (`could not fetch … from promisor remote`). The mount helper now
+   writes the read token to a store-helper file outside the workspace and its
+   gitdir.
+3. Renaming the imported `origin` left no `refs/remotes/origin/<branch>`, so
+   upstream tracking and diff bases were missing. The helper now creates it.
+
+Both fallback logs now carry a credential-stripped `reason`, and the success paths
+log `cf_artifactfs_mounted` / `cf_artifact_checkpoint_captured`.
+
+Results after the fixes:
+
+| Check | Result |
+| --- | --- |
+| Ordinary git workspace → Artifacts checkpoint → restore (unpushed commit, staged, CRLF unstaged) | Pass: HEAD, history, index, and bytes identical; hibernate ~4 s, restore ~7 s |
+| Public repo mount → lazy read, commit, diff against history, upstream `[ahead 1]` → checkpoint → restore | Pass on `octocat/Hello-World`; restored workspace is plain and has no Artifacts remote |
+| 70 MiB workspace | Pass: falls back to DirectoryBackup (logged with reason); file survives |
+| Import failure (missing branch) | Pass: no stale mount; reason `Branch not found` |
+| Repository cleanup | Pass: namespace empty after destroy and delete-snapshot |
+| Large repo (`facebook/react`) mount | **Fail**: create 13.7 s vs 5.7 s for a plain `git clone --depth 1` (72 MB); first `git status` on the mount did not finish within the 150 s exec deadline (twice); a grep over `packages/react/src` took 31 s |
+
+Conclusion: checkpoints are ready to enable after review. ArtifactFS at this pin
+is slower than a shallow clone and makes basic Git unusable on a real repository,
+which matches the archived evaluation's concerns; keep `PUSH_ARTIFACT_FS` off.
+Private-repository checkouts were not tested: staging has no GitHub credentials.

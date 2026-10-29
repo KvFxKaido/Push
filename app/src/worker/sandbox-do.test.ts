@@ -114,12 +114,16 @@ describe('Sandbox facade: Cloudflare Artifacts', () => {
       [Symbol.dispose]: vi.fn(),
       createToken: vi.fn(async () => ({ plaintext: 'short-lived?expires=123' })),
       revokeToken: vi.fn(async () => true),
-      info: vi.fn(async () => ({ remote: 'https://artifacts.cloudflare.net/push/test' })),
+      info: vi.fn(async () => ({
+        remote:
+          'https://0123456789abcdef0123456789abcdef.artifacts.cloudflare.net/git/push/test.git',
+      })),
     };
     return {
       repo,
       create: vi.fn(async () => ({
-        remote: 'https://artifacts.cloudflare.net/push/test',
+        remote:
+          'https://0123456789abcdef0123456789abcdef.artifacts.cloudflare.net/git/push/test.git',
         token: 'initial',
       })),
       get: vi.fn(async () => repo),

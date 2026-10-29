@@ -43,6 +43,7 @@ import type {
 } from '@cloudflare/workers-types';
 import type { Env } from './worker-middleware';
 import {
+  artifactFailureReason,
   artifactRepoName,
   authenticatedArtifactRemote,
   validateArtifactBackup,
@@ -374,16 +375,25 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
           await this.ctx.storage.put('artifact-source', name);
           this.#artifactSource = name;
           this.#artifactLeaseRefreshedAt = Date.now();
+          console.log(JSON.stringify({ event: 'cf_artifactfs_mounted', source: name }));
           return;
-        } catch {
+        } catch (error) {
           // A failed mount must be gone before cloning into the target.
           const cleaned = await this.#run(['bash', '/usr/local/bin/push-artifactfs', '--cleanup'], {
             cwd: '/',
           });
           if (cleaned.exitCode !== 0)
-            throw new Error('ArtifactFS cleanup failed; refusing to overwrite workspace');
+            throw new Error('ArtifactFS cleanup failed; refusing to overwrite workspace', {
+              cause: error,
+            });
           await this.env.CF_ARTIFACTS.delete(name).catch(() => {});
-          console.log(JSON.stringify({ event: 'cf_artifactfs_fallback' }));
+          console.log(
+            JSON.stringify({
+              level: 'warn',
+              event: 'cf_artifactfs_fallback',
+              reason: artifactFailureReason(error),
+            }),
+          );
         }
       }
     }
@@ -513,13 +523,21 @@ export class Sandbox extends DurableObject<Env> implements SandboxFacade {
       options.dir === WORKSPACE
     ) {
       try {
-        return await this.#createArtifactBackup(options);
-      } catch {
+        const handle = await this.#createArtifactBackup(options);
+        console.log(JSON.stringify({ event: 'cf_artifact_checkpoint_captured', id: handle.id }));
+        return handle;
+      } catch (error) {
+        const reason = artifactFailureReason(error);
         const mounted = await this.#run(['mountpoint', '-q', WORKSPACE]);
         if (mounted.exitCode === 0) {
+          console.log(
+            JSON.stringify({ level: 'error', event: 'cf_artifact_checkpoint_failed', reason }),
+          );
           throw codedError('BACKUP_FAILED', 'Artifacts checkpoint failed for mounted workspace');
         }
-        console.log(JSON.stringify({ event: 'cf_artifact_checkpoint_fallback' }));
+        console.log(
+          JSON.stringify({ level: 'warn', event: 'cf_artifact_checkpoint_fallback', reason }),
+        );
       }
     }
     const record = await this.#backupApi.backup({
