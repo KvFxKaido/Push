@@ -17,7 +17,6 @@ import {
   NotebookPen,
   ListTodo,
   Brain,
-  Package,
   Upload,
   Download,
 } from 'lucide-react';
@@ -163,7 +162,6 @@ const TOOL_ICONS: Record<string, React.ElementType> = {
   todo_read: ListTodo,
   todo_clear: ListTodo,
   ask_user: MessageCircleQuestion,
-  create_artifact: Package,
   memory_grep: Brain,
   memory_expand: Brain,
   default: Wrench,

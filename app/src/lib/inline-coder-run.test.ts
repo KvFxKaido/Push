@@ -93,7 +93,6 @@ import type { CoderAgentOptions, CoderAgentCallbacks } from '@push/lib/coder-age
 import type { AnyToolCall } from './tool-dispatch';
 import { buildGitHubToolProtocol } from './github-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
-import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
@@ -753,7 +752,6 @@ describe('lead tool surface (inline foreground lane)', () => {
       SCRATCHPAD_TOOL_PROTOCOL,
       TODO_TOOL_PROTOCOL,
       ASK_USER_TOOL_PROTOCOL,
-      ARTIFACT_TOOL_PROTOCOL,
       LEAD_EXPLORER_DELEGATION_PROTOCOL,
     ]);
     // Read-only Explorer delegation IS advertised — the lead offloads

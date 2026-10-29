@@ -121,7 +121,6 @@ import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
 import { createDefaultApprovalGates } from './approval-gates';
 import { buildGitHubToolProtocol } from './github-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
-import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
 import { CapabilityLedger, ROLE_CAPABILITIES, type Capability } from './capabilities';
 import {
   detectAllToolCalls,
@@ -168,7 +167,7 @@ import {
 /**
  * Tool sources the inline foreground lead may execute beyond the Coder's
  * sandbox/web/memory surface — Orchestrator parity (GitHub PR/commit/CI +
- * workflow tools, `ask_user`, `create_artifact`) plus a narrow `delegate`
+ * workflow tools, `ask_user`) plus a narrow `delegate`
  * arc. The lead does its own coding, so only `delegate_explorer` (read-only
  * investigation) is executable on the `delegate` source — `delegate_coder` and
  * `plan_tasks` are refused in the executor below and excluded from the native
@@ -178,7 +177,6 @@ import {
 const LEAD_EXTRA_TOOL_SOURCES: ReadonlySet<string> = new Set<string>([
   'github',
   'ask-user',
-  'artifacts',
   'delegate',
 ]);
 
@@ -199,7 +197,7 @@ const INLINE_MAX_PARALLEL_EXPLORERS = 2;
 /**
  * The registry tool sources wired for the inline lead — the surface a native
  * `tools` array may advertise. Base sandbox + web-search (always wired), memory
- * only when a scope is threaded, plus the lead's extra GitHub/ask/artifact and
+ * only when a scope is threaded, plus the lead's extra GitHub/ask and
  * (explorer-only) delegate sources. Mirrors exactly what the kernel advertises
  * in the prompt; optional chat-hook sources (scratchpad/todo) join only when
  * handlers are present and must stay in lockstep with the protocols passed to
@@ -755,7 +753,7 @@ export interface InPageCoderKernelSpec {
   checkpointCadenceRounds?: number;
   /**
    * Grant the run the Orchestrator's full tool surface — GitHub PR/commit/CI +
-   * workflow tools, `ask_user`, and `create_artifact` — on top of the Coder's
+   * workflow tools, `ask_user` — on top of the Coder's
    * sandbox/web/memory surface. The Inline Foreground Lane sets this so the
    * collapsed single lead matches the old Orchestrator (the surface a
    * conversational turn like "what changed recently?" needs). The delegated
@@ -851,9 +849,9 @@ export async function runInPageCoderKernel(
 
   // --- Lead tool surface (Inline Foreground Lane → Orchestrator parity) ---
   // When enabled, the lead also wields GitHub PR/CI/workflow tools, ask_user,
-  // and create_artifact, executed through the same `WebToolExecutionRuntime`
+  // executed through the same `WebToolExecutionRuntime`
   // the Orchestrator uses (role 'coder' — its grant already covers pr:*,
-  // workflow:*, user:ask, artifacts:write, so the runtime's own role gate
+  // workflow:*, user:ask, so the runtime's own role gate
   // passes). The matching protocols are threaded into `extraToolProtocols`
   // below, so nothing is advertised without a wired executor.
   const leadRuntime = spec.leadToolSurface ? new WebToolExecutionRuntime() : null;
@@ -1034,7 +1032,7 @@ export async function runInPageCoderKernel(
       : detectAllToolCalls,
     tagSandboxCall: (call): AnyToolCall => ({ source: 'sandbox', call }),
     tagWebSearchCall: (call): AnyToolCall => ({ source: 'web-search', call }),
-    // Lead tool surface: github / ask-user / artifacts, executed via the web
+    // Lead tool surface: github / ask-user, executed via the web
     // runtime. Absent (undefined) for the delegated Coder, which keeps its
     // narrow three-source surface.
     extraToolSources: leadExtraToolSources,
@@ -1163,7 +1161,7 @@ export async function runInPageCoderKernel(
   ].filter((block): block is string => Boolean(block && block.trim()));
 
   // --- Build lib options ---
-  // The web inline lead wires the full GitHub/ask/artifact tool surface, so its
+  // The web inline lead wires the full GitHub/ask tool surface, so its
   // lead guidance stays 'full'. The shared resolver keeps this lane's lead
   // round/scope decision in lockstep with the background CoderJob DO.
   const leadRound = resolveLeadRoundOptions({
@@ -1279,7 +1277,7 @@ export async function runInPageCoderKernel(
     memoryToolProtocol: spec.memoryScope ? MEMORY_TOOL_PROTOCOL : undefined,
     // Lead tool surface (Orchestrator parity): advertise GitHub (delegation-
     // free — the single lead has no delegation arc), ask_user, and
-    // create_artifact only when the matching executors are wired above.
+    // ask_user only when the matching executors are wired above.
     extraToolProtocols: leadRuntime
       ? [
           buildGitHubToolProtocol({
@@ -1289,7 +1287,6 @@ export async function runInPageCoderKernel(
           ...(spec.scratchpad ? [SCRATCHPAD_TOOL_PROTOCOL] : []),
           ...(spec.todo ? [TODO_TOOL_PROTOCOL] : []),
           ASK_USER_TOOL_PROTOCOL,
-          ARTIFACT_TOOL_PROTOCOL,
           LEAD_EXPLORER_DELEGATION_PROTOCOL,
         ]
       : undefined,
@@ -1330,7 +1327,7 @@ export async function runInPageCoderKernel(
     //      narrower surface and stays text-dispatch for now.
     //   2. Scope schemas to the EXACT sources wired for this run — base
     //      sandbox/web (+ memory when a scope is threaded) plus the lead's
-    //      extra GitHub/ask/artifact surface. Advertising a tool the lead
+    //      extra GitHub/ask surface. Advertising a tool the lead
     //      can't execute (e.g. `delegate_*`) would let a native call no-op.
     nativeToolSchemas: nativeFcEligible
       ? getToolFunctionSchemasForSources(

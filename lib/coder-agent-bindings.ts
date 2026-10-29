@@ -240,10 +240,10 @@ export interface CoderBindingServices<
   /**
    * Tool sources this run may execute beyond the Coder's historical
    * sandbox/web-search/memory surface. Empty/absent for the delegated Coder.
-   * The Inline Foreground Lane threads `{ 'github', 'ask-user', 'artifacts' }`
+   * The Inline Foreground Lane threads `{ 'github', 'ask-user' }`
    * so the collapsed single lead matches the Orchestrator's tool surface. The
    * Coder role grant already carries the matching capabilities (`pr:*`,
-   * `workflow:*`, `user:ask`, `artifacts:write`), so the kernel role check
+   * `workflow:*`, `user:ask`), so the kernel role check
    * passes; this set is what opens the source gate and the detector filters.
    */
   extraToolSources?: ReadonlySet<string>;
@@ -291,9 +291,9 @@ export function buildCoderDetectors<
   detectAnyToolCall: (text: string) => TCoderCall | null;
 } {
   // Lead-surface sources (Inline Foreground Lane: github / ask-user /
-  // artifacts) ride the same buckets the shared web detector already
+  // ask-user) ride the same buckets the shared web detector already
   // classified them into — github reads land in `readOnly`, github mutations
-  // / ask_user / create_artifact land in `mutating`. Empty set → identical to
+  // / ask_user land in `mutating`. Empty set → identical to
   // the historical sandbox/web/memory-only Coder surface.
   const allowsExtra = (source: string): boolean => services.extraToolSources?.has(source) ?? false;
 
@@ -542,7 +542,7 @@ export function buildCoderToolExec<
       return { kind: 'denied', reason: beforeResult.reason };
     }
 
-    // --- Extra lead-surface path (github / ask-user / artifacts) ---
+    // --- Extra lead-surface path (github / ask-user) ---
     // The Inline Foreground Lane routes these through the injected
     // `executeExtraToolCall` (Web: `WebToolExecutionRuntime`), wrapped in the
     // same tracing + capability-ledger + after-tool-policy pipeline as the

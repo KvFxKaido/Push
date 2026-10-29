@@ -24,7 +24,6 @@ import { detectScratchpadToolCall, type ScratchpadToolCall } from './scratchpad-
 import { detectTodoToolCall, type TodoToolCall } from './todo-tools';
 import { detectWebSearchToolCall, type WebSearchToolCall } from './web-search-tools';
 import { detectAskUserToolCall, type AskUserToolCall } from './ask-user-tools';
-import { detectArtifactToolCall, type ArtifactToolCall } from './artifact-tools';
 import { detectMemoryToolCall, type MemoryToolCall } from './memory-tools';
 import { type ActiveProvider } from './orchestrator';
 import { ALL_CAPABILITIES, type Capability } from './capabilities';
@@ -974,7 +973,6 @@ function getToolCallArgs(toolCall: AnyToolCall): unknown {
     case 'sandbox':
     case 'delegate':
     case 'web-search':
-    case 'artifacts':
     case 'memory':
       return toolCall.call.args;
     case 'scratchpad':
@@ -1037,7 +1035,6 @@ type AnyToolCallSource =
   | { source: 'todo'; call: TodoToolCall }
   | { source: 'web-search'; call: WebSearchToolCall }
   | { source: 'ask-user'; call: AskUserToolCall }
-  | { source: 'artifacts'; call: ArtifactToolCall }
   | { source: 'memory'; call: MemoryToolCall };
 
 /**
@@ -1074,10 +1071,6 @@ export function detectAnyToolCall(text: string): AnyToolCall | null {
   // Check ask_user tool
   const askUserCall = detectAskUserToolCall(text);
   if (askUserCall) return { source: 'ask-user', call: askUserCall };
-
-  // Check create_artifact tool (artifact dispatch)
-  const artifactCall = detectArtifactToolCall(text);
-  if (artifactCall) return { source: 'artifacts', call: artifactCall };
 
   // Check memory tools (memory_grep, memory_expand)
   const memoryCall = detectMemoryToolCall(text);
@@ -1168,9 +1161,6 @@ function detectStructuredToolCall(
 
   const askUserCall = detectAskUserToolCall(text);
   if (askUserCall) return { source: 'ask-user', call: askUserCall };
-
-  const artifactCall = detectArtifactToolCall(text);
-  if (artifactCall) return { source: 'artifacts', call: artifactCall };
 
   const memoryCall = detectMemoryToolCall(text);
   if (memoryCall) return { source: 'memory', call: memoryCall };

@@ -402,7 +402,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     // whole script so the guard shape stays an implementation detail
     // the test doesn't pin.
     expect(sandbox.exec.mock.calls[2]?.[0]).toEqual(
-      expect.stringContaining('cp -al "$src/node_modules"'),
+      expect.stringContaining('copy_cache "$src/node_modules"'),
     );
     expect(sandbox.exec).toHaveBeenCalledTimes(4);
   });
@@ -2872,6 +2872,47 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(r2.delete).toHaveBeenCalledWith('cf-snapshots/snap1');
     expect(r2.store.has('cf-snapshots/snap1')).toBe(false);
+  });
+
+  it('delete-snapshot deletes an Artifacts repository only after restore-token authorization', async () => {
+    const id = 'push-checkpoint-100-12345678-1234-1234-1234-123456789012';
+    const snapshotId = `cf-backups/${id}`;
+    const r2 = makeR2({
+      [snapshotId]: {
+        body: JSON.stringify({
+          v: 1,
+          backupHandle: {
+            format: 'push-artifacts-v1',
+            id,
+            dir: '/workspace',
+            commit: 'a'.repeat(40),
+            expiresAt: '2000-01-01T00:00:00Z',
+          },
+        }),
+        customMetadata: { rt: 'authorized' },
+      },
+    });
+    const remove = vi.fn(async () => true);
+    const env = makeEnv({
+      SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+      CF_ARTIFACTS: { delete: remove } as unknown as Env['CF_ARTIFACTS'],
+    });
+    expect(
+      (await callRoute('delete-snapshot', { snapshot_id: snapshotId, restore_token: 'wrong' }, env))
+        .status,
+    ).toBe(403);
+    expect(remove).not.toHaveBeenCalled();
+    expect(
+      (
+        await callRoute(
+          'delete-snapshot',
+          { snapshot_id: snapshotId, restore_token: 'authorized' },
+          env,
+        )
+      ).status,
+    ).toBe(200);
+    expect(remove).toHaveBeenCalledWith(id);
+    expect(r2.store.has(snapshotId)).toBe(false);
   });
 
   it('delete-snapshot is idempotent when the snapshot is already gone', async () => {

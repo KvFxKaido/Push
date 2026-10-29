@@ -14,6 +14,7 @@
   },
   // Bumped from 2026-02-01 on 2026-04-20 when adding Cloudflare Sandbox SDK.
   // Sandbox SDK ships with the post-GA runtime; recent date unlocks it.
+  "artifacts": [{ "binding": "CF_ARTIFACTS", "namespace": "push" }],
   "compatibility_date": "2026-04-20",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
@@ -36,6 +37,8 @@
   // or edit this file and redeploy.
   "vars": {
     "PUSH_SANDBOX_PROVIDER": "cloudflare",
+    "PUSH_ARTIFACT_CHECKPOINTS": "0",
+    "PUSH_ARTIFACT_FS": "0",
     "PUSH_RELAY_ENABLED": "1",
     // Autonomous webhook PR reviewer (docs/runbooks/Enabling Autonomous PR
     // Review.md): provider/model resolve settings doc → legacy KV → env →
@@ -169,16 +172,6 @@
   //
   // Until the binding is added, /api/sandbox-cf/* routes fail closed with
   // NOT_CONFIGURED 503 (including create). Modal path is unaffected.
-  // Renderable artifact store — model-emitted HTML/React/Mermaid/file-tree
-  // payloads persist here per chat scope. Same fail-closed contract as
-  // SANDBOX_TOKENS above: when the binding is missing every /api/artifacts/*
-  // route returns NOT_CONFIGURED 503 so the operator notices. Add manually
-  // after running:
-  //
-  //   npx wrangler kv:namespace create ARTIFACTS
-  //
-  // Then insert into the kv_namespaces array below:
-  //   { "binding": "ARTIFACTS", "id": "<returned id>" }
   // Chat library — user-scoped persistent attachments. Same fail-closed
   // contract: /api/library/* returns NOT_CONFIGURED 503 when the binding
   // is missing. The CHAT_LIBRARY binding below is wired for this
@@ -196,10 +189,6 @@
     {
       "binding": "SANDBOX_TOKENS",
       "id": "7065ef8c73b94b5d945971c45aadb3e9"
-    },
-    {
-      "binding": "ARTIFACTS",
-      "id": "8fd209d7301d40d1a7a02eb88934bf8e"
     },
     {
       "binding": "CHAT_LIBRARY",
@@ -460,10 +449,6 @@
       {
         "binding": "SANDBOX_TOKENS",
         "id": "aa4bd99905e74901ba2bc7baff43a288"
-      },
-      {
-        "binding": "ARTIFACTS",
-        "id": "e99b0e009c3041749be4064d8d88a698"
       },
       {
         "binding": "CHAT_LIBRARY",

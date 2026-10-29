@@ -55,8 +55,8 @@ The runtime role contract is not the user-facing vocabulary. Human-readable labe
 - **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, role-display, and run-event semantics live in root `lib/` and are consumed by both web and CLI
 - **Sandbox awareness** — session capability blocks expose container lifetime, creation/download events, and recent workspace lifecycle state directly to the agent
 - **Workspace Hub** — scratchpad, console, files, diff, PRs, review, and commit/push live in a single repo-scoped coding surface
-- **Renderable artifacts** — `create_artifact` accepts four kinds (`static-html`, `static-react`, `mermaid`, `file-tree`) and persists typed records under `repoFullName + branch + chatId` (web) or `repoFullName + branch` (CLI). `live-preview` is a fifth record kind in the type system but is intentionally not creatable through `create_artifact` because it needs sandbox-side dev-server orchestration; a separate `create_live_preview` tool is reserved for it (not yet implemented). Web stores in Workers KV via the `/api/artifacts/*` routes; CLI stores as flat JSON under `~/.push/artifacts/`. Renderers under `app/src/components/artifacts/` are kind-dispatched and lazy-loaded so chats only pay for what they show
 - **Review sources** — Branch diff, Last commit, Working tree
+- **Cloudflare Artifacts** — gated checkpoint storage and ArtifactFS mounts; see [the rollout runbook](<docs/runbooks/Cloudflare Artifacts.md>). The former renderable-artifact tools, stores, routes, and renderers are retired; pinned notes remain.
 - **Harness reliability** — adaptive hashline edits, patchset transactions, resumable sessions, and active branch handling
 - **GitHub flow** — PR merge flow, repo-scoped chats, commit/push, and workspace publish-to-GitHub
 - **Project instructions** — loading order on both surfaces: `PUSH.md` (Push-specific override) → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`

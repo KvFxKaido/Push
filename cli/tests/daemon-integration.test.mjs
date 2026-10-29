@@ -5065,32 +5065,10 @@ describe('Explorer daemon tool protocol namespace', () => {
   });
 });
 
-// Drift-detector for the `create_artifact` tool. Pins both the registry
-// shape (canonical name, public alias, source, mutating) and the
-// capability grants by role so a future refactor can't silently shift
-// who is allowed to emit artifact tool calls. Coder is now granted
-// (cli/pushd/delegation-execution.ts:makeDaemonCoderToolExec plumbs `role: 'coder'` through
-// to the dispatch + the cli/tools.ts case gates with `roleCanUseTool`);
-// explorer / reviewer / auditor remain denied.
-describe('create_artifact tool registry + capability drift', () => {
-  it('pins the canonical / public / source / mutation shape of create_artifact', () => {
-    const spec = getToolSpec('create_artifact');
-    assert.ok(spec, 'create_artifact must be registered in TOOL_SPECS');
-    assert.equal(spec.canonicalName, 'create_artifact');
-    assert.equal(spec.publicName, 'artifact');
-    assert.equal(spec.source, 'artifacts');
-    assert.equal(spec.readOnly, false);
-
-    const byPublic = getToolSpec('artifact');
-    assert.equal(byPublic?.canonicalName, 'create_artifact');
-  });
-
-  it('grants artifacts:write to orchestrator and coder; explorer/reviewer/auditor denied', () => {
-    assert.equal(roleCanUseTool('orchestrator', 'create_artifact'), true);
-    assert.equal(roleCanUseTool('coder', 'create_artifact'), true);
-    assert.equal(roleCanUseTool('explorer', 'create_artifact'), false);
-    assert.equal(roleCanUseTool('reviewer', 'create_artifact'), false);
-    assert.equal(roleCanUseTool('auditor', 'create_artifact'), false);
+describe('retired renderable artifact tool', () => {
+  it('does not advertise the retired tool', () => {
+    assert.equal(getToolSpec('create_artifact'), null);
+    assert.equal(getToolSpec('artifact'), null);
   });
 });
 

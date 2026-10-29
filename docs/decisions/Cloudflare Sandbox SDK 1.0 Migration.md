@@ -562,6 +562,8 @@ same-day workaround: flip the var and fix forward.
 
 ## Follow-up: Cloudflare Artifacts for checkpoints
 
+Implemented behind staging switches; see [Cloudflare Artifacts](<../runbooks/Cloudflare Artifacts.md>). The original proposal below records the questions that led to the separate transport Git metadata format.
+
 Not part of this migration. [Artifacts](https://developers.cloudflare.com/artifacts/)
 (Git-compatible storage, open beta since 2026-10-01) could replace
 `DirectoryBackup` for checkpoints: `createBackup` already honours

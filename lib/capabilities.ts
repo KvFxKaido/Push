@@ -48,7 +48,6 @@ export type Capability =
   | 'web:search' // Search the web for current information
   | 'web:fetch' // Fetch a specific public URL and read its content
   | 'user:ask' // Ask the user a structured question
-  | 'artifacts:write' // Create renderable artifacts (HTML/React/Mermaid/file-tree)
   | 'memory:read' // Search/recall persisted typed-memory records (verbatim)
   | 'mcp:call'; // Call a tool on a user-attached MCP server (CLI only)
 
@@ -77,7 +76,6 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'web:search',
   'web:fetch',
   'user:ask',
-  'artifacts:write',
   'memory:read',
   'mcp:call',
 ];
@@ -240,16 +238,6 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 
   // Ask user
   ask_user: ['user:ask'],
-
-  // Artifacts. Granted to orchestrator and coder. The CLI Coder path
-  // (`makeDaemonCoderToolExec` in cli/pushd/delegation-execution.ts) plumbs `role: 'coder'`
-  // through to the cli/tools.ts dispatch, which uses `roleCanUseTool`
-  // as a defense-in-depth check before persisting. The web Coder
-  // (lib/coder-agent-bindings.ts) is still gated on its own kernel
-  // source filter — granting the capability there is a separate PR
-  // because the kernel needs an `executeArtifactToolCall` service
-  // injection to actually run the call.
-  create_artifact: ['artifacts:write'],
 
   // CLI-native tools (daemon tool surface in `cli/tools.ts`). These names
   // are distinct from the sandbox family above because the CLI dispatches
@@ -521,7 +509,6 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'web:search',
     'web:fetch',
     'user:ask',
-    'artifacts:write',
     'memory:read',
   ]),
 
@@ -569,7 +556,6 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'web:search',
     'web:fetch',
     'user:ask',
-    'artifacts:write',
     'memory:read',
     // `delegate:explorer` is part of the lead-capable superset, NOT something
     // a delegated sub-Coder ever reaches: the inline lead threads `'delegate'`
@@ -578,8 +564,8 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     // so the same call is refused at the source gate before capabilities are
     // consulted. `delegate:coder` is deliberately absent — the lead does its
     // own coding and must not spawn a sub-Coder. Mirrors how this grant
-    // already carries `pr:write` / `workflow:trigger` / `user:ask` /
-    // `artifacts:write` for the lead while delegated Coders never use them.
+    // already carries `pr:write` / `workflow:trigger` / `user:ask`
+    // for the lead while delegated Coders never use them.
     'delegate:explorer',
   ]),
 
@@ -847,7 +833,6 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   'web:search': 'search the web',
   'web:fetch': 'fetch web pages',
   'user:ask': 'ask questions',
-  'artifacts:write': 'create artifacts',
   'memory:read': 'recall prior memory',
   'mcp:call': 'call attached MCP tools',
 };

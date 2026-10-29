@@ -88,7 +88,6 @@ describe('getToolFunctionSchemasForSources', () => {
       'web-search',
       'github',
       'ask-user',
-      'artifacts',
     ]);
     const names = getToolFunctionSchemasForSources(leadSources).map((s) => s.name);
     expect(names).toContain('exec'); // sandbox

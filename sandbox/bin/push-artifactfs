@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export ARTIFACT_FS_ROOT=/var/lib/push-artifactfs
+cleanup() {
+  if mountpoint -q /workspace; then fusermount3 -u /workspace; fi
+  if [ -f "$ARTIFACT_FS_ROOT/daemon.pid" ]; then
+    kill "$(cat "$ARTIFACT_FS_ROOT/daemon.pid")" 2>/dev/null || true
+  fi
+  ! mountpoint -q /workspace || return 1
+  rm -rf -- "$ARTIFACT_FS_ROOT"
+}
+if [ "${1:-}" = --cleanup ]; then cleanup; exit; fi
+test -z "$(find /workspace -mindepth 1 -maxdepth 1 -print -quit)"
+mkdir -p "$ARTIFACT_FS_ROOT"
+timeout -k 5 60 artifact-fs add-repo --name workspace --remote "$PUSH_ARTIFACT_REMOTE" \
+  --ref "refs/heads/$1" --depth 1 --refresh never --mount-root / >/dev/null 2>&1
+nohup artifact-fs daemon --root / >"$ARTIFACT_FS_ROOT/daemon.log" 2>&1 &
+echo "$!" >"$ARTIFACT_FS_ROOT/daemon.pid"
+for attempt in $(seq 1 100); do
+  if mountpoint -q /workspace && git -C /workspace rev-parse HEAD >/dev/null 2>&1; then
+    git -C /workspace remote rename origin push-artifacts
+    git -C /workspace remote add origin "$2"
+    git -C /workspace config "branch.$1.remote" origin
+    git -C /workspace config "branch.$1.merge" "refs/heads/$1"
+    exit 0
+  fi
+  kill -0 "$(cat "$ARTIFACT_FS_ROOT/daemon.pid")"
+  sleep 0.1
+done
+exit 1

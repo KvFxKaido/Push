@@ -1,6 +1,8 @@
 # Cloudflare Artifacts
 
-Status: Draft, added 2026-05-14
+Status: Superseded by `../../runbooks/Cloudflare Artifacts.md` (staging rollout)
+
+The evaluation below is historical; the new integration uses the storage product and a pinned ArtifactFS build.
 Origin: [cloudflare/artifact-fs](https://github.com/cloudflare/artifact-fs) (public beta), [Cloudflare Sandbox Provider Design](Cloudflare%20Sandbox%20Provider%20Design.md), [CF Containers FUSE changelog 2025-11-21](https://developers.cloudflare.com/changelog/post/2025-11-21-fuse-support-in-containers/)
 
 ## Context
