@@ -3,6 +3,23 @@
 # the root installs the whole workspace, so Biome (root) and ESLint (app/ — its
 # config depends on app-only plugins) both come from a single install.
 
+# Secret scan on the staged changes. gitleaks is a machine-level tool, not a
+# workspace dependency, so a missing binary skips the scan loudly rather than
+# blocking contributors and agents who do not have it installed.
+# Husky runs this file with `sh -e`, and a bare assignment takes the exit status
+# of its command substitution, so each lookup that may fail ends in `|| true`.
+GITLEAKS=$(command -v gitleaks 2>/dev/null || true)
+if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
+  CAND="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || true)/Microsoft/WinGet/Links/gitleaks.exe"
+  [ -x "$CAND" ] && GITLEAKS="$CAND"
+fi
+[ -z "$GITLEAKS" ] && [ -x "$HOME/.local/bin/gitleaks" ] && GITLEAKS="$HOME/.local/bin/gitleaks"
+if [ -n "$GITLEAKS" ]; then
+  "$GITLEAKS" git --pre-commit --staged --redact --no-banner || exit 1
+else
+  echo "[pre-commit] gitleaks not installed; secret scan SKIPPED." >&2
+fi
+
 if [ ! -x ./node_modules/.bin/biome ]; then
   echo "[pre-commit] @biomejs/biome is not installed." >&2
   echo "[pre-commit] Run 'pnpm install' at the repo root before committing." >&2
