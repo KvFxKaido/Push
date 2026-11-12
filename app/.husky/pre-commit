@@ -6,9 +6,11 @@
 # Secret scan on the staged changes. gitleaks is a machine-level tool, not a
 # workspace dependency, so a missing binary skips the scan loudly rather than
 # blocking contributors and agents who do not have it installed.
-GITLEAKS=$(command -v gitleaks 2>/dev/null)
+# Husky runs this file with `sh -e`, and a bare assignment takes the exit status
+# of its command substitution, so each lookup that may fail ends in `|| true`.
+GITLEAKS=$(command -v gitleaks 2>/dev/null || true)
 if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
-  CAND="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null)/Microsoft/WinGet/Links/gitleaks.exe"
+  CAND="$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || true)/Microsoft/WinGet/Links/gitleaks.exe"
   [ -x "$CAND" ] && GITLEAKS="$CAND"
 fi
 [ -z "$GITLEAKS" ] && [ -x "$HOME/.local/bin/gitleaks" ] && GITLEAKS="$HOME/.local/bin/gitleaks"
