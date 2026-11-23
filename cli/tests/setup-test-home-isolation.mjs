@@ -20,8 +20,15 @@
 //      grep-ability and so code paths that prefer the explicit override
 //      behave the same as in the (pre-existing) per-test isolation setups.
 //
-// Respects pre-set values: a developer debugging against a specific store
-// can set any of these explicitly — this is a default, not an override.
+//   3. Every CF_AI_GATEWAY_* variable is cleared. With them set, the CLI
+//      routes providers through Cloudflare AI Gateway (#1701), so a
+//      developer whose shell carries their gateway config got red routing
+//      tests on a clean checkout. Tests that exercise the gateway set their
+//      own values after this runs.
+//
+// Respects pre-set values for layers 1-2: a developer debugging against a
+// specific store can set any of these explicitly — this is a default, not an
+// override.
 // Temp dirs land under the OS tmpdir (the suite runs with TMPDIR=/tmp per
 // the validation contract), so OS tmp cleaning reclaims them.
 
@@ -40,4 +47,8 @@ if (!process.env.PUSH_TEST_REAL_HOME) {
   if (!process.env.PUSH_MEMORY_DIR) {
     process.env.PUSH_MEMORY_DIR = path.join(fakeHome, '.push', 'memory');
   }
+}
+
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith('CF_AI_GATEWAY_')) delete process.env[key];
 }
