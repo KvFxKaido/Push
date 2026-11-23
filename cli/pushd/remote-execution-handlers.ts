@@ -108,10 +108,12 @@ export async function handleSandboxExec(
   // the CLI's own tools do (cli/secret-redaction.ts). Collected from the
   // allowlisted roots that contain `cwd` — every one, since with `/work` and
   // `/work/project` both allowed a command in the project can still read
-  // `/work/.env` — so `cat ../.env` from a subdirectory still matches.
+  // `/work/.env` — so `cat ../.env` from a subdirectory still matches. `cwd`
+  // itself is always walked too: the walk stops MAX_DEPTH levels below where
+  // it starts, so a cwd deep under its root was otherwise never reached.
   // Snapshotted before AND after, since a command can print a file and then
   // overwrite it.
-  const redactionRoots = allowedRootsFor(path.resolve(cwd), cwdSnapshot);
+  const redactionRoots = redactionRootsFor(path.resolve(cwd), cwdSnapshot);
   const collectAll = async () =>
     (
       await Promise.all(redactionRoots.map((r) => collectSensitiveValues(r).catch(() => [])))
@@ -210,13 +212,14 @@ export async function handleSandboxExec(
   }
 }
 
-/** Every allowlisted root containing `absCwd` (nested roots included), else `absCwd`. */
-function allowedRootsFor(absCwd: string, snapshot: AllowlistSnapshot): string[] {
+/** Every allowlisted root containing `absCwd` (nested roots included), plus
+ *  `absCwd` itself unless it is one of those roots. */
+function redactionRootsFor(absCwd: string, snapshot: AllowlistSnapshot): string[] {
   const roots = snapshot.allowed.filter((root) => {
     const rel = path.relative(root, absCwd);
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
   });
-  return roots.length > 0 ? roots : [absCwd];
+  return roots.some((root) => path.relative(root, absCwd) === '') ? roots : [...roots, absCwd];
 }
 
 /** Scrub credential values out of both streams; one structured line when any

@@ -246,4 +246,45 @@ describe('review follow-ups (#1695)', () => {
       await fs.rm(base, { recursive: true, force: true }).catch(() => {});
     }
   });
+
+  it('daemon sandbox_exec scrubs values from cwd when it sits below the walk depth', async () => {
+    // The credential walk stops MAX_DEPTH (4) levels below the root it starts
+    // from, so a cwd five levels under its only allowlisted root was never
+    // reached and `cat .env` there printed unredacted.
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'push-deep-cwd-'));
+    const root = path.join(base, 'repos');
+    const cwd = path.join(root, 'org', 'repo', 'packages', 'api', 'v2');
+    await fs.mkdir(cwd, { recursive: true });
+    await fs.writeFile(path.join(cwd, '.env'), `API_KEY=${SECRET}\n`, 'utf8');
+    await fs.writeFile(
+      path.join(cwd, 'print.cjs'),
+      "process.stdout.write(require('fs').readFileSync('.env', 'utf8'));\n",
+      'utf8',
+    );
+    const allowlist = path.join(base, 'pushd.allowlist');
+    await fs.writeFile(allowlist, `${JSON.stringify({ path: root, addedAt: 1 })}\n`, 'utf8');
+    const prev = process.env.PUSHD_ALLOWLIST_PATH;
+    process.env.PUSHD_ALLOWLIST_PATH = allowlist;
+    try {
+      const res = await handleRequest(
+        {
+          v: PROTOCOL_VERSION,
+          kind: 'request',
+          requestId: 'req_test_deep_cwd',
+          type: 'sandbox_exec',
+          sessionId: null,
+          payload: { command: 'node print.cjs', cwd },
+        },
+        () => {},
+      );
+      assert.equal(res.ok, true, JSON.stringify(res));
+      assert.equal(res.payload.exitCode, 0, JSON.stringify(res.payload));
+      assert.ok(!res.payload.stdout.includes(SECRET), `secret leaked: ${res.payload.stdout}`);
+      assert.match(res.payload.stdout, /\[redacted: [^\]]*\.env\]/);
+    } finally {
+      if (prev === undefined) delete process.env.PUSHD_ALLOWLIST_PATH;
+      else process.env.PUSHD_ALLOWLIST_PATH = prev;
+      await fs.rm(base, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 });
