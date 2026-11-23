@@ -18,6 +18,12 @@ import {
   resolveProjectInstructions,
   type RawProjectInstructions,
 } from '@push/lib/project-instructions-source';
+import {
+  classifyGitHubForbidden,
+  describeGitHubForbidden,
+  type GitHubErrorDetail,
+  readGitHubErrorDetail,
+} from '@push/lib/github-errors';
 import { parseDiffIntoFiles } from './diff-utils';
 import {
   getGitHubAuthHeaders as getGitHubHeaders,
@@ -61,14 +67,26 @@ function resolveHeaders(auth?: GitHubAuth): Record<string, string> {
 
 // --- Enhanced error messages ---
 
-function formatGitHubError(status: number, context: string, branch?: string): string {
+function formatGitHubError(
+  status: number,
+  context: string,
+  branch?: string,
+  detail?: GitHubErrorDetail,
+): string {
   switch (status) {
     case 404: {
       const branchHint = branch ? ` on branch "${branch}"` : '';
       return `[Tool Error] Not found: ${context}${branchHint}. The file may not exist, the path might be incorrect, or the branch may be different. Try list_directory to browse, or list_branches to see available branches.`;
     }
-    case 403:
-      return `[Tool Error] Access forbidden (403) for ${context}. Your GitHub token may lack permissions, or you have hit API rate limits. Check your token in Settings.`;
+    case 403: {
+      if (!detail) {
+        return `[Tool Error] Access forbidden (403) for ${context}. Your GitHub token may lack permissions, or you have hit API rate limits. Check your token in Settings.`;
+      }
+      const kind = classifyGitHubForbidden(detail);
+      const hint =
+        kind === 'permission' || kind === 'unknown' ? ' Check your token in Settings.' : '';
+      return `[Tool Error] ${describeGitHubForbidden(detail, context)}${hint}`;
+    }
     case 429:
       return `[Tool Error] Rate limited (429) for ${context}. GitHub is throttling requests. The system will retry automatically, or check your token status.`;
     case 401:
@@ -80,6 +98,16 @@ function formatGitHubError(status: number, context: string, branch?: string): st
     default:
       return `[Tool Error] GitHub API returned ${status} for ${context}`;
   }
+}
+
+/**
+ * Error text for a failed GitHub response. Reads GitHub's rate-limit headers
+ * and JSON `message` so a 403 says whether it was a rate limit, a suspended
+ * installation, or a missing permission (see `lib/github-errors.ts`).
+ */
+async function gitHubErrorFrom(res: Response, context: string, branch?: string): Promise<string> {
+  const detail = res.status === 403 ? await readGitHubErrorDetail(res) : undefined;
+  return formatGitHubError(res.status, context, branch, detail);
 }
 
 // --- UI-owned GitHub actions ---
@@ -95,7 +123,7 @@ export async function executeCreateBranch(
   if (!sourceRef) {
     const repoRes = await githubFetch(`https://api.github.com/repos/${repo}`, { headers });
     if (!repoRes.ok) {
-      throw new Error(formatGitHubError(repoRes.status, `repo info for ${repo}`));
+      throw new Error(await gitHubErrorFrom(repoRes, `repo info for ${repo}`));
     }
     const repoData = await repoRes.json();
     sourceRef = repoData.default_branch || 'main';
@@ -106,7 +134,7 @@ export async function executeCreateBranch(
     { headers },
   );
   if (!refRes.ok) {
-    throw new Error(formatGitHubError(refRes.status, `ref "${sourceRef}" on ${repo}`));
+    throw new Error(await gitHubErrorFrom(refRes, `ref "${sourceRef}" on ${repo}`));
   }
   const refData = await refRes.json();
   const sha = refData.object?.sha;
@@ -124,9 +152,7 @@ export async function executeCreateBranch(
     throw new Error(`[Tool Error] Branch "${branchName}" already exists on ${repo}.`);
   }
   if (!createRes.ok) {
-    throw new Error(
-      formatGitHubError(createRes.status, `creating branch "${branchName}" on ${repo}`),
-    );
+    throw new Error(await gitHubErrorFrom(createRes, `creating branch "${branchName}" on ${repo}`));
   }
 
   return {
@@ -670,7 +696,7 @@ export async function fetchRepoPullRequests(
   );
 
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `PRs on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `PRs on ${repo}`));
   }
 
   const prs = (await res.json()) as Array<{
@@ -742,16 +768,16 @@ export async function fetchPullRequestDetail(
     ]);
 
   if (!prRes.ok) {
-    throw new Error(formatGitHubError(prRes.status, `PR #${prNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(prRes, `PR #${prNumber} on ${repo}`));
   }
   if (!filesRes.ok) {
-    throw new Error(formatGitHubError(filesRes.status, `files for PR #${prNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(filesRes, `files for PR #${prNumber} on ${repo}`));
   }
   if (!commitsRes.ok) {
-    throw new Error(formatGitHubError(commitsRes.status, `commits for PR #${prNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(commitsRes, `commits for PR #${prNumber} on ${repo}`));
   }
   if (!diffRes.ok) {
-    throw new Error(formatGitHubError(diffRes.status, `diff for PR #${prNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(diffRes, `diff for PR #${prNumber} on ${repo}`));
   }
 
   const pr = (await prRes.json()) as {
@@ -930,9 +956,7 @@ export async function fetchGitHubReviewDiff(
       { headers: { ...headers, Accept: 'application/vnd.github.v3.diff' } },
     );
     if (!diffRes.ok) {
-      throw new Error(
-        formatGitHubError(diffRes.status, `PR diff for #${openPr.number} on ${repo}`),
-      );
+      throw new Error(await gitHubErrorFrom(diffRes, `PR diff for #${openPr.number} on ${repo}`));
     }
     return {
       diff: await diffRes.text(),
@@ -958,8 +982,8 @@ export async function fetchGitHubReviewDiff(
   );
   if (!diffRes.ok) {
     throw new Error(
-      formatGitHubError(
-        diffRes.status,
+      await gitHubErrorFrom(
+        diffRes,
         `branch comparison ${defaultBranch}...${headBranch} on ${repo}`,
       ),
     );
@@ -987,7 +1011,7 @@ export async function fetchLatestCommitDiff(
     { headers },
   );
   if (!listRes.ok) {
-    throw new Error(formatGitHubError(listRes.status, `latest commit on ${branch}`));
+    throw new Error(await gitHubErrorFrom(listRes, `latest commit on ${branch}`));
   }
 
   const commits = await listRes.json();
@@ -1006,7 +1030,7 @@ export async function fetchLatestCommitDiff(
     headers: { ...headers, Accept: 'application/vnd.github.v3.diff' },
   });
   if (!diffRes.ok) {
-    throw new Error(formatGitHubError(diffRes.status, `diff for commit ${shortSha}`));
+    throw new Error(await gitHubErrorFrom(diffRes, `diff for commit ${shortSha}`));
   }
 
   return { diff: await diffRes.text(), sha, shortSha, message, url };
@@ -1114,7 +1138,7 @@ export async function executePostPRReview(
   }
 
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `posting review to PR #${prNumber}`));
+    throw new Error(await gitHubErrorFrom(res, `posting review to PR #${prNumber}`));
   }
 
   // Count of inline comments actually anchored on the PR (0 when all folded into
@@ -1254,7 +1278,7 @@ export async function fetchPullRequestDiff(
   const res = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
     headers: { ...resolveHeaders(auth), Accept: 'application/vnd.github.v3.diff' },
   });
-  if (!res.ok) throw new Error(formatGitHubError(res.status, `PR #${prNumber} diff on ${repo}`));
+  if (!res.ok) throw new Error(await gitHubErrorFrom(res, `PR #${prNumber} diff on ${repo}`));
   return res.text();
 }
 
@@ -1271,7 +1295,7 @@ export async function fetchPullRequestHeadSha(
   const res = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
     headers: resolveHeaders(auth),
   });
-  if (!res.ok) throw new Error(formatGitHubError(res.status, `PR #${prNumber} head on ${repo}`));
+  if (!res.ok) throw new Error(await gitHubErrorFrom(res, `PR #${prNumber} head on ${repo}`));
   const data = (await res.json()) as { head?: { sha?: string } };
   return data.head?.sha ?? null;
 }
@@ -1301,7 +1325,7 @@ export async function fetchPullRequestRefs(
   const res = await githubFetch(`https://api.github.com/repos/${repo}/pulls/${prNumber}`, {
     headers: resolveHeaders(auth),
   });
-  if (!res.ok) throw new Error(formatGitHubError(res.status, `PR #${prNumber} on ${repo}`));
+  if (!res.ok) throw new Error(await gitHubErrorFrom(res, `PR #${prNumber} on ${repo}`));
   const data = (await res.json()) as {
     state?: string;
     draft?: boolean;
@@ -1492,8 +1516,7 @@ export async function createInProgressReviewCheckRun(
     },
     { retry: false },
   );
-  if (!res.ok)
-    throw new Error(formatGitHubError(res.status, `start check run on ${repo}@${headSha}`));
+  if (!res.ok) throw new Error(await gitHubErrorFrom(res, `start check run on ${repo}@${headSha}`));
   const data = (await res.json()) as { id: number };
   return data.id;
 }
@@ -1627,7 +1650,7 @@ export async function finalizeReviewCheckRun(
     { retry: false },
   );
   if (!res.ok)
-    throw new Error(formatGitHubError(res.status, `patch check run ${checkRunId} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `patch check run ${checkRunId} on ${repo}`));
 }
 
 /**
@@ -1659,5 +1682,5 @@ export async function createReviewCheckRun(
     },
     { retry: false },
   );
-  if (!res.ok) throw new Error(formatGitHubError(res.status, `check run on ${repo}@${headSha}`));
+  if (!res.ok) throw new Error(await gitHubErrorFrom(res, `check run on ${repo}@${headSha}`));
 }

@@ -2242,6 +2242,9 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
  */
 function classifyError(message: string): string {
   if (/not found/i.test(message)) return 'not_found';
+  // GitHub rate-limits with 403 as well as 429; lib/github-errors.ts words
+  // those 403s "Rate limited (403, ...)", so the text decides, not the status.
+  if (/rate limited/i.test(message)) return 'rate_limit';
   const status = message.match(/\b(\d{3})\b/)?.[1];
   if (!status) return 'unknown';
   if (status === '401' || status === '403') return 'auth';

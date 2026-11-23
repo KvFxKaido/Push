@@ -11,6 +11,11 @@
 // like the secret redactor). `sanitizeUntrustedSource` = boundary-escape +
 // JSON-tool-call defang; `escapeEnvelopeBoundaries` is the boundary-escape
 // alone, used for file-content tools (see the chokepoint below).
+import {
+  type GitHubErrorDetail,
+  describeGitHubForbidden,
+  readGitHubErrorDetail,
+} from './github-errors.js';
 import { escapeEnvelopeBoundaries, sanitizeUntrustedSource } from './untrusted-content.js';
 
 // GitHub tools whose `result.text` is verbatim repository file content. The
@@ -636,14 +641,21 @@ function parseNextLink(linkHeader: string | null): string | null {
   return match ? match[1] : null;
 }
 
-function formatGitHubError(status: number, context: string, branch?: string): string {
+function formatGitHubError(
+  status: number,
+  context: string,
+  branch?: string,
+  detail?: GitHubErrorDetail,
+): string {
   switch (status) {
     case 404: {
       const branchHint = branch ? ` on branch "${branch}"` : '';
       return `Not found: ${context}${branchHint}. The file may not exist, the path might be incorrect, or the branch may be different. Try list_directory to browse, or list_branches to see available branches.`;
     }
     case 403:
-      return `Access forbidden (403) for ${context}. Your GitHub token may lack permissions, or you have hit API rate limits.`;
+      return detail
+        ? describeGitHubForbidden(detail, context)
+        : `Access forbidden (403) for ${context}. Your GitHub token may lack permissions, or you have hit API rate limits.`;
     case 429:
       return `Rate limited (429) for ${context}. GitHub is throttling requests. Retry shortly.`;
     case 401:
@@ -655,6 +667,13 @@ function formatGitHubError(status: number, context: string, branch?: string): st
     default:
       return `GitHub API returned ${status} for ${context}`;
   }
+}
+
+/** Error text for a failed GitHub response; a 403 is classified from GitHub's
+ *  own headers and message (see `./github-errors.ts`). */
+async function gitHubErrorFrom(res: Response, context: string, branch?: string): Promise<string> {
+  const detail = res.status === 403 ? await readGitHubErrorDetail(res) : undefined;
+  return formatGitHubError(res.status, context, branch, detail);
 }
 
 function buildGitHubApiUrl(runtime: GitHubCoreRuntime, path: string): string {
@@ -808,7 +827,7 @@ async function fetchRepoDefaultBranch(runtime: GitHubCoreRuntime, repo: string):
     headers,
   });
   if (!repoRes.ok) {
-    throw new Error(formatGitHubError(repoRes.status, `repo info for ${repo}`));
+    throw new Error(await gitHubErrorFrom(repoRes, `repo info for ${repo}`));
   }
   const repoData = (await repoRes.json()) as { default_branch?: string };
   return repoData.default_branch || 'main';
@@ -842,7 +861,7 @@ export async function fetchRepoBranchesData(
   while (nextUrl && pageCount < maxPages && all.length < maxBranches) {
     const res = await runtime.githubFetch(nextUrl, { headers });
     if (!res.ok) {
-      throw new Error(formatGitHubError(res.status, `branches on ${repo}`));
+      throw new Error(await gitHubErrorFrom(res, `branches on ${repo}`));
     }
     const pageData = await res.json();
     if (!Array.isArray(pageData)) break;
@@ -1006,7 +1025,7 @@ export async function executeFetchPRTool(
     { headers },
   );
   if (!prRes.ok) {
-    throw new Error(formatGitHubError(prRes.status, `PR #${pr} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(prRes, `PR #${pr} on ${repo}`));
   }
   const prData = (await prRes.json()) as {
     merged?: boolean;
@@ -1279,7 +1298,7 @@ export async function executeListPRsTool(
   );
 
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `PRs on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `PRs on ${repo}`));
   }
 
   const prs = (await res.json()) as PullRequestListApi[];
@@ -1327,7 +1346,7 @@ export async function executeListCommitsTool(
   );
 
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `commits on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `commits on ${repo}`));
   }
 
   const commits = (await res.json()) as CommitListApi[];
@@ -1374,7 +1393,7 @@ export async function executeReadFileTool(
     headers,
   });
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
+    throw new Error(await gitHubErrorFrom(res, `${path} on ${repo}`, branch));
   }
 
   const data = (await res.json()) as RepoFileContentApi | RepoContentEntryApi[];
@@ -1520,7 +1539,7 @@ export async function executeGrepFileTool(
     headers,
   });
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `${path} on ${repo}`, branch));
+    throw new Error(await gitHubErrorFrom(res, `${path} on ${repo}`, branch));
   }
 
   const data = (await res.json()) as RepoFileContentApi | RepoContentEntryApi[];
@@ -1643,7 +1662,7 @@ export async function executeListDirectoryTool(
   );
 
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `path "${path || '/'}" on ${repo}`, branch));
+    throw new Error(await gitHubErrorFrom(res, `path "${path || '/'}" on ${repo}`, branch));
   }
 
   const data = (await res.json()) as RepoContentEntryApi[] | RepoFileContentApi;
@@ -1842,7 +1861,7 @@ export async function executeListCommitFilesTool(
   );
 
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `commit ${ref} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `commit ${ref} on ${repo}`));
   }
 
   const commit = (await res.json()) as CommitDetailsApi;
@@ -1943,7 +1962,7 @@ export async function executeTriggerWorkflowTool(
     );
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `triggering workflow "${workflow}" on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `triggering workflow "${workflow}" on ${repo}`));
   }
 
   return {
@@ -1977,7 +1996,7 @@ export async function executeGetWorkflowRunsTool(
 
   const res = await runtime.githubFetch(url, { headers });
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `workflow runs on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `workflow runs on ${repo}`));
   }
 
   const data = (await res.json()) as { total_count?: number; workflow_runs?: WorkflowRunApi[] };
@@ -2053,7 +2072,7 @@ export async function executeGetWorkflowLogsTool(
   ]);
 
   if (!runRes.ok) {
-    throw new Error(formatGitHubError(runRes.status, `workflow run #${runId} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(runRes, `workflow run #${runId} on ${repo}`));
   }
 
   const runData = (await runRes.json()) as WorkflowRunDetailsApi;
@@ -2149,7 +2168,7 @@ export async function executeCreatePRTool(
     throw new Error(`Could not create PR: ${detail}`);
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `creating PR on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `creating PR on ${repo}`));
   }
 
   const prData = (await res.json()) as { number: number; title: string; html_url: string };
@@ -2222,7 +2241,7 @@ export async function executeMergePRTool(
     );
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `merging PR #${prNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `merging PR #${prNumber} on ${repo}`));
   }
 
   const data = (await res.json()) as { sha?: string; message?: string };
@@ -2259,7 +2278,7 @@ export async function executeDeleteBranchTool(
     );
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `deleting branch "${branchName}" on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `deleting branch "${branchName}" on ${repo}`));
   }
 
   return {
@@ -2280,7 +2299,7 @@ export async function executeCheckPRMergeableTool(
     { headers },
   );
   if (!prRes.ok) {
-    throw new Error(formatGitHubError(prRes.status, `PR #${prNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(prRes, `PR #${prNumber} on ${repo}`));
   }
 
   const prData = (await prRes.json()) as PullRequestMergeabilityApi;
@@ -2359,7 +2378,7 @@ export async function executeFindExistingPRTool(
   );
 
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `searching PRs on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `searching PRs on ${repo}`));
   }
 
   const prs = (await res.json()) as Array<{
@@ -2429,7 +2448,7 @@ async function executeBranchTreeSearch(
     { headers },
   );
   if (!treeRes.ok) {
-    throw new Error(formatGitHubError(treeRes.status, `branch tree for ${repo}`, branch));
+    throw new Error(await gitHubErrorFrom(treeRes, `branch tree for ${repo}`, branch));
   }
 
   const treeData = (await treeRes.json()) as GitTreeApi;
@@ -2920,7 +2939,7 @@ export async function executeGetJobLogsTool(
       { headers },
     );
     if (!metaRes.ok) {
-      throw new Error(formatGitHubError(metaRes.status, `job #${jobId} on ${repo}`));
+      throw new Error(await gitHubErrorFrom(metaRes, `job #${jobId} on ${repo}`));
     }
     const meta = (await metaRes.json()) as WorkflowJobSummaryApi;
     const raw = await fetchJobLogText(runtime, repo, jobId);
@@ -2965,7 +2984,7 @@ export async function executeGetJobLogsTool(
   while (jobsUrl && jobsPage < JOB_LIST_MAX_PAGES) {
     const jobsRes = await runtime.githubFetch(jobsUrl, { headers });
     if (!jobsRes.ok) {
-      throw new Error(formatGitHubError(jobsRes.status, `jobs for run #${runId} on ${repo}`));
+      throw new Error(await gitHubErrorFrom(jobsRes, `jobs for run #${runId} on ${repo}`));
     }
     const jobsData = (await jobsRes.json()) as { jobs?: WorkflowJobSummaryApi[] };
     if (jobsData.jobs) allJobs.push(...jobsData.jobs);
@@ -3053,7 +3072,7 @@ export async function executeListIssuesTool(
   while (nextUrl && issuesPage < LIST_ISSUES_MAX_PAGES && collected.length < limit) {
     const res = await runtime.githubFetch(nextUrl, { headers });
     if (!res.ok) {
-      throw new Error(formatGitHubError(res.status, `issues on ${repo}`));
+      throw new Error(await gitHubErrorFrom(res, `issues on ${repo}`));
     }
     const pageData = await res.json();
     if (!Array.isArray(pageData)) break;
@@ -3103,7 +3122,7 @@ export async function executeGetIssueTool(
   ]);
 
   if (!issueRes.ok) {
-    throw new Error(formatGitHubError(issueRes.status, `issue #${issueNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(issueRes, `issue #${issueNumber} on ${repo}`));
   }
   const issue = (await issueRes.json()) as IssueDetailApi;
   const comments = commentsRes.ok ? ((await commentsRes.json()) as IssueCommentApi[]) : [];
@@ -3159,7 +3178,7 @@ export async function executeAddIssueCommentTool(
     throw new Error(`Issue/PR #${issueNumber} not found on ${repo}.`);
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `commenting on #${issueNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `commenting on #${issueNumber} on ${repo}`));
   }
   const data = (await res.json()) as { html_url?: string };
   return {
@@ -3194,7 +3213,7 @@ export async function executeCreateIssueTool(
     throw new Error(`Issues are disabled on ${repo}.`);
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `creating issue on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `creating issue on ${repo}`));
   }
   const data = (await res.json()) as { number?: number; html_url?: string };
   return {
@@ -3242,7 +3261,7 @@ export async function executeUpdateIssueTool(
     throw new Error(`Issue #${issueNumber} not found on ${repo}.`);
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `updating issue #${issueNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `updating issue #${issueNumber} on ${repo}`));
   }
   const data = (await res.json()) as { state?: string; html_url?: string };
   return {
@@ -3296,7 +3315,7 @@ export async function executeUpdatePullRequestTool(
     );
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `updating PR #${prNumber} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `updating PR #${prNumber} on ${repo}`));
   }
   const data = (await res.json()) as { state?: string; html_url?: string };
   return {
@@ -3332,7 +3351,7 @@ export async function executeRerunFailedJobsTool(
   }
   if (!res.ok) {
     throw new Error(
-      formatGitHubError(res.status, `re-running failed jobs for run #${runId} on ${repo}`),
+      await gitHubErrorFrom(res, `re-running failed jobs for run #${runId} on ${repo}`),
     );
   }
   return {
@@ -3360,7 +3379,7 @@ export async function executeCancelWorkflowRunTool(
     );
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `cancelling run #${runId} on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `cancelling run #${runId} on ${repo}`));
   }
   return {
     text: [
@@ -3401,7 +3420,7 @@ export async function executeListCodeScanningAlertsTool(
     };
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `code scanning alerts on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `code scanning alerts on ${repo}`));
   }
   const data = (await res.json()) as CodeScanningAlertApi[];
   const alerts = Array.isArray(data) ? data : [];
@@ -3444,7 +3463,7 @@ export async function executeListDependabotAlertsTool(
     };
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `dependabot alerts on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `dependabot alerts on ${repo}`));
   }
   const data = (await res.json()) as DependabotAlertApi[];
   const alerts = Array.isArray(data) ? data : [];
@@ -3486,7 +3505,7 @@ export async function executeListSecretScanningAlertsTool(
     };
   }
   if (!res.ok) {
-    throw new Error(formatGitHubError(res.status, `secret scanning alerts on ${repo}`));
+    throw new Error(await gitHubErrorFrom(res, `secret scanning alerts on ${repo}`));
   }
   const data = (await res.json()) as SecretScanningAlertApi[];
   const alerts = Array.isArray(data) ? data : [];
