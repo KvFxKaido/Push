@@ -154,7 +154,13 @@ export const ZAI_MODELS: string[] = [
 // the K3 launch and sunsets it platform-wide on 2026-08-31 (free-text entry
 // still works for existing users until then). Zen still serves its own
 // kimi-k2.5 — ZEN_MODELS is unaffected.
-export const KIMI_MODELS: string[] = [KIMI_DEFAULT_MODEL, 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'];
+export const KIMI_MODELS: string[] = [
+  KIMI_DEFAULT_MODEL,
+  'kimi-k3.1-pro',
+  'kimi-k3',
+  'kimi-k2.7-code',
+  'kimi-k2.6',
+];
 
 // Curated picker seed for the Hugging Face router — strong open-weight coding
 // and agent models verified live with tool support on /v1/models (2026-07-10).
@@ -377,13 +383,19 @@ export const DEEPSEEK_MODELS: string[] = [DEEPSEEK_DEFAULT_MODEL, 'deepseek-flas
 export const DEEPSEEK_LEGACY_MODELS: string[] = ['deepseek-v4-flash'];
 // Sakana Fugu orchestration tiers. The model field also accepts any free-text
 // slug; these two are the curated suggestions.
-export const SAKANA_MODELS: string[] = [SAKANA_DEFAULT_MODEL, 'fugu-ultra'];
+export const SAKANA_MODELS: string[] = [SAKANA_DEFAULT_MODEL, 'fugu-ultra', 'fugu-max'];
 
 // Curated direct-provider model lists. Free-text entry is still permitted at
 // the UI layer; the curated list seeds dropdowns. Refresh against each
 // provider's `/v1/models` endpoint once the per-provider PRs land.
 export const OPENAI_MODELS: string[] = [
   OPENAI_DEFAULT_MODEL,
+  'gpt-6.2-sol',
+  'gpt-6.1-sol',
+  'gpt-6.1-terra',
+  'gpt-6-astra',
+  'gpt-6-luna',
+  'gpt-5.5',
   'gpt-5.4-mini',
   'gpt-5.4-nano',
   'gpt-5.4-pro',
@@ -401,6 +413,8 @@ export const OPENAI_MODELS: string[] = [
 // the chat/Responses endpoint the xai handler uses.
 export const XAI_MODELS: string[] = [
   XAI_DEFAULT_MODEL,
+  'grok-4.7',
+  'grok-4.6',
   'grok-4.3',
   'grok-4.20-0309-reasoning',
   'grok-4.20-0309-non-reasoning',
@@ -409,12 +423,14 @@ export const XAI_MODELS: string[] = [
 ];
 
 // Generally available current Claude models, refreshed against Anthropic's
-// models overview on 2026-10-24. Mythos remains free-text only because it is
+// models overview on 2026-10-24; claude-fable-5-2 added 2026-11-22 after a
+// live gateway tool-call probe. Mythos remains free-text only because it is
 // limited-availability Project Glasswing access, not a general picker option.
 // The CLI grants native tool calling only to ids listed here
 // (cli/native-tool-gate.ts); an unlisted model silently falls back to
 // JSON-in-text dispatch, so a new generation must land here.
 export const ANTHROPIC_MODELS: string[] = [
+  'claude-fable-5-2',
   'claude-fable-5-1',
   'claude-opus-5-5',
   'claude-sonnet-5-5',
@@ -427,8 +443,14 @@ export const ANTHROPIC_MODELS: string[] = [
   'claude-haiku-4-5-20251001',
 ];
 
+// Listing an id here grants it native tool calling on the CLI, so ids land only
+// after a live tool-call probe. As of 2026-11-22, gemini-4-neon, gemini-4-argon
+// and gemini-4-carbon appear in the live /models list but return a quota 429 on
+// the gateway key, and gemini-3.8-flash returns 503 (overloaded); add them once
+// a probe succeeds.
 export const GOOGLE_MODELS: string[] = [
   GOOGLE_DEFAULT_MODEL,
+  'gemini-4-hydrogen',
   'gemini-3.1-pro-preview',
   'gemini-3.1-flash-lite',
   'gemini-3-flash-preview',
