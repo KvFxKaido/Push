@@ -11,6 +11,8 @@ interface CannedResponse {
   text?: string;
   /** Raw `Link` header value, e.g. `<url>; rel="next"`, to exercise pagination. */
   link?: string;
+  /** Any other response headers, e.g. GitHub's rate-limit headers. */
+  headers?: Record<string, string>;
 }
 
 type FetchHandler = (url: string, init?: RequestInit) => CannedResponse;
@@ -34,7 +36,7 @@ function makeRuntime(
         async text() {
           return canned.text ?? '';
         },
-        headers: new Headers(canned.link ? { Link: canned.link } : {}),
+        headers: new Headers({ ...(canned.link ? { Link: canned.link } : {}), ...canned.headers }),
       } as unknown as Response;
     },
     buildHeaders: () => ({}),
@@ -86,6 +88,34 @@ describe('merge_pr', () => {
       prNumber: 42,
       source: 'merge_pr',
     });
+  });
+});
+
+describe('403 classification', () => {
+  const call: GitHubCoreToolCall = {
+    tool: 'merge_pr',
+    args: { repo: 'o/r', pr_number: 42, merge_method: 'squash' },
+  };
+
+  it('names a primary rate limit from the headers', async () => {
+    const { runtime } = makeRuntime(() => ({
+      status: 403,
+      text: JSON.stringify({ message: 'API rate limit exceeded for installation.' }),
+      headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1795408200' },
+    }));
+    await expect(run(runtime, call)).rejects.toThrow(
+      'Rate limited (403, primary rate limit exhausted; resets at 04:30 UTC) for merging PR #42 on o/r.',
+    );
+  });
+
+  it("quotes GitHub's reason for a missing permission", async () => {
+    const { runtime } = makeRuntime(() => ({
+      status: 403,
+      text: JSON.stringify({ message: 'Resource not accessible by integration' }),
+    }));
+    await expect(run(runtime, call)).rejects.toThrow(
+      'GitHub says: "Resource not accessible by integration"',
+    );
   });
 });
 

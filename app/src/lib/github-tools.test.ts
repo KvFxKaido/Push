@@ -13,6 +13,7 @@ import {
   detectStrandedMergedPR,
   detectToolCall,
   executePostPRReview,
+  fetchPullRequestHeadSha,
   findMergedPRForBranch,
   fetchCheckRunsForSha,
   fetchReviewGuidance,
@@ -462,6 +463,34 @@ describe('detectStrandedMergedPR — branch-freshness identity check', () => {
     // Second call: merged PR served from cache (not evicted), only the tip probe re-runs.
     await expect(detectStrandedMergedPR('octo/repo', 'feature/unverifiable')).resolves.toBeNull();
     expect(githubFetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('fetchPullRequestHeadSha — 403 classification', () => {
+  // The autonomous reviewer's failures logged only "token may lack
+  // permissions, or you have hit API rate limits": GitHub's reason was dropped.
+  it('says a 403 is a primary rate limit when GitHub reports none remaining', async () => {
+    githubFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ message: 'API rate limit exceeded for installation.' }), {
+        status: 403,
+        headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1795408200' },
+      }),
+    );
+    await expect(fetchPullRequestHeadSha('octo/repo', 7, { token: 'tok' })).rejects.toThrow(
+      '[Tool Error] Rate limited (403, primary rate limit exhausted; resets at 04:30 UTC) for PR #7 head on octo/repo.',
+    );
+  });
+
+  it("quotes GitHub's reason when a 403 is a missing permission", async () => {
+    githubFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Resource not accessible by integration' }), {
+        status: 403,
+        headers: { 'x-ratelimit-remaining': '4321' },
+      }),
+    );
+    await expect(fetchPullRequestHeadSha('octo/repo', 7, { token: 'tok' })).rejects.toThrow(
+      'GitHub says: "Resource not accessible by integration"',
+    );
   });
 });
 

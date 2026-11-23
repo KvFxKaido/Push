@@ -6,6 +6,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describeGitHubForbidden } from '@push/lib/github-errors';
 import type { ReviewResult } from '@push/lib/provider-contract';
 import {
   PrReviewJob,
@@ -660,6 +661,27 @@ describe('PrReviewJob', () => {
     expect(mock.reviews.get('d1')).toMatchObject({ status: 'failed' });
     const failedEvent = mock.events.find((e) => e.type === 'review.failed');
     expect(JSON.parse(failedEvent!.payload_json).errorType).toBe('rate_limit');
+  });
+
+  it.each([
+    [{ rateLimitRemaining: '0' }, 'rate_limit'],
+    [{ retryAfter: '60' }, 'rate_limit'],
+    [{ message: 'Resource not accessible by integration' }, 'auth'],
+    [{ message: 'This installation has been suspended' }, 'auth'],
+  ] as const)('classifies a GitHub 403 with %j as %s', async (detail, errorType) => {
+    // The message text is the real formatter's, so the classifier is pinned to
+    // what the GitHub helpers actually throw.
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    __setPrReviewExecutorOverride('d1', async () => {
+      throw new Error(`[Tool Error] ${describeGitHubForbidden(detail, 'PR #1 head on o/r')}`);
+    });
+
+    await do_.fetch(startRequest(startInput()));
+    await Promise.allSettled(mock.pending);
+
+    const failedEvent = mock.events.find((e) => e.type === 'review.failed');
+    expect(JSON.parse(failedEvent!.payload_json).errorType).toBe(errorType);
   });
 
   it('rejects a start payload missing required fields', async () => {
